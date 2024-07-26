@@ -1,0 +1,17 @@
+services:
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: UORC_CodeDevelopment_jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./notebooks:/home/myuser/work/notebooks
+      - ./data:/home/myuser/work/data
+      - ./pyproject.toml:/home/myuser/work/pyproject.toml
+      - ./poetry.lock:/home/myuser/work/poetry.lock
+      - ./R_libs:/home/myuser/R_libs  # Mount the local R packages directory
+      - ./packages.txt:/home/myuser/work/packages.txt
+    environment:
+      - R_LIBS_USER=/home/myuser/R_libs
