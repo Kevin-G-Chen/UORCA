@@ -4,7 +4,7 @@ USER root
 
 # Install necessary tools and JupyterLab dependencies
 RUN apt-get update
-RUN apt-get install -y curl build-essential nodejs npm libcurl4-openssl-dev libssl-dev libxml2-dev libfontconfig1-dev libfreetype6-dev libfribidi-dev libharfbuzz-dev libtiff-dev libjpeg-dev libpng-dev libtiff-dev libgit2-dev libzmq3-dev libhdf5-dev
+RUN apt-get install -y curl build-essential nodejs npm libcurl4-openssl-dev libssl-dev libxml2-dev libfontconfig1-dev libfreetype6-dev libfribidi-dev libharfbuzz-dev libtiff-dev libjpeg-dev libpng-dev libtiff-dev libgit2-dev libzmq3-dev libhdf5-dev libglpk-dev
 RUN apt-get install -y pandoc git cmake
 RUN apt-get install -y r-base
 #RUN apt-get install -y texlive-xetex texlive-fonts-recommended texlive-plain-generic
