@@ -61,6 +61,7 @@ generics
 GenomeInfoDb
 GenomeInfoDbData
 GenomicRanges
+GEOquery
 getopt
 ggfun
 ggnewscale
@@ -121,6 +122,9 @@ progress
 ps
 purrr
 qvalue
+R.methodsS3
+R.oo
+R.utils
 R6
 ragg
 rappdirs
