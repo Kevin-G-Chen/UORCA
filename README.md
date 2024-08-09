@@ -32,8 +32,8 @@ Currently, the pipeline is as follows:
 ### Data processing
 
 The plan at this stage:
-1. Download raw FASTQ files
-2. Download metadata associated with FASTQ files
+1. Download raw FASTQ files (as far as I can tell, this will entail extracting SRA IDs from the GEO Accesssion - not the trivial task I assumed it to be)
+2. Download metadata associated with FASTQ files/samples (this is very feasible)
 3. Process metadata - for example, correcting typos, matching samples to file names
 4. Use a Kallisto-based workflow to quantify transcripts
 5. Perform a standard RNA-seq based pipeline: filtering/normalization, different gene expression analysis, over-representation/gene set enrichment analysis
