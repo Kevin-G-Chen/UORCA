@@ -17,6 +17,28 @@ RUN pip install --no-cache-dir jupyter-ai-magics
 RUN pip install --no-cache-dir langchain_openai
 RUN pip install --no-cache-dir bash_kernel && python -m bash_kernel.install
 
+RUN wget https://github.com/pachterlab/kallisto/archive/refs/tags/v0.51.0.tar.gz -O /tmp/kallisto.tar.gz && \
+    tar -zxf /tmp/kallisto.tar.gz -C /opt && \
+    cd /opt/kallisto-0.51.0 && \
+    mkdir build && cd build && \
+    cmake .. && make && \
+    ln -s /opt/kallisto-0.51.0/build/src/kallisto /usr/local/bin/kallisto && \
+    rm /tmp/kallisto.tar.gz
+
+
+# Build and install SRA Toolkit
+RUN TMPDIR=$(mktemp -d) && \
+    cd ${TMPDIR} && \
+    git clone https://github.com/ncbi/ncbi-vdb.git && \
+    git clone https://github.com/ncbi/sra-tools.git && \
+    mkdir build && cd build && \
+    cmake -S "$(cd ../ncbi-vdb; pwd)" -B ncbi-vdb && \
+    cmake --build ncbi-vdb && \
+    cmake -D VDB_LIBDIR="${PWD}/ncbi-vdb/lib" -D CMAKE_INSTALL_PREFIX="/opt/sratoolkit" -S "$(cd ../sra-tools; pwd)" -B sra-tools && \
+    cmake --build sra-tools --target install && \
+    ln -s /opt/sratoolkit/bin/* /usr/local/bin/ && \
+    rm -rf ${TMPDIR}
+
 # Install Poetry via pip
 RUN pip install --no-cache-dir poetry
 
