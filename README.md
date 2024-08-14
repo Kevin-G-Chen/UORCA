@@ -29,12 +29,19 @@ Currently, the pipeline is as follows:
 3. Extract the title and summary associated with these datasets
 4. Use an LLM to score candidate datasets, using the title and summary, based on their relevance to the research query
 
-### Data processing
+### Data extraction
 
 The plan at this stage:
-1. Download raw FASTQ files (as far as I can tell, this will entail extracting SRA IDs from the GEO Accesssion - not the trivial task I assumed it to be)
-2. Download metadata associated with FASTQ files/samples (this is very feasible)
-3. Process metadata - for example, correcting typos, matching samples to file names
-4. Use a Kallisto-based workflow to quantify transcripts
-5. Perform a standard RNA-seq based pipeline: filtering/normalization, different gene expression analysis, over-representation/gene set enrichment analysis
-6. Report findings
+1. Download raw FASTQ files, using a bash script. This entails linking the GEO datasets to sample IDs, and the SRA Run IDs linked to each sample
+2. For now at least, subsetting FASTQ files - just because I can't be working FASTQ files that are too large
+
+### Kallisto quantification
+
+Continued from above...
+
+3. Hopefully automating the Kallisto quantification, including generation of the code/identification of appropriate indices. For the moment, I really would like to integrate multiple species together (this is something that will be a consideration for later on). Alternatively, I could just only use human samples at the moment, and add in other species integration later.
+4. Related to above - adding checking mechanisms (did this proceed as intended? If there was an error, can we use this error message to improve the generated code?)
+
+### Using quantification data
+
+I will hopefully then apply the standard RNAseq pipeline, though specifics are to be discussed. 
