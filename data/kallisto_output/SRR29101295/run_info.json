@@ -1,0 +1,14 @@
+{
+	"n_targets": 227665,
+	"n_bootstraps": 100,
+	"n_processed": 80000,
+	"n_pseudoaligned": 29669,
+	"n_unique": 6565,
+	"p_pseudoaligned": 37.1,
+	"p_unique": 8.2,
+	"kallisto_version": "0.51.0",
+	"index_version": 13,
+	"k-mer length": 31,
+	"start_time": "Thu Aug 15 08:11:31 2024",
+	"call": "kallisto quant -i /home/myuser/work/data/kallisto_indices/human/index.idx -o /home/myuser/work/results/kallisto_output/SRR29101295 --bootstrap-samples=100 --threads=4 --plaintext /home/myuser/work/results/2_extract_data/scratch/FASTQs_GSE268034/SRR29101295_1.fastq.gz /home/myuser/work/results/2_extract_data/scratch/FASTQs_GSE268034/SRR29101295_2.fastq.gz"
+}
