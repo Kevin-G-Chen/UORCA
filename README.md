@@ -1,4 +1,4 @@
-# Unified -Omics Reference Corpus (UORC)
+# Unified -Omics Reference Corpus of Analyses (UORCA)
 ## Objective and purpose
 
 Biological and clinical data is rich and often holds many insights. The intepretation of these data can be complicated and time-consuming, requiring deep expertise of the subject matter and careful literature review to determine what is both novel and interesting. The advent of large language models (LLMs) provides the opportunity to expedite this otherwise resource-intensive process, in turn accelerating the rate at which we can process data and enact change. 
