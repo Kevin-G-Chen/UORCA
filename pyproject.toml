@@ -20,6 +20,8 @@ h5py = "^3.11.0"
 pydeseq2 = "^0.4.10"
 requests = "^2.32.3"
 geoparse = "^2.0.4"
+jupyter-ai = "^2.20.0"
+langchain-openai = "^0.1.21"
 
 
 [build-system]
