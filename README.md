@@ -1,11 +1,20 @@
-# Unified -Omics Reference Corpus (UORC)
+# Unified -Omics Reference Corpus of Analyses (UORCA)
+
+![image](https://github.com/user-attachments/assets/1c9f9551-0ea2-4c4a-a41c-6348e9e3ebc1)
+
+
 ## Objective and purpose
 
 Biological and clinical data is rich and often holds many insights. The intepretation of these data can be complicated and time-consuming, requiring deep expertise of the subject matter and careful literature review to determine what is both novel and interesting. The advent of large language models (LLMs) provides the opportunity to expedite this otherwise resource-intensive process, in turn accelerating the rate at which we can process data and enact change. 
 
-As such, this project aims to leverage the power of LLMs to improve the interpretation of biological data by developing a Unified -Omics Reference Corpus, a set of pre-analysed data and results which can be utilized to both better understand the set of existing knowledge, and also uncover interesting results in novel data.
+As such, this project aims to leverage the power of LLMs to improve the interpretation of biological data by developing a Unified -Omics Reference Corpus of Analyses, a set of pre-analysed data and results which can be utilized to both better understand the set of existing knowledge, and also uncover interesting results in novel data.
 
-## Pipeline to developing the UORC
+## Navigating this repository
+
+- [Notebooks](notebooks) contains the Jupyter notebooks in which I am developing the code. These are structured into smaller "sub-modules," indicated by the numbers. I will include READMEs in each directory to indicate what each file contains.
+- [Data](data) will contain the results from my code. I will try to standardize the naming convention to match my code sub-modules at some point.
+
+## Pipeline to developing the UORCA
 
 (Work in progress)
 
@@ -31,16 +40,17 @@ Currently, the pipeline is as follows:
 
 ### Data extraction
 
-The plan at this stage:
-1. Download raw FASTQ files, using a bash script. This entails linking the GEO datasets to sample IDs, and the SRA Run IDs linked to each sample
-2. For now at least, subsetting FASTQ files - just because I can't be working FASTQ files that are too large
+This section currently operates as follows:
+1. Download raw FASTQ files using a bash script. This entails linking the GEO datasets to sample IDs, and the SRA Run IDs linked to each sample.
+2. I only download a subset of each FASTQ files for space reasons. Note that the FASTQ files are not hosted on this repository.
 
-### Kallisto quantification
+### Data processing - quantification
 
-Continued from above...
-
-3. Hopefully automating the Kallisto quantification, including generation of the code/identification of appropriate indices. For the moment, I really would like to integrate multiple species together (this is something that will be a consideration for later on). Alternatively, I could just only use human samples at the moment, and add in other species integration later.
-4. Related to above - adding checking mechanisms (did this proceed as intended? If there was an error, can we use this error message to improve the generated code?)
+At the moment, the pipeline operates as follows:
+1. Automating the Kallisto quantification, including generation of the code/identification of appropriate indices.
+2. I currently focus only on human samples, however I do intend to integrate other species in - mainly those where a [pre-built index](https://github.com/pachterlab/kallisto-transcriptome-indices) is already provided.
+3. After execution of the code, checking mechanisms (evaluations) are employed to check whether the quantification proceeded as expected, and if the code represents a valid method of quantification (e.g. were any warning messages biologically relevant? Were there error messages? Were parameters correctly used?)
+4. Depending on the evaluation, the generated code is corrected.
 
 ### Using quantification data
 
