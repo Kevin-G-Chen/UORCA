@@ -9,6 +9,17 @@ Biological and clinical data is rich and often holds many insights. The intepret
 
 As such, this project aims to leverage the power of LLMs to improve the interpretation of biological data by developing a Unified -Omics Reference Corpus of Analyses, a set of pre-analysed data and results which can be utilized to both better understand the set of existing knowledge, and also uncover interesting results in novel data.
 
+## Applications of work
+
+Keeping in line with the goal of improving child health, the **generic** goals of UORCA are two-fold - to consolidate what is known in the existing literature, and to pinpoint key directions in a novel dataset, given the consolidation of the existing literature. 
+
+At time of writing this segement of the README, I am working on developing an automated pipeline that performs and RNAseq-based analysis. Once this "module" is complete, UORCA will be able to comprehensively evaluate what is known for a given research question. As a specific application I might be exploring, this will likely be "biomarkers associated with a specific cancer". Specific findings of interest would include:
+- Whether these biomarkers are generically present across the literature (i.e. similar datasets)
+- If not, what are factors affecting the presence/absence of these biomarkers
+- Molecular/phenotypic implications (e.g. altered pathways -> disease state?)
+- Drug/treatment strategies - what is proposed, do these align with the biomarkers we know from above?
+
+
 ## Navigating this repository
 
 - [Notebooks](notebooks) contains the Jupyter notebooks in which I am developing the code. These are structured into smaller "sub-modules," indicated by the numbers. I will include READMEs in each directory to indicate what each file contains.
