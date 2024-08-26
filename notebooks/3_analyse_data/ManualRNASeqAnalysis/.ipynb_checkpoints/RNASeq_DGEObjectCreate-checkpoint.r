@@ -9,6 +9,7 @@ suppressMessages({
     library(janitor)
     library(viridis)
     library(optparse)
+    library(jsonlite)  # Add this library to handle JSON strings
   })
 })
 
@@ -26,13 +27,16 @@ option_list <- list(
   make_option(c("-m", "--metadata"), type="character", default=NULL,
               help="Path to metadata CSV file", metavar="character"),
   make_option(c("-c", "--clean_columns"), type="character", default=NULL,
-              help="Columns to clean by removing spaces, separated by commas", metavar="character"),
+              help="Dictionary format: JSON string of columns to clean, e.g., '{\"col1\":\"new_col1\",\"col2\":\"new_col2\"}'", metavar="character"),
   make_option(c("-g", "--group"), type="character", default="genotype_clean",
               help="Group column to use for filtering [default: %default]", metavar="character"),
   make_option(c("-o", "--output"), type="character", default="./output/",
               help="Directory to save output files [default: %default]", metavar="character"),
   make_option(c("-r", "--geo_sra_mapping"), type="character", default=NULL,
-              help="Path to GEO-SRA mapping file", metavar="character")
+              help="Path to GEO-SRA mapping file", metavar="character"),
+  make_option(c("--merge_columns"), type="character", default=NULL,
+              help="Dictionary format: JSON string for creating new columns, e.g., '{\"new_col1\":\"col1+col2\",\"new_col2\":\"col3+col4\"}'", metavar="character")
+
 )
 
 # Parse options
@@ -75,13 +79,34 @@ print(colnames(meta))
 # Step 3: Clean specified columns
 if (!is.null(opt$clean_columns)) {
   print_message("Step 3: Cleaning specified columns...")
-  cols_to_clean <- str_split(opt$clean_columns, ",")[[1]]
-  for (col in cols_to_clean) {
+
+  # Parse the JSON string into a list
+  cols_to_clean <- fromJSON(opt$clean_columns)
+
+  for (old_col in names(cols_to_clean)) {
+    new_col <- cols_to_clean[[old_col]]
     meta <- meta %>%
-      mutate(!!sym(col) := str_remove_all(!!sym(col), " "))
+      mutate(!!sym(new_col) := str_remove_all(!!sym(old_col), " "))
   }
   print_message("Columns cleaned:")
-  print(cols_to_clean)
+  print(names(cols_to_clean))
+}
+
+# New Step: Mutate and create new columns by merging specified columns
+if (!is.null(opt$merge_columns)) {
+  print_message("Step 3.1: Mutating and creating new columns...")
+
+  # Parse the JSON string into a list
+  mutate_instructions <- fromJSON(opt$merge_columns)
+
+  for (new_col in names(mutate_instructions)) {
+    cols_to_merge <- str_split(mutate_instructions[[new_col]], "\\+")[[1]]
+
+    meta <- meta %>%
+      mutate(!!sym(new_col) := paste(!!!syms(cols_to_merge), sep = "_"))
+  }
+  print_message("New columns created by merging:")
+  print(names(mutate_instructions))
 }
 
 # Step 4: Join metadata with GEO-SRA mapping data
