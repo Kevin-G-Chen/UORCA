@@ -85,9 +85,12 @@ if (!is.null(opt$clean_columns)) {
 
   for (old_col in names(cols_to_clean)) {
     new_col <- cols_to_clean[[old_col]]
+    
+    # Clean special characters in the specified column
     meta <- meta %>%
-      mutate(!!sym(new_col) := str_remove_all(!!sym(old_col), " "))
+      mutate(!!sym(new_col) := str_replace_all(!!sym(old_col), "[^a-zA-Z0-9_]", ""))
   }
+  
   print_message("Columns cleaned:")
   print(names(cols_to_clean))
 }
