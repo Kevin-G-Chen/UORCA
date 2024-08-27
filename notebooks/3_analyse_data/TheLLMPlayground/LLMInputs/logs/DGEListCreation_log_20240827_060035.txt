@@ -1,0 +1,125 @@
+Generated tokens: 512
+Prompt tokens: 13308
+Total tokens: 13820
+==================================================
+
+Attempt 2
+Command executed:
+Rscript ./ManualRNASeqAnalysis/RNASeq_DGEObjectCreate.r --directory /home/myuser/work/data/kallisto_output/ --t2g /home/myuser/work/data/kallisto_indices/human/t2g.txt --metadata /home/myuser/work/notebooks/Testing/GSE268034/GSE268034_series_matrix_metadata.csv --clean_columns '{"genotype_ch1":"genotype_clean","treatment_ch1":"treatment_clean"}' --group genotype_clean --output ./TheLLMPlayground/LLMInputs --geo_sra_mapping /home/myuser/work/notebooks/2_extract_data/results.txt --merge_columns '{"genotype_treatment":"genotype_clean+treatment_clean"}'
+STDOUT:
+[2024-08-27 06:00:41] Step 1: Loading GEO-SRA mapping data...
+[2024-08-27 06:00:41] GEO-SRA mapping data loaded.
+[2024-08-27 06:00:41] Step 2: Loading metadata...
+[2024-08-27 06:00:41] Original metadata column names:
+ [1] "title"                   "geo_accession"          
+ [3] "status"                  "submission_date"        
+ [5] "last_update_date"        "type"                   
+ [7] "channel_count"           "source_name_ch1"        
+ [9] "organism_ch1"            "characteristics_ch1"    
+[11] "characteristics_ch1.1"   "characteristics_ch1.2"  
+[13] "characteristics_ch1.3"   "treatment_protocol_ch1" 
+[15] "growth_protocol_ch1"     "molecule_ch1"           
+[17] "extract_protocol_ch1"    "extract_protocol_ch1.1" 
+[19] "taxid_ch1"               "data_processing"        
+[21] "data_processing.1"       "data_processing.2"      
+[23] "platform_id"             "contact_name"           
+[25] "contact_email"           "contact_phone"          
+[27] "contact_institute"       "contact_address"        
+[29] "contact_city"            "contact_state"          
+[31] "contact_zip/postal_code" "contact_country"        
+[33] "data_row_count"          "instrument_model"       
+[35] "library_selection"       "library_source"         
+[37] "library_strategy"        "relation"               
+[39] "relation.1"              "supplementary_file_1"   
+[41] "cell line:ch1"           "cell type:ch1"          
+[43] "genotype:ch1"            "treatment:ch1"          
+[2024-08-27 06:00:41] Cleaned metadata column names:
+ [1] "title"                   "geo_accession"          
+ [3] "status"                  "submission_date"        
+ [5] "last_update_date"        "type"                   
+ [7] "channel_count"           "source_name_ch1"        
+ [9] "organism_ch1"            "characteristics_ch1"    
+[11] "characteristics_ch1_1"   "characteristics_ch1_2"  
+[13] "characteristics_ch1_3"   "treatment_protocol_ch1" 
+[15] "growth_protocol_ch1"     "molecule_ch1"           
+[17] "extract_protocol_ch1"    "extract_protocol_ch1_1" 
+[19] "taxid_ch1"               "data_processing"        
+[21] "data_processing_1"       "data_processing_2"      
+[23] "platform_id"             "contact_name"           
+[25] "contact_email"           "contact_phone"          
+[27] "contact_institute"       "contact_address"        
+[29] "contact_city"            "contact_state"          
+[31] "contact_zip_postal_code" "contact_country"        
+[33] "data_row_count"          "instrument_model"       
+[35] "library_selection"       "library_source"         
+[37] "library_strategy"        "relation"               
+[39] "relation_1"              "supplementary_file_1"   
+[41] "cell_line_ch1"           "cell_type_ch1"          
+[43] "genotype_ch1"            "treatment_ch1"          
+[2024-08-27 06:00:41] Step 3: Cleaning specified columns...
+[2024-08-27 06:00:41] Columns cleaned:
+[1] "genotype_ch1"  "treatment_ch1"
+[2024-08-27 06:00:41] Step 3.1: Mutating and creating new columns...
+[2024-08-27 06:00:41] New columns created by merging:
+[1] "genotype_treatment"
+[2024-08-27 06:00:41] Step 4: Joining metadata with GEO-SRA mapping data...
+[2024-08-27 06:00:41] Metadata joined with GEO-SRA mapping data.
+[2024-08-27 06:00:41] Step 5: Listing abundance files...
+[2024-08-27 06:00:41] Abundance files found: 12 files
+[2024-08-27 06:00:41] Metadata updated with abundance file paths.
+[2024-08-27 06:00:41] Step 6: Loading tx2gene data...
+[2024-08-27 06:00:42] tx2gene data loaded.
+[2024-08-27 06:00:42] Step 7: Importing quantification files...
+[2024-08-27 06:00:48] Quantification files imported.
+[2024-08-27 06:00:48] Step 8: Creating DGEList object...
+[2024-08-27 06:00:48] DGEList object created.
+[2024-08-27 06:00:48] Step 9: Filtering based on expression...
+[2024-08-27 06:00:48] Filtering complete. Number of genes retained: 621
+[2024-08-27 06:00:48] Step 10: Plotting filtering results...
+null device 
+          1 
+[2024-08-27 06:00:48] Filtering plot saved as Filtering.png.
+[2024-08-27 06:00:48] Step 11: Normalizing the DGEList object...
+[2024-08-27 06:00:48] Normalization complete.
+[2024-08-27 06:00:48] Step 12: Plotting normalization results...
+null device 
+          1 
+[2024-08-27 06:00:48] Normalization plot saved as Normalization.png.
+[2024-08-27 06:00:48] Step 13: Saving the final DGEList object...
+[2024-08-27 06:00:48] Final DGEList object saved as DGE.RDS.
+[2024-08-27 06:00:48] Script execution completed successfully.
+
+STDERR:
+Rows: 12 Columns: 3
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: "\t"
+chr (3): sample_ID, experiment, SRA_ID
+
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+Rows: 12 Columns: 44
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: ","
+chr (41): title, geo_accession, status, submission_date, last_update_date, t...
+dbl  (3): channel_count, taxid_ch1, data_row_count
+
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+Rows: 227665 Columns: 8
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: "\t"
+chr (6): X1, X2, X3, X4, X5, X8
+dbl (2): X6, X7
+
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+Note: importing `abundance.h5` is typically faster than `abundance.tsv`
+reading in files with read_tsv
+1 2 3 4 5 6 7 8 9 10 11 12 
+transcripts missing from tx2gene: 24683
+summarizing abundance
+summarizing counts
+summarizing length
+
+==================================================
+
