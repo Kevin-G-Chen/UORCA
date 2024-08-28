@@ -63,6 +63,18 @@ At the moment, the pipeline operates as follows:
 3. After execution of the code, checking mechanisms (evaluations) are employed to check whether the quantification proceeded as expected, and if the code represents a valid method of quantification (e.g. were any warning messages biologically relevant? Were there error messages? Were parameters correctly used?)
 4. Depending on the evaluation, the generated code is corrected.
 
+(Note - I will probably rework this into developing a code "template" and having the LLM fill in the blanks)
+
 ### Using quantification data
 
-I will hopefully then apply the standard RNAseq pipeline, though specifics are to be discussed. 
+1. Template scripts are created for:
+   a. Creating the DGEList object, including filtering and normalisation with visual outputs, as well as metadata cleaning. I do hope to add PCA plots to this as well.
+   b. Seeing output of cleaned metadata
+   c. Generation of contrast/design matrix, and execution of DEG analysis
+2. I call an LLM to determine appropriate inputs for script a and c. 
+
+I am also beginning to implement more logging and token output information - I have so far only integrated these into the first DEG analysis script, but I plan on adding this to the remaining scripts as well.
+
+### Building the corpus
+
+Work to begin soon. The general idea is to a) Conduct an analysis, b) Extract findings from the analysis, and c) Repeat for further datasets, however use findings (b) to contextualise these results further. This is how we can begin to see trends in datasets - do we see the same DEGs across multiple datasets? Do we notice that DEGs are only apparent in XYZ conditions?
