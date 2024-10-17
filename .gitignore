@@ -3,3 +3,31 @@ scratch/*
 
 *.DS_Store
 .aider*
+
+# Node.js
+node_modules/
+npm-debug.log
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Java
+*.class
+*.jar
+
+# macOS
+.DS_Store
+
+# Visual Studio Code
+.vscode/
+
+# JetBrains IDEs
+.idea/
+
+# Logs
+*.log
+
+# Build directories
+dist/
+build/
