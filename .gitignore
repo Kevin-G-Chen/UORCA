@@ -1,5 +1,5 @@
 .env
-scratch/*
+*scratch/*
 
 *.DS_Store
 .aider*
