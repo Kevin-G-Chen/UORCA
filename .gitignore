@@ -11,6 +11,14 @@ npm-debug.log
 # Python
 __pycache__/
 *.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+
+# R
+*.Rhistory
+*.RData
 
 # Java
 *.class
@@ -28,10 +36,6 @@ __pycache__/
 # Logs
 *.log
 
-# Build directories
-dist/
-build/
-
 # Docker
 *.dockerignore
 Dockerfile.*
@@ -43,3 +47,9 @@ docker-compose*.yml
 *.bak
 *.swp
 *.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Poetry
+poetry.lock
