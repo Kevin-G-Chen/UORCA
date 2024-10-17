@@ -19,6 +19,7 @@ build/
 # R
 *.Rhistory
 *.RData
+R_libs/*
 
 # Java
 *.class
