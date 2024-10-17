@@ -31,3 +31,15 @@ __pycache__/
 # Build directories
 dist/
 build/
+
+# Docker
+*.dockerignore
+Dockerfile.*
+docker-compose*.yml
+*.tar
+*.gz
+*.zip
+*.tgz
+*.bak
+*.swp
+*.swo
