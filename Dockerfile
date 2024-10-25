@@ -90,6 +90,11 @@ RUN echo 'export PATH="/usr/local/bin:$PATH"' >> /home/$NB_USER/.profile
 # Switch to the new user
 USER $NB_USER
 
+# Install Entrez Direct (EDirect)
+RUN sh -c "echo y | curl -fsSL https://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh" && \
+    echo "export PATH=\$HOME/edirect:\$PATH" >> /home/$NB_USER/.bashrc && \
+    echo "export PATH=\$HOME/edirect:\$PATH" >> /home/$NB_USER/.profile
+
 # Install dependencies using Poetry and set up Jupyter kernel
 RUN poetry install && \
     poetry run python -m ipykernel install --user --name=poetry-env --display-name "Python (Poetry)"
@@ -99,8 +104,8 @@ EXPOSE 8888
 
 # Start JupyterLab from within the Poetry environment and apply the theme
 CMD ["sh", "-c", "\
-if [ -f '/home/myuser/work/packages.txt' ]; then \
-  Rscript -e \"if (!requireNamespace('pak', quietly = TRUE)) install.packages('pak'); library(pak); package_names <- unique(c(readLines('/home/myuser/work/packages.txt'), 'tidyverse'));message(package_names);pak::pkg_install(package_names)\"; \
-fi; \
-trap 'Rscript /home/myuser/update_packages.R' EXIT; \
-poetry run jupyter lab --ip=0.0.0.0 --no-browser --allow-root"]
+    if [ -f '/home/myuser/work/packages.txt' ]; then \
+    Rscript -e \"if (!requireNamespace('pak', quietly = TRUE)) install.packages('pak'); library(pak); package_names <- unique(c(readLines('/home/myuser/work/packages.txt'), 'tidyverse'));message(package_names);pak::pkg_install(package_names)\"; \
+    fi; \
+    trap 'Rscript /home/myuser/update_packages.R' EXIT; \
+    poetry run jupyter lab --ip=0.0.0.0 --no-browser --allow-root"]
