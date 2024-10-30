@@ -1,0 +1,2 @@
+human/index.idx filter=lfs diff=lfs merge=lfs -text
+human/t2g.txt filter=lfs diff=lfs merge=lfs -text
