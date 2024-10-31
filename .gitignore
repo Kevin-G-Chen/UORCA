@@ -1,7 +1,6 @@
+# Environment and local config
 .env
 *scratch/*
-
-*.DS_Store
 .aider*
 
 # Node.js
@@ -19,7 +18,10 @@ build/
 # R
 *.Rhistory
 *.RData
+*.Rapp.history
 R_libs/*
+.Rproj.user/
+*-checkpoint.r
 
 # Java
 *.class
@@ -27,15 +29,26 @@ R_libs/*
 
 # macOS
 .DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
 
 # Visual Studio Code
 .vscode/
+*.code-workspace
+.history/
 
 # JetBrains IDEs
 .idea/
+*.iml
+*.iws
+*.ipr
 
-# Logs
+# Logs and results
 *.log
+results.txt
+**/results/*.txt
 
 # Docker
 *.dockerignore
@@ -50,7 +63,26 @@ docker-compose*.yml
 *.swo
 
 # Jupyter
-.ipynb_checkpoints/
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+*.ipynb-meta
+*-checkpoint.ipynb
 
 # Poetry
 poetry.lock
+
+# Temporary and cache files
+.tmp/
+.cache/
+*.tmp
+*~
+
+# Data directories and files
+**/FASTQ*/
+**/GSE*/
+.Trash*/
+
+# Project specific
+notebooks/.Trash-*/
+notebooks/2_extract_data/GSE*_data/
+notebooks/2_extract_data/GSE*_FASTQs/
