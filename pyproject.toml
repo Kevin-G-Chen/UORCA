@@ -22,6 +22,7 @@ requests = "^2.32.3"
 geoparse = "^2.0.4"
 jupyter-ai = "^2.20.0"
 langchain-openai = "^0.1.21"
+unidecode = "^1.3.8"
 
 
 [build-system]
