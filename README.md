@@ -37,8 +37,8 @@ UORCA will generate "insights" by collating information from different datasets.
 - how genetic, transcriptomic, and proteomic data relate to eachother (e.g. is the transcriptomic information correlated to the proteomic information)
 
 These findings are nice, and would generate testable hypotheses (e.g. if we induce this mutation, findings from UORCA predict that we should induce a disease state similar to X, but distinct to Y). However, I would need to
-a) convince researchers that any generated insights/testable hypotheses are actually worth pursuing further
-b) produce findings that can be more explicitly relevant for the clinic (e.g. are these DEGs meant to therefore be drug targets, or have I included DEGs for fun?)
+- convince researchers that any generated insights/testable hypotheses are actually worth pursuing further
+- produce findings that can be more explicitly relevant for the clinic (e.g. are these DEGs meant to therefore be drug targets, or have I included DEGs for fun?)
 
 To convince researchers that UORCA can produce valuable findings, I don't see performing a lab experiment being a viable approach (once I validate I would argue this might be an appropriate follow up to any "insights," defined as per above). For this purpose, ideas of experiments I have include (dependent on project progression):
 - identifying novel clinical datasets, and demonstrating that results from UORCA can be used for diagnostic purposes (e.g. that a mutation can be predictive of disease progression). I would hope this could translate into better diagnoses for diseases.
@@ -51,8 +51,22 @@ A web server where the user
 2. OPTIONALLY includes their own data. The intent here would be to assist with "how does my data fit in the broader picture?"
 
 The user should then see:
-- key biological points (e.g. important genes, proteins, transcripts)
+- key biological findings (e.g. important genes, proteins, transcripts)
 - LLM inputs/outputs, e.g. datasets analysed, chosen parameters, raw results, generated code
+
+## Would will benefit from UORCA?
+
+1. Researchers
+- Reserachers will see the current "state of play," and also be able to see where their works fits in the broader picture
+
+2. Clinicians
+- Findings from UORCA will improve diagnostic/treatment options for diseases
+
+3. Patients
+- With better diagnostic and treatment options, we will get better health outcomes for disease patients.
+
+
+(note everything below here is from before and... would benefit from AIDER-ing most likely...)
 
 ## Applications of work
 
