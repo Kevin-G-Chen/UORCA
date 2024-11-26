@@ -25,7 +25,7 @@ To circumvent these challenges, we would need a system that can:
 - automate analysis of these datasets (including data extraction and results generation)
 - place these results in the context of other available information, e.g. from other public datasets
 
-We can leverage the power of LLMs to achieve the above. LLMs have been used in, for example, literature review (evidencing  LLMs' ability to collate information), as well as in assisting analysis of datasets (e.g. [Bioinformatics Agent](https://www.biorxiv.org/content/10.1101/2024.05.22.595240v2) or [scChat](https://www.biorxiv.org/content/10.1101/2024.10.01.616063v2.full)). These feature chat interfaces - not a limitation (and indeed, can be beneficial for data interaction), however the existence of such tools indicates that similar or identical workflows are not valuable to the scientific community.
+We can leverage the power of LLMs to achieve the above. LLMs have been used in, for example, literature review (evidencing  LLMs' ability to collate information), as well as in assisting analysis of datasets (e.g. [Bioinformatics Agent](https://www.biorxiv.org/content/10.1101/2024.05.22.595240v2) or [scChat](https://www.biorxiv.org/content/10.1101/2024.10.01.616063v2.full)). The existence of such tools indicates that similar or identical workflows are not valuable to the scientific community.
 
 __Instead, the main area where we can differentiate, gain value, and provide meaningful scientific contributions will be integrating the findings across datasets. Doing so will allow us to derive richer conclusions from datasets.__
 
@@ -51,7 +51,7 @@ A web server where the user
 2. OPTIONALLY includes their own data. The intent here would be to assist with "how does my data fit in the broader picture?"
 
 The user should then see:
-- key biological findings (e.g. important genes, proteins, transcripts)
+- key biological findings (e.g. important genes, proteins, transcripts, how they contribute to disease state)
 - LLM inputs/outputs, e.g. datasets analysed, chosen parameters, raw results, generated code
 
 ## Would will benefit from UORCA?
@@ -60,13 +60,21 @@ The user should then see:
 - Reserachers will see the current "state of play," and also be able to see where their works fits in the broader picture
 
 2. Clinicians
-- Findings from UORCA will improve diagnostic/treatment options for diseases
+- This is dependent on validating findings from UORCA - i.e. the method I use to validate generated "insights".
+- If UORCA can be shown to produce meaningful results, the "testable hypotheses" generated from UORCA can foster collaborations with wet lab researchers, potentially paving the way to influencing diagnostic/treatment protocols through experimental validation of any findings
+- These findings can then improve patient care
 
 3. Patients
 - With better diagnostic and treatment options, we will get better health outcomes for disease patients.
+- This is dependent on clinical adoption of any findings (i.e. benefits for clinicians.)
 
+## Internal collaboration opportunities
+- SampleExplorer: this would facilitate identification of relevant samples and datasets.
+- GeneInsight: I will get DEGs as part of the analysis of individual RNAseq datasets. GeneInsight could be used generate insights
+- LLM/KG mining: while I can't see using this as a sole validation method (LLM with LLM), this framework COULD help clarify any relationships between biological entities that I make. (I'd probably need to see more of it before concretely working out what would happen in reality)
+- IMPPROVE: as a variant prioritization method, if I find anything about variants (i.e. a reported insight that variant X is of importance to disease Y), I could look towards performing a similar spike-in experiment as part of a validation approach.
 
-(note everything below here is from before and... would benefit from AIDER-ing most likely...)
+__(note everything below here is from before)__
 
 ## Applications of work
 
