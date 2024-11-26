@@ -40,9 +40,11 @@ These findings are nice, and would generate testable hypotheses (e.g. if we indu
 - convince researchers that any generated insights/testable hypotheses are actually worth pursuing further
 - produce findings that can be more explicitly relevant for the clinic (e.g. are these DEGs meant to therefore be drug targets, or have I included DEGs for fun?)
 
-To convince researchers that UORCA can produce valuable findings, I don't see performing a lab experiment being a viable approach (once I validate I would argue this might be an appropriate follow up to any "insights," defined as per above). For this purpose, ideas of experiments I have include (dependent on project progression):
+To convince researchers that UORCA can produce valuable findings, I need to demonstrate that any "insights" reflect underlying biology, and that I can capture novel biological ideas. For this purpose, ideas of experiments I have include (dependent on project progression):
 - identifying novel clinical datasets, and demonstrating that results from UORCA can be used for diagnostic purposes (e.g. that a mutation can be predictive of disease progression). I would hope this could translate into better diagnoses for diseases.
 - performing docking simulations to demonstrate the possibility of repurposing a drug for treatment (e.g. if I find that gene activity for some disease is comparable to another disease, can I support this with drug-target binding predictions?)
+
+If I can successfully establish this, then I believe there is a chance that UORCA can be used to foster collaborations to incorporate wet lab validation.
 
 ## Envisaged end result
 
