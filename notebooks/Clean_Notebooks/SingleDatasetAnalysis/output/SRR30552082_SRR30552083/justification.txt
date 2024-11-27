@@ -1,0 +1,1 @@
+Analogous to the first set, this pair of Fastq files also corresponds to human RNA, indicating the use of the human index. The output is similarly organized. Parameters for bootstraps, strand specificity, and fragment lengths remain coherent with previous decisions.

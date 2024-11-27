@@ -16,7 +16,13 @@
 # Hmmm... I suspect in the end I would want all the classes/functions/prompts defined somewhere...
 # 
 
-# In[122]:
+# In[1]:
+
+
+get_ipython().system('jupyter nbconvert --to script SingleDatasetAnalysis.ipynb')
+
+
+# In[2]:
 
 
 # Load modules
@@ -32,7 +38,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import instructor
 from pydantic import BaseModel, Field
-from typing import  List, Dict, Literal, Optional
+from typing import List, Dict, Literal, Optional
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter
@@ -40,16 +46,14 @@ import statistics
 import subprocess
 from unidecode import unidecode
 import re
-import pandas as pd
-import subprocess
+from io import StringIO
 import tempfile
-import os
-import json
+import csv
 
 
 # Prepare .env file
 
-load_dotenv('../../.env') # [HARDCODED]
+load_dotenv('../../../.env') # [HARDCODED]
 
 Entrez.email = os.getenv('ENTREZ_EMAIL')
 Entrez.api_key = os.getenv('ENTREZ_API_KEY')
@@ -74,14 +78,14 @@ client = OpenAI(
 # - Datasets are extracted from this. For the moment, I only extract the first 20 datasets (hardcoded). I suppose this could be a parameter?
 # - Based on information from the extracted datasets, the relevance of the datasets to the research question is determined. This is performed three times. It'd be good to specify how many iterations are performed.
 
-# In[34]:
+# In[3]:
 
 
 # Prepare the initial search queries
 
 # Define some initial variables for demonstration purposes [HARDCODED]
 
-user_query = "Identify datasets and samples which are relevant to exploring immunotherapies for lung cancer"
+user_query = "Identify datasets and which are relevant to exploring immunotherapies for lung cancer"
 num_queries = 3
 
 # 
@@ -151,7 +155,7 @@ User query: {user_query}"""
 #    print(f"Raw expanded terms: {extracted_terms.expanded_terms}")
     
     all_terms = extracted_terms.extracted_terms + extracted_terms.expanded_terms
-    terms_with_filter = [term + ' AND "gse"[Filter]' for term in all_terms]
+    terms_with_filter = [term + ' AND "gse"[Filter] AND "expression profiling by high throughput sequencing"[DataSet Type] AND "Homo sapiens"[Organism]' for term in all_terms]
     return terms_with_filter
 
 # Extension - define function to perform term extraction multiple times
@@ -286,7 +290,7 @@ Given the following datasets and query, determine if each dataset is relevant.
                     {"role": "user", 
                      "content": prompt}
                 ],
-                max_tokens=10000
+                max_tokens=16384
             )
             response = response.choices[0].message.parsed
             results.extend([assessment.dict() for assessment in response.assessments])
@@ -375,7 +379,7 @@ async def main(user_query):
     return result_df
 
 
-# In[36]:
+# In[4]:
 
 
 # View results
@@ -397,12 +401,13 @@ dataset_relevance_df
 # - Download the metadata associated with the dataset ID (which is a NCBI GEO ID)
 # - Download FASTQ files associated with the dataset ID
 
-# In[56]:
+# In[5]:
 
 
 # [HARDCODED] For the moment, we will begin by determining the single dataset that we should analyse
 
 top_accession = dataset_relevance_df.sort_values(by="RelevanceScore", ascending=False).iloc[0]["Accession"]
+# top_accession = "GSE279637" #[HARDCODED] while I develop evaluation mechanisms
 
 # We will then use this to determine input parameters. I think I am happy leaving these hardcoded.
 output_dir_name = top_accession + "_data"
@@ -449,7 +454,7 @@ result = subprocess.run([
 # 
 # Later - I would need an evaluation mechanism for.. pretty much every step. I'm hoping I can simply develop something which goes "hey check these steps" and can be flexible beyond that.
 
-# In[57]:
+# In[6]:
 
 
 # Start by getting the documentation. This is necessary to ensure the OpenAI API knows the versions etc. that are being dealt with.
@@ -471,7 +476,7 @@ def get_documentation(command):
 kallisto_docs = get_documentation("kallisto quant --help")
 
 
-# In[89]:
+# In[7]:
 
 
 # Now determine the file locations. This gets me the FASTQ files, but is also necessary to get the SRA IDs, which I use to extract the SRA metadata.
@@ -670,7 +675,7 @@ sra_file = list_files(fastq_directory,
 sra_metadata = fetch_sra_metadata_shell(sra_file[0])
 
 
-# In[104]:
+# In[8]:
 
 
 # Above is getting a bit too chunky, so next section.
@@ -826,7 +831,7 @@ if __name__ == "__main__":
 
 # ## Part 3b - Analysing the quantification data
 
-# In[118]:
+# In[9]:
 
 
 # Start by reading the metadata... I hope this won't lead to any complications...
@@ -918,7 +923,7 @@ col_merge_info = Identify_ColMerges()
 col_merge_info
 
 
-# In[126]:
+# In[10]:
 
 
 # omg I actually give up. I think a completely different approach is needed. Now, I don't think this will change any of the results, however it is indicative of this not working to the standard I want.
@@ -997,7 +1002,7 @@ cleaned_metadata_df = process_column_merging(df, col_merge_info)
 cleaned_metadata_json = cleaned_metadata_df.to_json(orient='records', lines=False, indent=2)
 
 
-# In[128]:
+# In[11]:
 
 
 # Now to identify the contrasts...
@@ -1071,7 +1076,7 @@ Dataset summary: {study_summary}
 contrasts_data = IdentifyContrasts()
 
 
-# In[193]:
+# In[12]:
 
 
 # Generate expressions for these contrasts
@@ -1131,7 +1136,7 @@ Contrast information: {contrasts_data}
 exprs = GenerateContrastExpressions()
 
 
-# In[197]:
+# In[13]:
 
 
 # The contrast (singular in this case, I would agree this is reasonable) to analyse has been determined, now to generate DGEList object to perform the DEG analysis.
@@ -1150,7 +1155,7 @@ tx2gene_files = list_files(directory = "/home/myuser/work", # Ah. [HARDCODED]. T
 SRA_IDs = pd.read_csv(sra_file[0], sep = '\t')
 
 
-# In[189]:
+# In[14]:
 
 
 class IDMatching(BaseModel):
@@ -1202,7 +1207,7 @@ sra_to_kallisto = {match.SRA_ID: match.Kallisto_path for match in all_id_matches
 SRA_IDs['Kallisto_path'] = SRA_IDs['SRA_ID'].map(sra_to_kallisto)
 
 
-# In[199]:
+# In[15]:
 
 
 # With this being done, now I prepare the reading of the files and the execution of the R script
