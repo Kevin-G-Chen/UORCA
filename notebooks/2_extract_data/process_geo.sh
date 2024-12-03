@@ -7,11 +7,11 @@ set -euo pipefail
 
 # Function to display usage information
 usage() {
-    echo "Usage: $0 -g <GEO_ACCESSION> [-n <NUM_SPOTS>] [-o <OUTPUT_DIR>] [--force]"
-    echo "  -g, --geo_accession: GEO accession number (required)"
-    echo "  -n, --num_spots: Number of spots to download (optional, default is all)"
-    echo "  -o, --output_dir: Output directory (optional, default is current directory)"
-    echo "  -f, --force: Overwrite existing files if they exist (optional)"
+    echo "Usage: $0 -g <GEO_ACCESSION> [-n <NUM_SPOTS>] [-o <OUTPUT_DIR>] [-f]"
+    echo "  -g: GEO accession number (required)"
+    echo "  -n: Number of spots to download (optional, default is all)"
+    echo "  -o: Output directory (optional, default is current directory)"
+    echo "  -f: Overwrite existing files if they exist (optional)"
     exit 1
 }
 
@@ -20,27 +20,13 @@ log_message() {
     local message="$1"
     echo "$(date +"%Y-%m-%d %H:%M:%S") - $message" | tee -a "$MASTER_LOG"
 }
+
 # Function to log and execute commands
 log_and_execute() {
     local cmd="$1"
     log_message "Executing: $cmd"
     eval "$cmd"
 }
-# Function to log and execute commands
-log_and_execute() {
-    local cmd="$1"
-    log_message "Executing: $cmd"
-    eval "$cmd"
-}
-
-# Parse command-line options using getopt
-TEMP=$(getopt -o g:n:o:f --long geo_accession:,num_spots:,output_dir:,force -n 'process_geo.sh' -- "$@")
-if [ $? != 0 ]; then
-    echo "Error: Failed to parse options." >&2
-    usage
-fi
-
-eval set -- "$TEMP"
 
 # Initialize variables
 GEO_ACCESSION=""
@@ -48,35 +34,29 @@ NUM_SPOTS=""
 OUTPUT_DIR="."
 FORCE=false
 
-# Extract options
-while true; do
-    case "$1" in
-        -g|--geo_accession)
-            GEO_ACCESSION="$2"
-            shift 2
+# Parse command-line options using getopts
+while getopts "g:n:o:f" opt; do
+    case "$opt" in
+        g)
+            GEO_ACCESSION="$OPTARG"
             ;;
-        -n|--num_spots)
-            NUM_SPOTS="$2"
-            shift 2
+        n)
+            NUM_SPOTS="$OPTARG"
             ;;
-        -o|--output_dir)
-            OUTPUT_DIR="$2"
-            shift 2
+        o)
+            OUTPUT_DIR="$OPTARG"
             ;;
-        -f|--force)
+        f)
             FORCE=true
-            shift
-            ;;
-        --)
-            shift
-            break
             ;;
         *)
-            echo "Error: Invalid option $1" >&2
             usage
             ;;
     esac
 done
+
+# Shift off the options and optional --
+shift $((OPTIND -1))
 
 # Validate required options
 if [ -z "$GEO_ACCESSION" ]; then
@@ -116,13 +96,16 @@ execute_metadata_script() {
 # Function to execute the Bash script for FASTQ downloads
 execute_fastqs_script() {
     log_message "Starting FASTQ download using download_fastqs.sh"
-    cmd="./download_fastqs.sh --geo_accession '$GEO_ACCESSION' --output_dir '$OUTPUT_DIR'"
+    cmd="./download_fastqs.sh -g '$GEO_ACCESSION' -o '$OUTPUT_DIR'"
+
     if [ -n "$NUM_SPOTS" ]; then
-        cmd="$cmd --num_spots $NUM_SPOTS"
+        cmd="$cmd -n $NUM_SPOTS"
     fi
+
     if [ "$FORCE" = true ]; then
-        cmd="$cmd --force"
+        cmd="$cmd -f"
     fi
+
     log_and_execute "$cmd" 2>> "$MASTER_LOG"
     log_message "FASTQ download completed."
 }

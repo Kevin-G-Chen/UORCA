@@ -9,19 +9,26 @@ set -euo pipefail
 FORCE=false
 
 # Function to display usage information
+usage() {
+    echo "Usage: $0 -g <GEO_ACCESSION> [-n <NUM_SPOTS>] [-o <OUTPUT_DIR>] [-f]"
+    echo "  -g: GEO accession number (required)"
+    echo "  -n: Number of spots to download (optional, default is all)"
+    echo "  -o: Output directory (optional, default is current directory)"
+    echo "  -f: Overwrite existing files if they exist (optional)"
+    exit 1
+}
+
+# Function to log messages
+log_message() {
+    local message="$1"
+    echo "$(date +'%Y-%m-%d %H:%M:%S') - $message" >> "$ERROR_LOG"
+}
+
 # Function to log and execute commands
 log_and_execute() {
     local cmd="$1"
     echo "$(date +'%Y-%m-%d %H:%M:%S') - Executing: $cmd" >> "$ERROR_LOG"
     eval "$cmd"
-}
-usage() {
-    echo "Usage: $0 -g <GEO_ACCESSION> [-n <NUM_SPOTS>] [-o <OUTPUT_DIR>] [--force]"
-    echo "  -g, --geo_accession: GEO accession number (required)"
-    echo "  -n, --num_spots: Number of spots to download (optional, default is all)"
-    echo "  -o, --output_dir: Output directory (optional, default is current directory)"
-    echo "  -f, --force: Overwrite existing files if they exist (optional)"
-    exit 1
 }
 
 # Function to check dependencies
@@ -110,14 +117,14 @@ download_fastqs() {
         done
 
         if [ "$fastq_exists" = true ] && [ "$FORCE" = false ]; then
-            echo "FASTQ files for $SRA_ID already exist. Skipping download. Use --force to overwrite." >&2
+            echo "FASTQ files for $SRA_ID already exist. Skipping download. Use -f to overwrite." >&2
             continue
         fi
 
         # Step 1: Use fast-dump to extract reads with error logging
         if [ -n "$NUM_READS" ]; then
-        cmd="fastq-dump --split-files -X $NUM_READS -O $OUTPUT_DIR $SRA_ID"
-        if ! log_and_execute "$cmd" 2>> "$ERROR_LOG"; then
+            cmd="fastq-dump --split-files -X $NUM_READS -O $OUTPUT_DIR $SRA_ID"
+            if ! log_and_execute "$cmd" 2>> "$ERROR_LOG"; then
                 echo "Error: fastq-dump failed for $SRA_ID. Check $ERROR_LOG for details." >&2
                 exit 1
             fi
@@ -133,7 +140,7 @@ download_fastqs() {
             if [ -f "$fastq_file" ]; then
                 sorted_file="${fastq_file}.sorted"
                 if [ -f "$sorted_file" ] && [ "$FORCE" = false ]; then
-                    echo "Sorted file $sorted_file already exists. Skipping sorting. Use --force to overwrite." >&2
+                    echo "Sorted file $sorted_file already exists. Skipping sorting. Use -f to overwrite." >&2
                     continue
                 fi
 
@@ -148,7 +155,7 @@ download_fastqs() {
             if [ -f "$fastq_file" ]; then
                 gz_file="${fastq_file}.gz"
                 if [ -f "$gz_file" ] && [ "$FORCE" = false ]; then
-                    echo "Gzipped file $gz_file already exists. Skipping gzipping. Use --force to overwrite." >&2
+                    echo "Gzipped file $gz_file already exists. Skipping gzipping. Use -f to overwrite." >&2
                     continue
                 fi
 
@@ -159,49 +166,29 @@ download_fastqs() {
     done
 }
 
-# Parse command-line options using getopt
-TEMP=$(getopt -o g:n:o:f --long geo_accession:,num_spots:,output_dir:,force -n 'download_fastqs.sh' -- "$@")
-if [ $? != 0 ]; then
-    echo "Error: Failed to parse options." >&2
-    usage
-fi
-
-eval set -- "$TEMP"
-
-# Initialize variables
-GEO_ACCESSION=""
-NUM_SPOTS=""
-OUTPUT_DIR="."
-
-# Extract options
-while true; do
-    case "$1" in
-        -g|--geo_accession)
-            GEO_ACCESSION="$2"
-            shift 2
+# Parse command-line options using getopts
+while getopts "g:n:o:f" opt; do
+    case "$opt" in
+        g)
+            GEO_ACCESSION="$OPTARG"
             ;;
-        -n|--num_spots)
-            NUM_SPOTS="$2"
-            shift 2
+        n)
+            NUM_SPOTS="$OPTARG"
             ;;
-        -o|--output_dir)
-            OUTPUT_DIR="$2"
-            shift 2
+        o)
+            OUTPUT_DIR="$OPTARG"
             ;;
-        -f|--force)
+        f)
             FORCE=true
-            shift
-            ;;
-        --)
-            shift
-            break
             ;;
         *)
-            echo "Error: Invalid option $1" >&2
             usage
             ;;
     esac
 done
+
+# Shift off the options and optional --
+shift $((OPTIND -1))
 
 # Validate required options
 if [ -z "$GEO_ACCESSION" ]; then
