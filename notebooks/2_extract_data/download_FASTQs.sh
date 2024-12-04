@@ -7,6 +7,13 @@ set -euo pipefail
 
 # Default value for FORCE flag
 FORCE=false
+OUTPUT_DIR="."
+ERROR_LOG=""  # Will be initialized after OUTPUT_DIR is finalized
+# Error logging function
+log_error() {
+    local message="$1"
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - ERROR: $message" | tee -a "$ERROR_LOG" >&2
+}
 
 # Function to display usage information
 usage() {
@@ -18,17 +25,27 @@ usage() {
     exit 1
 }
 
+
 # Function to log messages
 log_message() {
     local message="$1"
-    echo "$(date +'%Y-%m-%d %H:%M:%S') - $message" >> "$ERROR_LOG"
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - $message" | tee -a "$ERROR_LOG"
 }
 
 # Function to log and execute commands
 log_and_execute() {
     local cmd="$1"
-    echo "$(date +'%Y-%m-%d %H:%M:%S') - Executing: $cmd" >> "$ERROR_LOG"
-    eval "$cmd"
+    local log_output=${2:-true}  # Optional parameter to control output logging
+
+    log_message "Executing: $cmd"
+    if [ "$log_output" = true ]; then
+        eval "$cmd"
+    else
+        # Execute without capturing output in logs
+        local output
+        output=$(eval "$cmd" 2>> "$ERROR_LOG")
+        echo "$output"
+    fi
 }
 
 # Function to check dependencies
@@ -36,7 +53,7 @@ check_dependencies() {
     local dependencies=(esearch efetch xtract fastq-dump gzip)
     for cmd in "${dependencies[@]}"; do
         if ! command -v "$cmd" &> /dev/null; then
-            echo "Error: $cmd is not installed or not in PATH." >&2
+            log_message "Error: $cmd is not installed or not in PATH."
             exit 1
         fi
     done
@@ -49,12 +66,13 @@ get_sra_ids() {
     local SRA_ID_FILE="$OUTPUT_DIR/sra_ids.txt"
 
     # Fetch related GSM sample IDs
-    echo "Fetching SRA IDs for GEO accession: $GEO_ACCESSION" >&2
+    log_message "Fetching SRA IDs for GEO accession: $GEO_ACCESSION"
     cmd="esearch -db gds -query '${GEO_ACCESSION}[ACCN] AND GSM[ETYP]' | efetch -format docsum | xtract -pattern DocumentSummary -element Accession"
-    samples=$(log_and_execute "$cmd")
+    # Execute command directly instead of through log_and_execute to avoid parsing the log message
+    samples=$(eval "$cmd" 2>> "$ERROR_LOG")
 
     if [ -z "$samples" ]; then
-        echo "No GSM samples found for GEO accession: $GEO_ACCESSION" >&2
+        log_message "No GSM samples found for GEO accession: $GEO_ACCESSION"
         exit 1
     fi
 
@@ -62,12 +80,22 @@ get_sra_ids() {
     echo -e "sample_ID\texperiment\tSRA_ID" > "$SRA_ID_FILE"
 
     # Process each GSM sample ID
-    for sample in $samples; do
-        echo "Processing sample: $sample" >&2
+        for sample in $samples; do
+            # Validate sample ID format (should be GSM followed by numbers)
+            if [[ ! "$sample" =~ ^GSM[0-9]+$ ]]; then
+                log_message "Warning: Invalid sample ID format: $sample, skipping"
+                continue
+            fi
 
-        # Get corresponding Experiment and Run IDs
-        cmd="esearch -db sra -query '$sample' | efetch -format docsum | xtract -pattern DocumentSummary -element Experiment@acc,Run@acc | tr '\n' ',' | sed 's/,\$//'"
-        ids=$(log_and_execute "$cmd")
+            log_message "Processing sample: $sample"
+
+            # Get corresponding Experiment and Run IDs with explicit error handling
+            cmd="esearch -db sra -query '$sample' | efetch -format docsum | xtract -pattern DocumentSummary -element Experiment@acc,Run@acc"
+            ids=$(eval "$cmd" 2>> "$ERROR_LOG" | tr '\n' ',' | sed 's/,$//')
+            if [ $? -ne 0 ]; then
+                log_message "Error retrieving IDs for sample $sample"
+                continue
+            fi
 
         # If no IDs found, set to "No IDs found"
         if [ -z "$ids" ]; then
@@ -81,7 +109,9 @@ get_sra_ids() {
         echo -e "${sample}\t${ids}" >> "$SRA_ID_FILE"
     done
 
-    echo "SRA IDs have been saved to $SRA_ID_FILE" >&2
+    log_message "SRA IDs have been saved to $SRA_ID_FILE"
+    # Convert to long format if needed
+    convert_to_long_format "$SRA_ID_FILE"
 }
 
 # Function to download and process FASTQ files
@@ -89,22 +119,15 @@ download_fastqs() {
     local INPUT_FILE=$1
     local NUM_READS=$2
     local OUTPUT_DIR=$3
-    local ERROR_LOG="$OUTPUT_DIR/processing.log"
 
     # Read the file line by line, skipping the header
     tail -n +2 "$INPUT_FILE" | while IFS=$'\t' read -r sample_ID experiment SRA_ID; do
         if [[ "$SRA_ID" == "No_IDs_found" ]]; then
-            echo "Skipping sample $sample_ID due to missing SRA_ID." >&2
+        log_message "Skipping sample $sample_ID due to missing SRA_ID."
             continue
         fi
 
-        # Validate SRA ID format
-        if [[ ! "$SRA_ID" =~ ^SRR[0-9]{8,}$ ]]; then
-            echo "Warning: Invalid SRA ID format '$SRA_ID'. Skipping." >&2
-            continue
-        fi
-
-        echo "Processing $SRA_ID..." >&2
+        log_message "Processing $SRA_ID..."
 
         # Define FASTQ file patterns
         fastq_files=("${OUTPUT_DIR}/${SRA_ID}"_*.fastq)
@@ -117,7 +140,7 @@ download_fastqs() {
         done
 
         if [ "$fastq_exists" = true ] && [ "$FORCE" = false ]; then
-            echo "FASTQ files for $SRA_ID already exist. Skipping download. Use -f to overwrite." >&2
+        log_message "FASTQ files for $SRA_ID already exist. Skipping download. Use -f to overwrite."
             continue
         fi
 
@@ -125,12 +148,12 @@ download_fastqs() {
         if [ -n "$NUM_READS" ]; then
             cmd="fastq-dump --split-files -X $NUM_READS -O $OUTPUT_DIR $SRA_ID"
             if ! log_and_execute "$cmd" 2>> "$ERROR_LOG"; then
-                echo "Error: fastq-dump failed for $SRA_ID. Check $ERROR_LOG for details." >&2
+                log_message "Error: fastq-dump failed for $SRA_ID"
                 exit 1
             fi
         else
             if ! fastq-dump --split-files -O "$OUTPUT_DIR" "$SRA_ID" 2>> "$ERROR_LOG"; then
-                echo "Error: fastq-dump failed for $SRA_ID. Check $ERROR_LOG for details." >&2
+            log_message "Error: fastq-dump failed for $SRA_ID. Check $ERROR_LOG for details."
                 exit 1
             fi
         fi
@@ -140,11 +163,11 @@ download_fastqs() {
             if [ -f "$fastq_file" ]; then
                 sorted_file="${fastq_file}.sorted"
                 if [ -f "$sorted_file" ] && [ "$FORCE" = false ]; then
-                    echo "Sorted file $sorted_file already exists. Skipping sorting. Use -f to overwrite." >&2
+                log_message "Sorted file $sorted_file already exists. Skipping sorting. Use -f to overwrite."
                     continue
                 fi
 
-                echo "Sorting $fastq_file..." >&2
+                log_message "Sorting $fastq_file..."
                 paste - - - - < "$fastq_file" | sort -k1,1 -t " " | tr "\t" "\n" > "${sorted_file}"
                 mv "${sorted_file}" "$fastq_file"
             fi
@@ -155,15 +178,38 @@ download_fastqs() {
             if [ -f "$fastq_file" ]; then
                 gz_file="${fastq_file}.gz"
                 if [ -f "$gz_file" ] && [ "$FORCE" = false ]; then
-                    echo "Gzipped file $gz_file already exists. Skipping gzipping. Use -f to overwrite." >&2
+                log_message "Gzipped file $gz_file already exists. Skipping gzipping. Use -f to overwrite."
                     continue
                 fi
 
-                echo "Gzipping $fastq_file..." >&2
+                log_message "Gzipping $fastq_file..."
                 gzip -f "$fastq_file"
             fi
         done
     done
+}
+
+
+# Function to convert sra_ids file to long format
+convert_to_long_format() {
+    local INPUT_FILE=$1
+    local TEMP_FILE="${INPUT_FILE}.temp"
+    local HEADER="sample_ID\texperiment\tSRA_ID"
+
+    # Write header to temp file
+    echo -e "$HEADER" > "$TEMP_FILE"
+
+    # Process each line (skipping header)
+    tail -n +2 "$INPUT_FILE" | while IFS=$'\t' read -r sample_id experiment srr_ids; do
+        # Split SRR IDs on whitespace and create a row for each
+        for srr_id in $srr_ids; do
+            echo -e "${sample_id}\t${experiment}\t${srr_id}" >> "$TEMP_FILE"
+        done
+    done
+
+    # Replace original file with temp file
+    mv "$TEMP_FILE" "$INPUT_FILE"
+    log_message "Converted SRA IDs file to long format"
 }
 
 # Parse command-line options using getopts
@@ -201,13 +247,16 @@ check_dependencies
 
 # Ensure output directory exists
 mkdir -p "$OUTPUT_DIR"
-
-# Initialize error log
+# Initialize single log file
 ERROR_LOG="$OUTPUT_DIR/processing.log"
 echo "Processing started at $(date)" > "$ERROR_LOG"
 
+
 # Trap to clean up on errors
-trap 'echo "An error occurred. Check $ERROR_LOG for details." >&2; exit 1' ERR
+trap 'log_error "An error occurred on line $LINENO: $BASH_COMMAND"; exit 1' ERR
+
+# Redirect stderr to log file while preserving terminal output
+exec 2> >(tee -a "$ERROR_LOG" >&2)
 
 # Step 1: Get SRA IDs
 get_sra_ids "$GEO_ACCESSION" "$OUTPUT_DIR"
@@ -216,4 +265,4 @@ get_sra_ids "$GEO_ACCESSION" "$OUTPUT_DIR"
 echo "Downloading and processing FASTQ files..." >&2
 download_fastqs "$OUTPUT_DIR/sra_ids.txt" "$NUM_SPOTS" "$OUTPUT_DIR"
 
-echo "FASTQ download and processing completed for $GEO_ACCESSION" >&2
+log_message "FASTQ download and processing completed for $GEO_ACCESSION"
