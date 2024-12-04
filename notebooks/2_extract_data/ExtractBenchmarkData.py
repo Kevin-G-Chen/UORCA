@@ -1,5 +1,4 @@
-# In this file, I will ensure that I am able to extract the data out of my benchmark datasets. This will involve me developing my code based on what works and doesn't - what I have works in basic cases, but I need to expand this to more complicated cases as well.
-!pip install ratelimit
+
 # %% Loading modules
 import pandas as pd
 from pathlib import Path
@@ -11,6 +10,18 @@ from tqdm import tqdm
 import time
 from ratelimit import limits, sleep_and_retry
 
+# Helper function to find scripts directory
+def find_scripts_dir(start_path: Path) -> Path:
+    """Find the directory containing the required scripts by searching up from start_path."""
+    current = start_path
+    required_scripts = ['process_geo.sh', 'download_metadata.R', 'download_FASTQs.sh']
+
+    while current != current.parent:  # Stop at root directory
+        if all((current / script).exists() for script in required_scripts):
+            return current
+        current = current.parent
+
+    raise FileNotFoundError(f"Could not find directory containing required scripts: {required_scripts}")
 # %% Define processing function
 
 def process_geo_accession(accession: str,
@@ -47,35 +58,35 @@ def process_geo_accession(accession: str,
 
     # Set default output directory if none provided
     if output_dir is None:
-        output_dir = Path("accession" + "_data")
+        output_dir = Path(accession + "_data")
 
     # Construct script path - looking in the same directory as this notebook
-    notebook_dir = Path().absolute()
-    script_path = notebook_dir / "process_geo.sh"
+        notebook_dir = Path().absolute()
+        script_path = notebook_dir / "process_geo.sh"
 
-    print(f"Notebook directory: {notebook_dir}")
-    print(f"Looking for script at: {script_path}")
-    print(f"Script exists: {script_path.exists()}")
-    print(f"Script is executable: {os.access(str(script_path), os.X_OK) if script_path.exists() else False}")
+        print(f"Notebook directory: {notebook_dir}")
+        print(f"Looking for script at: {script_path}")
+        print(f"Script exists: {script_path.exists()}")
+        print(f"Script is executable: {os.access(str(script_path), os.X_OK) if script_path.exists() else False}")
 
-    if not script_path.exists():
-        # Try alternate locations relative to notebook directory
-        alt_paths = [
-            notebook_dir / "process_geo.sh",
-            notebook_dir / ".." / "process_geo.sh",
-            notebook_dir / "scripts" / "process_geo.sh"
-        ]
+        if not script_path.exists():
+            # Try alternate locations relative to notebook directory
+            alt_paths = [
+                notebook_dir / "process_geo.sh",
+                notebook_dir / ".." / "process_geo.sh",
+                notebook_dir / "scripts" / "process_geo.sh"
+            ]
 
-        for path in alt_paths:
-            if path.exists():
-                script_path = path
-                break
-        else:
-            searched_paths = [script_path] + alt_paths
-            raise FileNotFoundError(
-                f"process_geo.sh script not found. Searched in:\n" +
-                "\n".join(f"- {p}" for p in searched_paths)
-            )
+            for path in alt_paths:
+                if path.exists():
+                    script_path = path
+                    break
+            else:
+                searched_paths = [script_path] + alt_paths
+                raise FileNotFoundError(
+                    f"process_geo.sh script not found. Searched in:\n" +
+                    "\n".join(f"- {p}" for p in searched_paths)
+                )
 
     # Ensure script is executable
     if not os.access(str(script_path), os.X_OK):
@@ -108,8 +119,19 @@ def process_geo_accession(accession: str,
         return result
     except subprocess.CalledProcessError as e:
         print(f"Error processing {accession}:")
-        print(f"stdout: {e.stdout}")
-        print(f"stderr: {e.stderr}")
+
+        # Print error details from both log files
+        master_log = output_dir / "master.log"
+        processing_log = output_dir / "processing.log"
+
+        if master_log.exists():
+            print("\nContents of master.log:")
+            print(master_log.read_text())
+
+        if processing_log.exists():
+            print("\nContents of processing.log:")
+            print(processing_log.read_text())
+
         raise
 
 # %% Prepare the input file
@@ -130,8 +152,10 @@ print(f"Successfully loaded {len(benchmark)} benchmark dataset accessions")
 
 # %% Example usage
 # Process a single accession
-# result = process_geo_accession("GSE279637")
+result = process_geo_accession("GSE213001",
+    n_spots=2000)
 
+# %% All benchmark datasets
 # Process all benchmark datasets
 # for acc in benchmark:
 #     try:
@@ -142,7 +166,7 @@ print(f"Successfully loaded {len(benchmark)} benchmark dataset accessions")
 # Rate limit to 2 requests per second
 @sleep_and_retry
 @limits(calls=2, period=1)
-def rate_limited_process(acc, n_spots=2000):
+def rate_limited_process(acc, n_spots=80000):
     try:
         return process_geo_accession(acc, n_spots=n_spots)
     except Exception as e:

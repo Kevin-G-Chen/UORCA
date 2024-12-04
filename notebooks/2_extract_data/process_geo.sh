@@ -67,36 +67,69 @@ fi
 # Ensure output directory exists
 mkdir -p "$OUTPUT_DIR"
 
-# Initialize master log
-MASTER_LOG="$OUTPUT_DIR/processing_master.log"
-echo "Master processing started at $(date)" > "$MASTER_LOG"
+# Initialize master log file
+MASTER_LOG="$OUTPUT_DIR/master.log"
+echo "Processing started at $(date)" > "$MASTER_LOG"
+# Error logging function
+log_error() {
+    local message="$1"
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - ERROR: $message" | tee -a "$MASTER_LOG" >&2
+}
+
+# Redirect stderr to log file while preserving terminal output
+exec 2> >(tee -a "$MASTER_LOG" >&2)
+
+# Function to log messages
+log_message() {
+    local message="$1"
+    echo "$(date +"%Y-%m-%d %H:%M:%S") - $message" | tee -a "$MASTER_LOG"
+}
 
 # Function to check if scripts exist and are executable
 check_scripts() {
-    local scripts=("download_metadata.R" "download_fastqs.sh")
+    # Get directory where this script is located
+    SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+    # Debug output
+    log_message "Debug: Script directory is $SCRIPT_DIR"
+    log_message "Debug: Current working directory is $(pwd)"
+    log_message "Debug: PATH is $PATH"
+    local scripts=("download_metadata.R" "download_FASTQs.sh")
     for script in "${scripts[@]}"; do
-        if [ ! -f "$script" ]; then
-            echo "Error: Required script '$script' not found in the current directory." >&2
+        script_path="$SCRIPT_DIR/$script"
+        echo "Debug: Checking for script at $script_path"
+        if [ ! -f "$script_path" ]; then
+            echo "Error: Required script '$script' not found in $SCRIPT_DIR" >&2
+            echo "Debug: Directory contents of $SCRIPT_DIR:"
+            ls -la "$SCRIPT_DIR"
             exit 1
         fi
-        if [ "${script##*.}" = "sh" ] && [ ! -x "$script" ]; then
-            chmod +x "$script"
+        if [ "${script##*.}" = "sh" ] && [ ! -x "$script_path" ]; then
+            echo "Debug: Making $script_path executable"
+            chmod +x "$script_path"
         fi
+        echo "Debug: Found and validated $script_path"
     done
 }
 
 # Function to execute the R script for metadata
 execute_metadata_script() {
     log_message "Starting metadata download using download_metadata.R"
-    cmd="Rscript download_metadata.R --geo_accession '$GEO_ACCESSION' --output_dir '$OUTPUT_DIR'"
+    cmd="Rscript $SCRIPT_DIR/download_metadata.R --geo_accession '$GEO_ACCESSION' --output_dir '$OUTPUT_DIR'"
+    echo "Debug: Executing metadata command: $cmd"
+    echo "Debug: R executable location: $(which Rscript)"
+    echo "Debug: R version: $(Rscript --version 2>&1)"
     log_and_execute "$cmd" 2>> "$MASTER_LOG"
+    echo "Debug: Metadata script exit code: $?"
     log_message "Metadata download completed."
 }
 
 # Function to execute the Bash script for FASTQ downloads
 execute_fastqs_script() {
     log_message "Starting FASTQ download using download_fastqs.sh"
-    cmd="./download_fastqs.sh -g '$GEO_ACCESSION' -o '$OUTPUT_DIR'"
+    echo "Debug: FASTQ script permissions:"
+    ls -l "$SCRIPT_DIR/download_FASTQs.sh"
+    cmd="$SCRIPT_DIR/download_FASTQs.sh -g '$GEO_ACCESSION' -o '$OUTPUT_DIR'"
+    echo "Debug: FASTQ command to execute: $cmd"
 
     if [ -n "$NUM_SPOTS" ]; then
         cmd="$cmd -n $NUM_SPOTS"
@@ -109,6 +142,9 @@ execute_fastqs_script() {
     log_and_execute "$cmd" 2>> "$MASTER_LOG"
     log_message "FASTQ download completed."
 }
+
+# Add error trap
+trap 'echo "Debug: Error on line $LINENO. Exit code: $?"' ERR
 
 # Main execution
 main() {
