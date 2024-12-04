@@ -84,6 +84,7 @@ httr
 ids
 IRanges
 isoband
+janitor
 jquerylib
 jsonlite
 KEGGREST
@@ -149,6 +150,7 @@ sass
 scales
 selectr
 shadowtext
+snakecase
 snow
 spatial
 stringi
