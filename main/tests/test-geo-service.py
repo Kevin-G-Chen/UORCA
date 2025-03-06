@@ -11,8 +11,8 @@ from pathlib import Path
 # Add the parent directory to the path so we can import the module
 sys.path.append(str(Path(__file__).parent.parent))
 
-from ..services.geo_service import GEOService
-from ..models.geo_models import GEOSearchQuery, OmicsType
+from main.services.geo_service import GEOService
+from main.models.geo_models import GEOSearchQuery, OmicsType
 
 class TestGEOService(unittest.TestCase):
     """Tests for the GEO service."""
