@@ -183,3 +183,14 @@ def process_all_accessions(accessions, max_workers=4):
 
 # Process all accessions
 results = process_all_accessions(benchmark)
+# %% Temporary progress
+# Just to accelerate a bit. My progress got interrupted, so I'm manually restarting.
+# At time of writing, the only dataset I am waiting on is GSE230370
+
+benchmark = pd.Series([
+    'GSE235236', 'GSE64712', 'GSE236761',
+    'GSE63392', 'GSE119027', 'GSE133702', 'GSE126096',
+    'GSE242084',
+    'GSE230370'
+], name='accession')
+benchmark
