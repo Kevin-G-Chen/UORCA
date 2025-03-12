@@ -1,50 +1,79 @@
 # %% Imports
 import os
 import sys
+import time
+import json
+import csv
+import re
+import statistics
+import subprocess
+import tempfile
+from io import StringIO
+from enum import Enum
 from typing import List, Dict, Any, Optional, Union, Literal
-from pydantic import BaseModel, Field
+
 import pandas as pd
 import numpy as np
-from enum import Enum
+from pydantic import BaseModel, Field
+
+# Third‐party modules
+from Bio import Entrez
+import requests
+
+# Load environment variables (for Entrez and OpenAI keys, etc.)
+from dotenv import load_dotenv
+load_dotenv()
+
+# Prepare Entrez settings
+Entrez.email = os.getenv("ENTREZ_EMAIL")
+Entrez.api_key = os.getenv("ENTREZ_API_KEY")
+# For running async code in Jupyter notebooks
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    print("nest_asyncio not found. Install it for better notebook compatibility: pip install nest_asyncio")
 
 # Add these if you have PydanticAI installed
 try:
     from pydantic_ai import Agent, RunContext
     from pydantic_ai.tools import Tool
+    from pydantic_ai.usage import Usage
 except ImportError:
     print("PydanticAI not installed. Using mock classes for demonstration.")
-    # Mock classes for demonstration
     class Agent:
-        def __init__(self, name=None, description=None, deps_type=None, system_prompt=None):
+        def __init__(self, name=None, description=None, deps_type=None, system_prompt=None, result_type=None):
             self.name = name
             self.description = description
             self.deps_type = deps_type
             self.system_prompt = system_prompt
-
+            self.result_type = result_type
         def tool(self, func=None):
             return func
-
         def tool_plain(self, func=None):
             return func
-
-        def execute_workflow(self, *args, **kwargs):
-            return None
-
+        async def run(self, prompt, usage=None, deps=None):
+            class DummyResult:
+                def __init__(self, data):
+                    self.data = data
+            return DummyResult(prompt)
     class RunContext:
-        def __init__(self, deps=None):
+        def __init__(self, deps=None, usage=None):
             self.deps = deps
-
+            self.usage = usage
     class Tool:
         def __init__(self, func=None, name=None, description=None, takes_ctx=True):
             self.func = func
             self.name = name
             self.description = description
             self.takes_ctx = takes_ctx
-
         def __call__(self, *args, **kwargs):
             if self.func:
                 return self.func(*args, **kwargs)
             return None
+
+
+
 
 # %% Define Data Models
 class GEODataset(BaseModel):
@@ -102,141 +131,131 @@ class WorkflowDependencies(BaseModel):
     query: str
     temp_dir: str = "/tmp/rnaseq_data"
 
-    # In a real implementation, this would include shared resources:
-    # database_conn: Optional[DatabaseConn] = None  # Database connection
-    # api_client: Optional[ApiClient] = None        # API client for external services
-    # cache: Dict[str, Any] = Field(default_factory=dict)  # Shared cache across agents
-
-    # You might add helper methods here that all agents could use
     def get_download_path(self, filename: str) -> str:
-        """Get the full path for a file to be downloaded."""
         return os.path.join(self.temp_dir, filename)
 
     def ensure_temp_dir(self) -> None:
-        """Ensure the temporary directory exists."""
         os.makedirs(self.temp_dir, exist_ok=True)
+
+# %% Helper Functions for GEO search
+def perform_search(term: str) -> Dict[str, Any]:
+    """Perform a GEO search using Entrez esearch."""
+    handle = Entrez.esearch(db="gds", term=term, retmode="xml", retmax=50)
+    results = Entrez.read(handle)
+    handle.close()
+    return results
+
+def create_geo_dataframe(geo_ids: List[str], batch_size: int = 10) -> pd.DataFrame:
+    """Create a DataFrame from GEO search results using batch processing."""
+    data = []
+    from tqdm import tqdm
+    for i in tqdm(range(0, len(geo_ids), batch_size), desc="Processing GEO IDs in batches"):
+        batch_ids = geo_ids[i:i + batch_size]
+        ids_str = ",".join(batch_ids)
+        handle = Entrez.esummary(db="gds", id=ids_str, retmode="xml")
+        output = Entrez.read(handle)
+        handle.close()
+        for geo_id, geo_data in zip(batch_ids, output):
+            if isinstance(geo_data, dict):
+                data.append({
+                    'ID': geo_id,
+                    'Title': geo_data.get('title', 'No title available'),
+                    'Summary': geo_data.get('summary', 'No summary available'),
+                    'Accession': geo_data.get('Accession', geo_id),
+                    'Species': geo_data.get('taxon', 'No taxon available'),
+                    'Date': geo_data.get('PDAT', 'Unknown')
+                })
+            else:
+                data.append({'ID': geo_id, 'Title': 'Error', 'Summary': 'Unable to fetch data', 'Accession': 'Error'})
+        time.sleep(0.2)
+    return pd.DataFrame(data)
 
 # %% Dataset Identification Agent
 DatasetIdentificationAgent = Agent[None, List[GEODataset]](
-    'openai:gpt-4o',  # Specify a model
-    system_prompt=("You are a specialist in identifying relevant genomic datasets from GEO databases for research queries. "
-        "Evaluate datasets based on their relevance to the research question and provide ranked results."),
-    result_type=List[GEODataset]  # Specify the expected return type
+    'openai:gpt-4o',
+    system_prompt=(
+        "You are a specialist in identifying relevant genomic datasets from GEO databases for research queries. "
+        "Use actual GEO search results to rank datasets by relevance."
+    ),
+    result_type=List[GEODataset],
+    model_config={"arbitrary_types_allowed": True}
 )
-
 
 @DatasetIdentificationAgent.tool
 def query_geo_datasets(ctx: RunContext, query: str, max_results: int = 10) -> List[GEODataset]:
-    """
-    Query NCBI GEO for datasets matching the given query.
-
-    Args:
-        query: The research query.
-        max_results: Maximum number of results to return.
-
-    Returns:
-        A list of GEODataset objects.
-    """
-    # In a real implementation, this would make API calls to NCBI GEO
-    # For demonstration, return mock data
-    mock_datasets = [
-        GEODataset(
-            accession=f"GSE1000{i}",
-            title=f"RNA-seq analysis of {query.split()[0]} in human cells",
-            summary=f"This dataset contains RNA-seq data from {query}.",
-            organism="Homo sapiens",
-            samples=6 + i,
-            platform="Illumina HiSeq 2500"
+    """Query NCBI GEO for datasets matching the given query using Entrez."""
+    search_results = perform_search(query)
+    geo_ids = search_results.get("IdList", [])[:max_results]
+    if not geo_ids:
+        return []
+    df = create_geo_dataframe(geo_ids)
+    datasets = []
+    for _, row in df.iterrows():
+        ds = GEODataset(
+            accession=row["Accession"],
+            title=row["Title"],
+            summary=row["Summary"],
+            organism=row["Species"],
+            samples=int(row.get("samples", 6)),  # Use 6 if missing
+            platform="Illumina HiSeq 2500"  # Hardcoded; replace if available
         )
-        for i in range(1, max_results+1)
-    ]
-    return mock_datasets
+        datasets.append(ds)
+    return datasets
 
 @DatasetIdentificationAgent.tool
 def evaluate_dataset_relevance(ctx: RunContext, datasets: List[GEODataset], query: str) -> List[GEODataset]:
-    """
-    Evaluate the relevance of each dataset to the research query.
-
-    Args:
-        datasets: List of GEODataset objects.
-        query: The research query.
-
-    Returns:
-        A list of GEODataset objects with relevance scores.
-    """
-    # In a real implementation, this would use NLP or other techniques to score relevance
-    # For demonstration, assign random scores
-    import random
-    for dataset in datasets:
-        dataset.relevance_score = random.uniform(0.5, 1.0)
-
-    # Sort by relevance score
-    return sorted(datasets, key=lambda x: x.relevance_score, reverse=True)
+    """Evaluate relevance based on simple keyword matching in title and summary."""
+    query_lower = query.lower()
+    for ds in datasets:
+        score = 0.0
+        if query_lower in ds.title.lower():
+            score += 1.0
+        if query_lower in ds.summary.lower():
+            score += 0.5
+        ds.relevance_score = score
+    return sorted(datasets, key=lambda x: x.relevance_score, reverse=True) # [CHANGE] I will prefer to use an LLM prompt
 
 @DatasetIdentificationAgent.tool
 def select_best_dataset(ctx: RunContext, datasets: List[GEODataset]) -> GEODataset:
-    """
-    Select the best dataset based on relevance score.
-
-    Args:
-        datasets: List of GEODataset objects with relevance scores.
-
-    Returns:
-        The best GEODataset object.
-    """
     if not datasets:
         raise ValueError("No datasets provided")
-
-    # Select the dataset with the highest relevance score
-    return max(datasets, key=lambda x: x.relevance_score or 0)
+    return max(datasets, key=lambda x: x.relevance_score or 0) # [CHANGE] This seems to only return a single dataset, so will need to be changed
 
 # %% Data Extraction Agent
+
+# In general need to revise how this is done
+
 DataExtractionAgent = Agent[WorkflowDependencies, Dict[str, Any]](
-    'openai:gpt-4o',  # Specify a model
-    deps_type=WorkflowDependencies,  # Specify the dependency type
-    result_type=Dict[str, Any],  # Specify the expected return type
-    system_prompt="You are a specialist in extracting and processing genomic data files from GEO datasets. "
-        "Extract FASTQ files, metadata, and prepare the data for analysis."
+    'openai:gpt-4o',
+    deps_type=WorkflowDependencies,
+    result_type=Dict[str, Any],
+    system_prompt=(
+        "You are a specialist in extracting genomic data from GEO datasets. "
+        "Retrieve FASTQ file URLs and metadata using standard GEO conventions."
+    ),
+    model_config={"arbitrary_types_allowed": True}
 )
 
 @DataExtractionAgent.tool
-def extract_fastq_files(ctx: RunContext, dataset: GEODataset) -> List[DataFile]:
-    """
-    Extract FASTQ files from the given dataset.
-
-    Args:
-        dataset: A GEODataset object.
-
-    Returns:
-        A list of DataFile objects representing FASTQ files.
-    """
-    # In a real implementation, this would make API calls to NCBI GEO/SRA
-    # For demonstration, return mock data
-    fastq_files = [
-        DataFile(
-            dataset_accession=dataset.accession,
-            file_id=f"{dataset.accession}_sample{i}_R{j}",
-            file_type="fastq",
-            file_url=f"https://example.com/{dataset.accession}_sample{i}_R{j}.fastq.gz",
-            file_size=10000000 + i * 1000000 + j * 100000
-        )
-        for i in range(1, dataset.samples + 1) for j in range(1, 3)  # Paired-end reads
-    ]
+def extract_fastq_files(ctx: RunContext, dataset: GEODataset) -> List[DataFile]: # This caused problems for me in the past, so will need to look at this carefully
+    """Construct FASTQ file URLs based on GEO accession."""
+    fastq_files = []
+    for i in range(1, dataset.samples + 1):
+        for j in range(1, 3):  # Assume paired-end - [CHANGE] cannot assume this
+            file_id = f"{dataset.accession}_sample{i}_R{j}"
+            # Construct URL using a typical GEO FTP path (this is illustrative)
+            file_url = f"https://ftp.ncbi.nlm.nih.gov/geo/samples/{dataset.accession[:-3]}nnn/{dataset.accession}/{file_id}.fastq.gz"
+            fastq_files.append(DataFile(
+                dataset_accession=dataset.accession,
+                file_id=file_id,
+                file_type="fastq",
+                file_url=file_url
+            ))
     return fastq_files
 
 @DataExtractionAgent.tool
 def extract_metadata(ctx: RunContext, dataset: GEODataset) -> Dict[str, Any]:
-    """
-    Extract metadata from the given dataset.
-
-    Args:
-        dataset: A GEODataset object.
-
-    Returns:
-        A dictionary containing metadata.
-    """
-    # In a real implementation, this would parse metadata from GEO
-    # For demonstration, return mock data
+    """Extract metadata by using dataset information and standard GEO structure."""
     metadata = {
         "accession": dataset.accession,
         "title": dataset.title,
@@ -246,7 +265,7 @@ def extract_metadata(ctx: RunContext, dataset: GEODataset) -> Dict[str, Any]:
             {
                 "sample_id": f"{dataset.accession}_sample{i}",
                 "condition": "treatment" if i % 2 == 0 else "control",
-                "replicate": (i // 2) + 1,
+                "replicate": (i // 2) + 1
             }
             for i in range(1, dataset.samples + 1)
         ]
@@ -255,437 +274,261 @@ def extract_metadata(ctx: RunContext, dataset: GEODataset) -> Dict[str, Any]:
 
 @DataExtractionAgent.tool
 def download_files(ctx: RunContext, files: List[DataFile], download_dir: str) -> List[DataFile]:
-    """
-    Download the specified files.
-
-    Args:
-        files: List of DataFile objects.
-        download_dir: Directory to download files to.
-
-    Returns:
-        Updated list of DataFile objects with download status and file paths.
-    """
-    # In a real implementation, this would download files from URLs
-    # For demonstration, update the objects as if they were downloaded
+    """Download files using HTTP requests."""
     os.makedirs(download_dir, exist_ok=True)
-
     for file in files:
-        file_name = file.file_url.split("/")[-1]
-        file.file_path = os.path.join(download_dir, file_name)
-        file.downloaded = True
-
+        try:
+            r = requests.get(file.file_url, stream=True)
+            if r.status_code == 200:
+                file_name = os.path.basename(file.file_url)
+                file_path = os.path.join(download_dir, file_name)
+                with open(file_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                file.downloaded = True
+                file.file_path = file_path
+            else:
+                file.downloaded = False
+        except Exception as e:
+            file.downloaded = False
     return files
 
 # %% Data Analysis Agent
 DataAnalysisAgent = Agent[WorkflowDependencies, AnalysisResult](
-    'openai:gpt-4o',  # Specify a model
-    deps_type=WorkflowDependencies,  # Specify the dependency type
-    result_type=AnalysisResult,  # Specify the expected return type
-    system_prompt="You are a specialist in analyzing RNA-seq data to identify patterns, differential expression, and biological pathways. "
-        "Perform quantification, differential expression analysis, and pathway analysis to generate comprehensive insights."
+    'openai:gpt-4o',
+    deps_type=WorkflowDependencies,
+    result_type=AnalysisResult,
+    system_prompt=(
+        "You are a bioinformatics expert analyzing RNA-seq data. "
+        "Perform quantification, generate design matrices, run differential expression analysis, "
+        "and carry out pathway enrichment to produce a summary of findings."
+    ),
+    model_config={"arbitrary_types_allowed": True}  # Allow arbitrary types like pandas DataFrames
 )
 
 @DataAnalysisAgent.tool
 def perform_quantification(ctx: RunContext, fastq_files: List[DataFile], metadata: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Perform quantification on RNA-seq data.
-
-    Args:
-        fastq_files: List of FASTQ DataFile objects.
-        metadata: Metadata dictionary.
-
-    Returns:
-        A dictionary containing quantification results.
+    In practice, you would call a quantification tool (e.g. kallisto, Salmon).
+    Here we simulate quantification by invoking a kallisto-like command.
     """
-    # In a real implementation, this would use tools like Salmon, STAR, etc.
-    # For demonstration, return mock data
+    # For example, you might run:
+    # subprocess.run(["kallisto", "quant", "-i", index, "-o", output, ...])
+    # Here, we simulate by returning a dummy counts matrix.
     counts_matrix = {
-        "gene1": [100, 120, 90, 110, 95, 105],
-        "gene2": [200, 220, 190, 210, 195, 205],
-        "gene3": [300, 320, 290, 310, 295, 305],
-        # ... more genes
+        "gene1": [100, 110, 105],
+        "gene2": [200, 210, 205],
+        "gene3": [300, 310, 305],
     }
-
-    return {
-        "counts_matrix": counts_matrix,
-        "samples": [f.file_id.split('_R')[0] for f in fastq_files if '_R1' in f.file_id]
-    }
+    return {"counts_matrix": counts_matrix, "samples": [f.file_id.split('_R')[0] for f in fastq_files if "_R1" in f.file_id]}
 
 @DataAnalysisAgent.tool
-def generate_design_matrix(ctx: RunContext, metadata: Dict[str, Any]) -> pd.DataFrame:
-    """
-    Generate a design matrix for differential expression analysis.
-
-    Args:
-        metadata: Metadata dictionary.
-
-    Returns:
-        A pandas DataFrame representing the design matrix.
-    """
-    # Extract sample information from metadata
-    samples = metadata['samples']
-
-    # Create a design matrix
-    design_matrix = pd.DataFrame([
-        {
-            'sample_id': sample['sample_id'],
-            'condition': sample['condition'],
-            'replicate': sample['replicate']
-        }
-        for sample in samples
-    ])
-
-    return design_matrix
+def generate_design_matrix(ctx: RunContext, metadata: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Generate a design matrix from sample metadata."""
+    samples = metadata.get("samples", [])
+    # Return the samples directly as a dictionary instead of a DataFrame
+    return {"samples": samples}
 
 @DataAnalysisAgent.tool
-def perform_differential_expression(ctx: RunContext, counts: Dict[str, Any], design: pd.DataFrame) -> Dict[str, Any]:
+def perform_differential_expression(ctx: RunContext, counts: Dict[str, Any], design: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
     """
-    Perform differential expression analysis.
-
-    Args:
-        counts: Counts dictionary from quantification.
-        design: Design matrix DataFrame.
-
-    Returns:
-        A dictionary containing differential expression results.
+    Simulate differential expression analysis.
+    In a production system, you would use statistical tools (e.g., edgeR, DESeq2).
     """
-    # In a real implementation, this would use tools like DESeq2, edgeR, etc.
-    # For demonstration, return mock data
+    # Convert design dict to DataFrame internally if needed for computation
+    # samples = design.get("samples", [])
+    # design_df = pd.DataFrame(samples)
+
     de_results = {
-        "gene1": {"log2FoldChange": 1.5, "padj": 0.001},
-        "gene2": {"log2FoldChange": -0.5, "padj": 0.05},
-        "gene3": {"log2FoldChange": 2.0, "padj": 0.0001},
-        # ... more genes
+        "gene1": {"log2FoldChange": 1.2, "padj": 0.01},
+        "gene2": {"log2FoldChange": -0.8, "padj": 0.05},
+        "gene3": {"log2FoldChange": 1.5, "padj": 0.001},
     }
-
-    return {
-        "de_results": de_results,
-        "significant_genes": ["gene1", "gene3"]
-    }
+    return {"de_results": de_results, "significant_genes": ["gene1", "gene3"]}
 
 @DataAnalysisAgent.tool
 def perform_pathway_analysis(ctx: RunContext, de_results: Dict[str, Any]) -> List[str]:
-    """
-    Perform pathway analysis on differentially expressed genes.
+    """Simulate pathway enrichment analysis."""
+    return ["Cell Cycle", "DNA Repair", "Immune Response"]
 
-    Args:
-        de_results: Differential expression results.
-
-    Returns:
-        A list of enriched pathways.
-    """
-    # In a real implementation, this would use tools like GSEA, Enrichr, etc.
-    # For demonstration, return mock data
-    significant_genes = de_results.get("significant_genes", [])
-
-    if not significant_genes:
-        return []
-
-    # Mock pathway results
-    pathways = [
-        "Cell Cycle",
-        "DNA Repair",
-        "Immune Response",
-        "Metabolism"
-    ]
-
-    return pathways
-
+# Helper function in case we need to create a dummy dataset during errors
+def create_mock_dataset() -> GEODataset:
+    """Create a mock GEODataset for testing purposes when the original flow fails."""
+    return GEODataset(
+        accession="GSE12345",
+        title="Mock RNA-seq dataset for testing",
+        summary="This is a placeholder dataset for testing purposes only.",
+        organism="Homo sapiens",
+        samples=6,
+        platform="Illumina HiSeq 2500",
+        relevance_score=1.0
+    )
 @DataAnalysisAgent.tool
-def generate_results_summary(
-    ctx: RunContext,
-    dataset: GEODataset,
-    de_results: Dict[str, Any],
-    pathways: List[str]
-) -> AnalysisResult:
-    """
-    Generate a summary of the analysis results.
-
-    Args:
-        dataset: GEODataset object.
-        de_results: Differential expression results.
-        pathways: List of enriched pathways.
-
-    Returns:
-        An AnalysisResult object.
-    """
+def generate_results_summary(ctx: RunContext, dataset: GEODataset, de_results: Dict[str, Any], pathways: List[str]) -> AnalysisResult:
+    """Compile analysis results into a summary."""
     significant_genes = de_results.get("significant_genes", [])
-
-    summary = f"""
-    Analysis of dataset {dataset.accession}: {dataset.title}
-
-    Found {len(significant_genes)} differentially expressed genes.
-    Top pathways: {', '.join(pathways[:3])}.
-
-    The results suggest involvement of these pathways in the studied condition.
-    """
-
-    visualizations = [
-        "volcano_plot.png",
-        "heatmap.png",
-        "pca_plot.png"
-    ]
-
+    summary = (
+        f"Dataset {dataset.accession} ({dataset.title}) analysis:\n"
+        f"Identified {len(significant_genes)} significant genes. Top pathways include: {', '.join(pathways[:3])}."
+    )
+    visualizations = ["volcano_plot.png", "heatmap.png", "pca_plot.png"]
     return AnalysisResult(
         dataset_accession=dataset.accession,
         differentially_expressed_genes=significant_genes,
         enriched_pathways=pathways,
         visualizations=visualizations,
-        summary=summary.strip()
+        summary=summary
     )
 
-# %% Master Agent
-RNAseqResearchAgent = Agent(
-    'openai:gpt-4o',  # Specify a model
+# %% Master Agent: RNAseqResearchAgent
+RNAseqResearchAgent = Agent[WorkflowDependencies, WorkflowState](
+    'openai:gpt-4o',
     system_prompt=(
         "You are a master agent coordinating an RNA-seq research workflow. "
-        "Use tools to identify datasets, extract data, and perform analysis. "
-        "Examine the user's query, identify relevant RNA-seq datasets, extract data files, "
-        "and perform a complete analysis to generate meaningful insights."
+        "Delegate tasks to specialized agents to (1) identify relevant GEO datasets, "
+        "(2) extract data files and metadata, and (3) analyze the data to produce meaningful insights. "
+        "Maintain the original research query context throughout."
     ),
-    deps_type=WorkflowDependencies,  # Specify the dependency type
-    result_type=WorkflowState  # Specify structured result type
+    deps_type=WorkflowDependencies,
+    result_type=WorkflowState,
+    model_config={"arbitrary_types_allowed": True}
 )
 
 @RNAseqResearchAgent.tool
-async def process_dataset_identification(ctx: RunContext, query: str) -> List[GEODataset]:
-    """
-    Execute the dataset identification step of the workflow by delegating to the DatasetIdentificationAgent.
-
-    Args:
-        query: The research query.
-
-    Returns:
-        A list of relevant GEO datasets.
-    """
-    try:
-        # In a real implementation with PydanticAI:
-        result = await DatasetIdentificationAgent.run(
-            f"Find relevant datasets for the query: {query}. " +
-            "Evaluate their relevance and return a list of the most relevant datasets.",
-            usage=ctx.usage
-        )
-        return result.data
-    except Exception as e:
-        # For the mock implementation, fall back to direct function calls:
-        print(f"Note: In mock mode. Would delegate to DatasetIdentificationAgent. Error: {str(e)}")
-        mock_ctx = RunContext(None)
-        datasets = await query_geo_datasets(mock_ctx, query)
-        relevant_datasets = await evaluate_dataset_relevance(mock_ctx, datasets, query)
-        return relevant_datasets
-
-@RNAseqResearchAgent.tool
-async def select_best_dataset_for_query(ctx: RunContext, datasets: List[GEODataset]) -> GEODataset:
-    """
-    Select the best dataset from the list based on relevance by delegating to the DatasetIdentificationAgent.
-
-    Args:
-        datasets: List of GEODataset objects with relevance scores.
-
-    Returns:
-        The best GEODataset object.
-    """
-    try:
-        # In a real implementation with PydanticAI:
-        result = await DatasetIdentificationAgent.run(
-            "Select the best dataset from these options based on relevance score.",
-            usage=ctx.usage
-        )
-        return result.data
-    except Exception as e:
-        # For the mock implementation, fall back to direct function calls:
-        print(f"Note: In mock mode. Would delegate to DatasetIdentificationAgent. Error: {str(e)}")
-        mock_ctx = RunContext(None)
-        return await select_best_dataset(mock_ctx, datasets)
-
-@RNAseqResearchAgent.tool
-async def extract_dataset_files(ctx: RunContext, dataset: GEODataset) -> Dict[str, Any]:
-    """
-    Extract files and metadata from the selected dataset by delegating to the DataExtractionAgent.
-
-    Args:
-        dataset: The selected GEO dataset.
-
-    Returns:
-        A dictionary containing fastq files and metadata.
-    """
-    try:
-        # In a real implementation with PydanticAI:
-        result = await DataExtractionAgent.run(
-            f"Extract all files and metadata from dataset {dataset.accession}. " +
-            f"The dataset is titled '{dataset.title}' and contains {dataset.samples} samples. " +
-            "Download all FASTQ files to the temp directory.",
-            usage=ctx.usage
-        )
-        return result.data
-    except Exception as e:
-        # For the mock implementation, fall back to direct function calls:
-        print(f"Note: In mock mode. Would delegate to DataExtractionAgent. Error: {str(e)}")
-        mock_ctx = RunContext(None)
-        fastq_files = await extract_fastq_files(mock_ctx, dataset)
-        metadata = await extract_metadata(mock_ctx, dataset)
-
-        # Download the files
-        download_dir = "/tmp/rnaseq_data"
-        updated_files = await download_files(mock_ctx, fastq_files, download_dir)
-
-        return {
-            "fastq_files": updated_files,
-            "metadata": metadata
-        }
-
-@RNAseqResearchAgent.tool
-async def analyze_dataset(
-    ctx: RunContext,
-    dataset: GEODataset,
-    files: List[DataFile],
-    metadata: Dict[str, Any]
-) -> AnalysisResult:
-    """
-    Perform analysis on the dataset files by delegating to the DataAnalysisAgent.
-
-    Args:
-        dataset: The selected GEO dataset.
-        files: The extracted data files.
-        metadata: The dataset metadata.
-
-    Returns:
-        Analysis results.
-    """
-    try:
-        # In a real implementation with PydanticAI:
-        # Prepare a detailed prompt for the analysis agent
-        analysis_prompt = (
-            f"Analyze dataset {dataset.accession} ({dataset.title}). "
-            f"Perform RNA-seq analysis including quantification, differential expression, "
-            f"and pathway analysis. Generate a summary of the findings."
-        )
-
-        result = await DataAnalysisAgent.run(
-            analysis_prompt,
-            usage=ctx.usage
-        )
-        return result.data
-    except Exception as e:
-        # For the mock implementation, fall back to direct function calls:
-        print(f"Note: In mock mode. Would delegate to DataAnalysisAgent. Error: {str(e)}")
-        mock_ctx = RunContext(None)
-        counts = await perform_quantification(mock_ctx, files, metadata)
-        design_matrix = await generate_design_matrix(mock_ctx, metadata)
-        de_results = await perform_differential_expression(mock_ctx, counts, design_matrix)
-        pathways = await perform_pathway_analysis(mock_ctx, de_results)
-
-        return await generate_results_summary(mock_ctx, dataset, de_results, pathways)
-
-@RNAseqResearchAgent.tool
 async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) -> WorkflowState:
-    """
-    Execute the complete RNA-seq research workflow.
-
-    Args:
-        query: The research query.
-
-    Returns:
-        A WorkflowState object representing the final state of the workflow.
-    """
-    # Ensure the shared temp directory exists
     ctx.deps.ensure_temp_dir()
-
-    # Initialize the workflow state with the query
     workflow_state = WorkflowState(query=query)
-
     try:
         # Step 1: Dataset Identification
         workflow_state.current_step = WorkflowStep.DATASET_IDENTIFICATION
-        print(f"Starting dataset identification for query: {query}")
-        relevant_datasets = await process_dataset_identification(ctx, query)
+        print(f"Dataset identification for query: {query}")
+        ds_result = await DatasetIdentificationAgent.run(
+            f"Identify GEO datasets for: {query}",
+            usage=ctx.usage
+        )
+        relevant_datasets = ds_result.data
         workflow_state.datasets = relevant_datasets
-
         if not relevant_datasets:
             workflow_state.status = AnalysisStatus.FAILURE
             workflow_state.error_message = "No relevant datasets found"
             return workflow_state
+            # Select best dataset using sub-agent delegation
+            import json
+            try:
+                top_datasets_json = json.dumps([d.dict() for d in relevant_datasets[:5]])
+                sel_result = await DatasetIdentificationAgent.run(
+                    f"Select the best dataset from these (JSON): {top_datasets_json}",
+                    usage=ctx.usage
+                )
+                selected_dataset = sel_result.data
 
-        selected_dataset = await select_best_dataset_for_query(ctx, relevant_datasets)
-        workflow_state.selected_dataset = selected_dataset
-        print(f"Selected dataset: {selected_dataset.accession} - {selected_dataset.title}")
+                # Safety check - if the result is None or empty, fall back to first dataset
+                if not selected_dataset and relevant_datasets:
+                    print("Warning: Dataset selection returned empty result. Using first dataset.")
+                    selected_dataset = relevant_datasets[0]
+                elif not selected_dataset:
+                    print("Warning: No datasets available. Creating mock dataset.")
+                    selected_dataset = create_mock_dataset()
+
+                workflow_state.selected_dataset = selected_dataset
+                print(f"Selected dataset: {selected_dataset.accession}")
+            except Exception as e:
+                print(f"Error selecting dataset: {str(e)}. Using first dataset or mock.")
+                if relevant_datasets:
+                    selected_dataset = relevant_datasets[0]
+                else:
+                    selected_dataset = create_mock_dataset()
+                workflow_state.selected_dataset = selected_dataset
+                print(f"Using dataset: {selected_dataset.accession}")
 
         # Step 2: Data Extraction
         workflow_state.current_step = WorkflowStep.DATA_EXTRACTION
-        print(f"Extracting data files from dataset {selected_dataset.accession}")
-        extraction_result = await extract_dataset_files(ctx, selected_dataset)
-        workflow_state.data_files = extraction_result["fastq_files"]
-        print(f"Extracted {len(workflow_state.data_files)} data files")
+        print(f"Extracting data from dataset {selected_dataset.accession}")
+        extraction_deps = WorkflowDependencies(query=ctx.deps.query, temp_dir=ctx.deps.temp_dir)
+        de_result = await DataExtractionAgent.run(
+            f"Extract FASTQ files and metadata for dataset {selected_dataset.accession}.",
+            usage=ctx.usage,
+            deps=extraction_deps
+        )
+        extraction_data = de_result.data
+        workflow_state.data_files = extraction_data["fastq_files"]
+        print(f"Extracted {len(workflow_state.data_files)} files.")
 
         # Step 3: Data Analysis
         workflow_state.current_step = WorkflowStep.DATA_ANALYSIS
-        print(f"Starting analysis of dataset {selected_dataset.accession}")
-        analysis_results = await analyze_dataset(
-            ctx,
-            selected_dataset,
-            extraction_result["fastq_files"],
-            extraction_result["metadata"]
+        print(f"Analyzing dataset {selected_dataset.accession}")
+        analysis_deps = WorkflowDependencies(query=ctx.deps.query, temp_dir=ctx.deps.temp_dir)
+        file_info = "\n".join([f"- {f.file_id} ({f.file_type})" for f in workflow_state.data_files[:5]])
+        analysis_prompt = (
+            f"Analyze dataset {selected_dataset.accession} ({selected_dataset.title}). "
+            f"It contains {len(workflow_state.data_files)} data files, e.g.:\n{file_info}\n"
+            "Perform quantification, differential expression, and pathway analysis, then summarize the findings."
         )
-        workflow_state.analysis_results = analysis_results
-        print(f"Analysis completed successfully")
+        an_result = await DataAnalysisAgent.run(
+            analysis_prompt,
+            usage=ctx.usage,
+            deps=analysis_deps
+        )
+        workflow_state.analysis_results = an_result.data
+        print("Analysis completed.")
 
-        # Complete the workflow
         workflow_state.current_step = WorkflowStep.COMPLETED
         workflow_state.status = AnalysisStatus.SUCCESS
-        print(f"Workflow execution completed successfully")
-
+        print("Workflow executed successfully.")
     except Exception as e:
         workflow_state.status = AnalysisStatus.FAILURE
         workflow_state.error_message = str(e)
-        print(f"Workflow execution failed: {str(e)}")
-
+        print(f"Workflow failed: {str(e)}")
     return workflow_state
 
 # %% Testing the Workflow
 async def test_workflow():
     query = "Analyze RNAseq datasets for breast cancer"
-
     print(f"Executing workflow for query: {query}")
-
-    try:
-        # This is how you would use it in a real implementation with PydanticAI:
-        # Create workflow dependencies to be shared across agents
-        workflow_deps = WorkflowDependencies(query=query)
-
-        # Run the master agent with proper query
-        run_result = await RNAseqResearchAgent.run(
-            f"Execute RNA-seq workflow for the query: {query}. " +
-            "Identify relevant datasets, extract data files, and perform analysis.",
-            # In real implementation, you'd pass the usage object to track token usage
-            # usage=usage_tracker,
-            deps=workflow_deps
-        )
-
-        # Get the structured result
-        result = run_result.data
-        print(f"Workflow completed with status: {result.status}")
-    except Exception as e:
-        print(f"Unable to run with real PydanticAI agent, using mock implementation: {str(e)}")
-
-        # For the mock implementation, fall back to direct function calls:
-        mock_ctx = RunContext(None)
-        result = await RNAseqResearchAgent.execute_workflow(mock_ctx, query)
-        print(f"Workflow completed with status: {result.status}")
-
+    from pydantic_ai.usage import Usage
+    workflow_deps = WorkflowDependencies(query=query)
+    usage_tracker = Usage()  # Track token usage across agents
+    run_result = await RNAseqResearchAgent.run(
+        f"Run RNA-seq workflow for: {query}",
+        usage=usage_tracker,
+        deps=workflow_deps
+    )
+    result = run_result.data
+    print(f"Workflow status: {result.status}")
     if result.status == AnalysisStatus.SUCCESS:
-        print(f"Selected dataset: {result.selected_dataset.accession} - {result.selected_dataset.title}")
-        print(f"Number of data files: {len(result.data_files)}")
-        print(f"Analysis results summary:\n{result.analysis_results.summary}")
+        print(f"Dataset: {result.selected_dataset.accession} - {result.selected_dataset.title}")
+        print(f"Files extracted: {len(result.data_files)}")
+        print("Analysis summary:")
+        print(result.analysis_results.summary)
     else:
-        print(f"Workflow failed with error: {result.error_message}")
-
+        print(f"Error: {result.error_message}")
+    print(f"Token usage: {usage_tracker}")
     return result
 
 def test_workflow_sync():
-    """Synchronous wrapper for test_workflow"""
+    """Synchronous wrapper for test_workflow that works in Jupyter notebooks"""
     import asyncio
-    return asyncio.run(test_workflow())
+    import nest_asyncio
 
-# %% Run the test if this script is executed directly
+    # Apply nest_asyncio to allow asyncio.run in a notebook that already has an event loop
+    try:
+        nest_asyncio.apply()
+        return asyncio.run(test_workflow())
+    except ImportError:
+        print("Could not import nest_asyncio. If running in a notebook, please install: !pip install nest_asyncio")
+        # Fallback to running directly if we're not in a notebook or if nest_asyncio is not available
+        import sys
+        if 'ipykernel' not in sys.modules:
+            return asyncio.run(test_workflow())
+        else:
+            # Create a new event loop for Jupyter notebook use
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(test_workflow())
+            finally:
+                loop.close()
+
+# For direct script execution
 if __name__ == "__main__":
     test_result = test_workflow_sync()
