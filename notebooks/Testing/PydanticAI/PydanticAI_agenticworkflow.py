@@ -23,7 +23,7 @@ import requests
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,  # Set to DEBUG for more detailed logs
+    level=logging.DEBUG,  # Set to DEBUG for more detailed logs
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout),
@@ -92,10 +92,16 @@ class GEODataset(BaseModel):
     accession: str
     title: str
     summary: str
+
+    class Config:
+        arbitrary_types_allowed = True
     organism: str
     samples: int
     platform: str
     relevance_score: Optional[float] = None
+
+    class Config:
+        arbitrary_types_allowed = True
 
 class DataFile(BaseModel):
     """A model representing a data file from a GEO dataset."""
@@ -106,6 +112,9 @@ class DataFile(BaseModel):
     file_size: Optional[int] = None
     downloaded: bool = False
     file_path: Optional[str] = None
+
+    class Config:
+        arbitrary_types_allowed = True
 
 class AnalysisResult(BaseModel):
     """A model representing analysis results."""
@@ -137,10 +146,16 @@ class WorkflowState(BaseModel):
     status: AnalysisStatus = AnalysisStatus.IN_PROGRESS
     error_message: Optional[str] = None
 
+    class Config:
+        arbitrary_types_allowed = True
+
 class WorkflowDependencies(BaseModel):
     """Dependencies shared across the workflow agents."""
     query: str
     temp_dir: str = "/tmp/rnaseq_data"
+
+    class Config:
+        arbitrary_types_allowed = True
 
     def get_download_path(self, filename: str) -> str:
         return os.path.join(self.temp_dir, filename)
@@ -303,16 +318,22 @@ def download_files(ctx: RunContext, files: List[DataFile], download_dir: str) ->
     return files
 
 # %% Data Analysis Agent
-DataAnalysisAgent = Agent[WorkflowDependencies, AnalysisResult](
-    'openai:gpt-4o',
-    deps_type=WorkflowDependencies,
-    result_type=AnalysisResult,
-    system_prompt=(
-        "You are a bioinformatics expert analyzing RNA-seq data. "
-        "Perform quantification, generate design matrices, run differential expression analysis, "
-        "and carry out pathway enrichment to produce a summary of findings."
+try:
+    DataAnalysisAgent = Agent[WorkflowDependencies, AnalysisResult](
+        'openai:gpt-4o',
+        deps_type=WorkflowDependencies,
+        result_type=AnalysisResult,
+        system_prompt=(
+            "You are a bioinformatics expert analyzing RNA-seq data. "
+            "Perform quantification, generate design matrices, run differential expression analysis, "
+            "and carry out pathway enrichment to produce a summary of findings."
+        )
     )
-)
+    logger.info("DataAnalysisAgent instantiated successfully.")
+except TypeError as te:
+    logger.error(f"Failed to instantiate DataAnalysisAgent: {te}", exc_info=True)
+except Exception as e:
+    logger.error(f"Unexpected error during DataAnalysisAgent instantiation: {e}", exc_info=True)
 
 @DataAnalysisAgent.tool
 def perform_quantification(ctx: RunContext, fastq_files: List[DataFile], metadata: Dict[str, Any]) -> Dict[str, Any]:
@@ -403,6 +424,7 @@ RNAseqResearchAgent = Agent[WorkflowDependencies, WorkflowState](
 
 @RNAseqResearchAgent.tool
 async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) -> WorkflowState:
+    logger.info("Starting workflow execution.")
     ctx.deps.ensure_temp_dir()
     workflow_state = WorkflowState(query=query)
     try:
@@ -486,6 +508,7 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
         workflow_state.status = AnalysisStatus.FAILURE
         workflow_state.error_message = str(e)
         logger.error(f"Workflow failed: {str(e)}")
+    logger.info("Workflow execution completed.")
     return workflow_state
 
 # %% Testing the Workflow
