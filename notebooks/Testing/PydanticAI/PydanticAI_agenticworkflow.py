@@ -12,6 +12,7 @@ from io import StringIO
 from enum import Enum
 from typing import List, Dict, Any, Optional, Union, Literal
 
+from functools import wraps  # For decorator
 import logging
 import pandas as pd
 import numpy as np
@@ -22,16 +23,26 @@ from Bio import Entrez
 import requests
 
 # Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,  # Set to DEBUG for more detailed logs
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("workflow.log")  # Logs will also be saved to workflow.log
-    ]
-)
+from logging.handlers import RotatingFileHandler
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Overall logging level
+
+# Create handlers
+console_handler = logging.StreamHandler(sys.stdout)
+file_handler = RotatingFileHandler("workflow.log", maxBytes=5*1024*1024, backupCount=5)
+
+# Create formatters and add them to handlers
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+file_handler.setFormatter(formatter)
+
+# Add handlers to the logger
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+# Suppress INFO logs from httpx to reduce noise
+logging.getLogger("httpx").setLevel(logging.WARNING)
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -196,7 +207,21 @@ def create_geo_dataframe(geo_ids: List[str], batch_size: int = 10) -> pd.DataFra
         time.sleep(0.2)
     return pd.DataFrame(data)
 
-# %% Dataset Identification Agent
+# %% Define the Logging Decorator
+def log_function_call(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        func_name = func.__name__
+        logger.info(f"{func_name}: Function called with args={args[1:]}, kwargs={kwargs}")
+        try:
+            result = func(*args, **kwargs)
+            logger.info(f"{func_name}: Function executed successfully.")
+            logger.debug(f"{func_name}: Result: {result}")
+            return result
+        except Exception as e:
+            logger.error(f"{func_name}: Error during execution: {e}", exc_info=True)
+            raise
+    return wrapper
 DatasetIdentificationAgent = Agent[None, List[GEODataset]](
     'openai:gpt-4o',
     system_prompt=(
@@ -278,6 +303,7 @@ def extract_fastq_files(ctx: RunContext, dataset: GEODataset) -> List[DataFile]:
     return fastq_files
 
 @DataExtractionAgent.tool
+@log_function_call
 def extract_metadata(ctx: RunContext, dataset: GEODataset) -> Dict[str, Any]:
     """Extract metadata by using dataset information and standard GEO structure."""
     metadata = {
@@ -297,6 +323,7 @@ def extract_metadata(ctx: RunContext, dataset: GEODataset) -> Dict[str, Any]:
     return metadata
 
 @DataExtractionAgent.tool
+@log_function_call
 def download_files(ctx: RunContext, files: List[DataFile], download_dir: str) -> List[DataFile]:
     """Download files using HTTP requests."""
     os.makedirs(download_dir, exist_ok=True)
@@ -336,6 +363,7 @@ except Exception as e:
     logger.error(f"Unexpected error during DataAnalysisAgent instantiation: {e}", exc_info=True)
 
 @DataAnalysisAgent.tool
+@log_function_call
 def perform_quantification(ctx: RunContext, fastq_files: List[DataFile], metadata: Dict[str, Any]) -> Dict[str, Any]:
     """
     In practice, you would call a quantification tool (e.g. kallisto, Salmon).
@@ -423,7 +451,27 @@ RNAseqResearchAgent = Agent[WorkflowDependencies, WorkflowState](
 )
 
 @RNAseqResearchAgent.tool
-async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) -> WorkflowState:
+async def run_agent_with_logging(agent: Agent, prompt: str, usage: Usage, deps: Optional[WorkflowDependencies] = None) -> Any:
+    """
+    Helper function to run an agent with logging of prompts and responses.
+    
+    Args:
+        agent (Agent): The agent to run.
+        prompt (str): The prompt to send to the agent.
+        usage (Usage): Usage tracker.
+        deps (Optional[WorkflowDependencies]): Dependencies for the agent.
+    
+    Returns:
+        Any: The result returned by the agent.
+    """
+    logger.info(f"Sending prompt to {agent.name}: {prompt}")
+    try:
+        response = await agent.run(prompt, usage=usage, deps=deps)
+        logger.info(f"Received response from {agent.name}: {response.data}")
+        return response
+    except Exception as e:
+        logger.error(f"Error running agent {agent.name} with prompt '{prompt}': {e}", exc_info=True)
+        raise
     logger.info("Starting workflow execution.")
     ctx.deps.ensure_temp_dir()
     workflow_state = WorkflowState(query=query)
@@ -431,7 +479,7 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
         # Step 1: Dataset Identification
         workflow_state.current_step = WorkflowStep.DATASET_IDENTIFICATION
         logger.info(f"Dataset identification for query: {query}")
-        ds_result = await DatasetIdentificationAgent.run(
+        ds_result = await run_agent_with_logging(
             f"Identify GEO datasets for: {query}",
             usage=ctx.usage
         )
@@ -446,7 +494,7 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
         import json
         try:
             top_datasets_json = json.dumps([d.dict() for d in relevant_datasets[:5]])
-            sel_result = await DatasetIdentificationAgent.run(
+            sel_result = await run_agent_with_logging(
                 f"Select the best dataset from these (JSON): {top_datasets_json}",
                 usage=ctx.usage
             )
@@ -475,7 +523,7 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
         workflow_state.current_step = WorkflowStep.DATA_EXTRACTION
         logger.info(f"Extracting data from dataset {selected_dataset.accession}")
         extraction_deps = WorkflowDependencies(query=ctx.deps.query, temp_dir=ctx.deps.temp_dir)
-        de_result = await DataExtractionAgent.run(
+        de_result = await run_agent_with_logging(
             f"Extract FASTQ files and metadata for dataset {selected_dataset.accession}.",
             usage=ctx.usage,
             deps=extraction_deps
@@ -494,7 +542,7 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
             f"It contains {len(workflow_state.data_files)} data files, e.g.:\n{file_info}\n"
             "Perform quantification, differential expression, and pathway analysis, then summarize the findings."
         )
-        an_result = await DataAnalysisAgent.run(
+        an_result = await run_agent_with_logging(
             analysis_prompt,
             usage=ctx.usage,
             deps=analysis_deps
