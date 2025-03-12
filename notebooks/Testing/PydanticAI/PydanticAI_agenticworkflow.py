@@ -28,18 +28,20 @@ from logging.handlers import RotatingFileHandler
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Overall logging level
 
-# Create handlers
-console_handler = logging.StreamHandler(sys.stdout)
-file_handler = RotatingFileHandler("workflow.log", maxBytes=5*1024*1024, backupCount=5)
+# Prevent adding multiple handlers if they already exist
+if not logger.handlers:
+    # Create handlers
+    console_handler = logging.StreamHandler(sys.stdout)
+    file_handler = RotatingFileHandler("workflow.log", maxBytes=5*1024*1024, backupCount=5)
 
-# Create formatters and add them to handlers
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-console_handler.setFormatter(formatter)
-file_handler.setFormatter(formatter)
+    # Create formatters and add them to handlers
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
 
-# Add handlers to the logger
-logger.addHandler(console_handler)
-logger.addHandler(file_handler)
+    # Add handlers to the logger
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
 
 # Suppress INFO logs from httpx to reduce noise
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -252,18 +254,72 @@ def query_geo_datasets(ctx: RunContext, query: str, max_results: int = 10) -> Li
         datasets.append(ds)
     return datasets
 
+import json  # Ensure json is imported at the top if not already
+
 @DatasetIdentificationAgent.tool
-def evaluate_dataset_relevance(ctx: RunContext, datasets: List[GEODataset], query: str) -> List[GEODataset]:
-    """Evaluate relevance based on simple keyword matching in title and summary."""
-    query_lower = query.lower()
-    for ds in datasets:
-        score = 0.0
-        if query_lower in ds.title.lower():
-            score += 1.0
-        if query_lower in ds.summary.lower():
-            score += 0.5
-        ds.relevance_score = score
-    return sorted(datasets, key=lambda x: x.relevance_score, reverse=True) # [CHANGE] I will prefer to use an LLM prompt
+@log_function_call
+async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], query: str) -> List[GEODataset]:
+    """
+    Assess the relevance of each GEO dataset to the research query using an LLM.
+    
+    Args:
+        ctx (RunContext): The run context.
+        datasets (List[GEODataset]): List of GEO datasets to assess.
+        query (str): The research query.
+    
+    Returns:
+        List[GEODataset]: The list of GEO datasets sorted by relevance score.
+    """
+    logger.info("assess_relevance_llm: Starting LLM-based relevance assessment.")
+    
+    # Prepare the prompt
+    prompt = f"""
+    You are a bioinformatics expert tasked with evaluating the relevance of the following GEO datasets to the research query: "{query}".
+    
+    For each dataset, provide a relevance score between 0 to 10 based on its title and summary. Consider factors such as the specific focus, methodologies used, and relevance to immunotherapies for lung cancer.
+    
+    Format your response as a JSON array where each item contains:
+    - "accession": GEO accession number
+    - "relevance_score": numerical score
+    
+    Datasets:
+    {json.dumps([d.dict() for d in datasets], indent=2)}
+    
+    Response:
+    """
+
+    # Send the prompt to the LLM via DatasetIdentificationAgent
+    try:
+        llm_response = await run_agent_with_logging(
+            DatasetIdentificationAgent,
+            prompt,
+            usage=ctx.usage
+        )
+        logger.debug(f"assess_relevance_llm: LLM response: {llm_response.data}")
+        
+        # Parse the JSON response
+        relevance_list = json.loads(llm_response.data)
+        
+        # Update each dataset's relevance_score
+        for item in relevance_list:
+            accession = item.get("accession")
+            score = item.get("relevance_score", 0.0)
+            for ds in datasets:
+                if ds.accession == accession:
+                    ds.relevance_score = score
+                    break
+        
+        # Sort datasets by relevance_score in descending order
+        sorted_datasets = sorted(datasets, key=lambda x: x.relevance_score or 0.0, reverse=True)
+        logger.info("assess_relevance_llm: Completed LLM-based relevance assessment.")
+        return sorted_datasets
+    
+    except json.JSONDecodeError as jde:
+        logger.error(f"assess_relevance_llm: Failed to parse LLM response: {jde}", exc_info=True)
+        raise
+    except Exception as e:
+        logger.error(f"assess_relevance_llm: Unexpected error during LLM assessment: {e}", exc_info=True)
+        raise
 
 @DatasetIdentificationAgent.tool
 def select_best_dataset(ctx: RunContext, datasets: List[GEODataset]) -> GEODataset:
@@ -493,35 +549,16 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
             workflow_state.error_message = "No relevant datasets found"
             return workflow_state
 
-        # Select best dataset using sub-agent delegation
-        import json
-        try:
-            top_datasets_json = json.dumps([d.dict() for d in relevant_datasets[:5]])
-            sel_result = await run_agent_with_logging(
-                DatasetIdentificationAgent,
-                f"Select the best dataset from these (JSON): {top_datasets_json}",
-                usage=ctx.usage
-            )
-            selected_dataset = sel_result.data
+        # Step 1.1: Assess Dataset Relevance Using LLM
+        logger.info("Assessing dataset relevance using LLM.")
+        assessed_datasets = await assess_relevance_llm(ctx, relevant_datasets, query)
+        workflow_state.datasets = assessed_datasets
+        logger.info(f"Datasets assessed and sorted by relevance.")
 
-            # Safety check - if the result is None or empty, fall back to first dataset
-            if not selected_dataset and relevant_datasets:
-                logger.warning("Dataset selection returned empty result. Using first dataset.")
-                selected_dataset = relevant_datasets[0]
-            elif not selected_dataset:
-                logger.warning("No datasets available. Creating mock dataset.")
-                selected_dataset = create_mock_dataset()
-
-            workflow_state.selected_dataset = selected_dataset
-            logger.info(f"Selected dataset: {selected_dataset.accession}")
-        except Exception as e:
-            logger.error(f"Error selecting dataset: {str(e)}. Using first dataset or mock.")
-            if relevant_datasets:
-                selected_dataset = relevant_datasets[0]
-            else:
-                selected_dataset = create_mock_dataset()
-            workflow_state.selected_dataset = selected_dataset
-            logger.info(f"Using dataset: {selected_dataset.accession}")
+        # Select the top dataset
+        selected_dataset = workflow_state.datasets[0]
+        workflow_state.selected_dataset = selected_dataset
+        logger.info(f"Selected dataset: {selected_dataset.accession} - {selected_dataset.title}")
 
         # Step 2: Data Extraction
         workflow_state.current_step = WorkflowStep.DATA_EXTRACTION
