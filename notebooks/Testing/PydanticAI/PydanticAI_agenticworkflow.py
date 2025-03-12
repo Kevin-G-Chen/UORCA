@@ -321,11 +321,7 @@ async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], quer
         logger.error(f"assess_relevance_llm: Unexpected error during LLM assessment: {e}", exc_info=True)
         raise
 
-@DatasetIdentificationAgent.tool
-def select_best_dataset(ctx: RunContext, datasets: List[GEODataset]) -> GEODataset:
-    if not datasets:
-        raise ValueError("No datasets provided")
-    return max(datasets, key=lambda x: x.relevance_score or 0) # [CHANGE] This seems to only return a single dataset, so will need to be changed
+# Remove or comment out the existing keyword-based relevance assessment
 
 # %% Data Extraction Agent
 
