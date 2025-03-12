@@ -441,34 +441,35 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
             workflow_state.status = AnalysisStatus.FAILURE
             workflow_state.error_message = "No relevant datasets found"
             return workflow_state
-            # Select best dataset using sub-agent delegation
-            import json
-            try:
-                top_datasets_json = json.dumps([d.dict() for d in relevant_datasets[:5]])
-                sel_result = await DatasetIdentificationAgent.run(
-                    f"Select the best dataset from these (JSON): {top_datasets_json}",
-                    usage=ctx.usage
-                )
-                selected_dataset = sel_result.data
 
-                # Safety check - if the result is None or empty, fall back to first dataset
-                if not selected_dataset and relevant_datasets:
-                    logger.warning("Dataset selection returned empty result. Using first dataset.")
-                    selected_dataset = relevant_datasets[0]
-                elif not selected_dataset:
-                    logger.warning("No datasets available. Creating mock dataset.")
-                    selected_dataset = create_mock_dataset()
+        # Select best dataset using sub-agent delegation
+        import json
+        try:
+            top_datasets_json = json.dumps([d.dict() for d in relevant_datasets[:5]])
+            sel_result = await DatasetIdentificationAgent.run(
+                f"Select the best dataset from these (JSON): {top_datasets_json}",
+                usage=ctx.usage
+            )
+            selected_dataset = sel_result.data
 
-                workflow_state.selected_dataset = selected_dataset
-                logger.info(f"Selected dataset: {selected_dataset.accession}")
-            except Exception as e:
-                logger.error(f"Error selecting dataset: {str(e)}. Using first dataset or mock.")
-                if relevant_datasets:
-                    selected_dataset = relevant_datasets[0]
-                else:
-                    selected_dataset = create_mock_dataset()
-                workflow_state.selected_dataset = selected_dataset
-                logger.info(f"Using dataset: {selected_dataset.accession}")
+            # Safety check - if the result is None or empty, fall back to first dataset
+            if not selected_dataset and relevant_datasets:
+                logger.warning("Dataset selection returned empty result. Using first dataset.")
+                selected_dataset = relevant_datasets[0]
+            elif not selected_dataset:
+                logger.warning("No datasets available. Creating mock dataset.")
+                selected_dataset = create_mock_dataset()
+
+            workflow_state.selected_dataset = selected_dataset
+            logger.info(f"Selected dataset: {selected_dataset.accession}")
+        except Exception as e:
+            logger.error(f"Error selecting dataset: {str(e)}. Using first dataset or mock.")
+            if relevant_datasets:
+                selected_dataset = relevant_datasets[0]
+            else:
+                selected_dataset = create_mock_dataset()
+            workflow_state.selected_dataset = selected_dataset
+            logger.info(f"Using dataset: {selected_dataset.accession}")
 
         # Step 2: Data Extraction
         workflow_state.current_step = WorkflowStep.DATA_EXTRACTION
