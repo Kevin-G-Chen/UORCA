@@ -451,7 +451,6 @@ RNAseqResearchAgent = Agent[WorkflowDependencies, WorkflowState](
     result_type=WorkflowState
 )
 
-@RNAseqResearchAgent.tool
 async def run_agent_with_logging(agent: Agent, prompt: str, usage: Usage, deps: Optional[WorkflowDependencies] = None) -> Any:
     """
     Helper function to run an agent with logging of prompts and responses.
@@ -473,6 +472,8 @@ async def run_agent_with_logging(agent: Agent, prompt: str, usage: Usage, deps: 
     except Exception as e:
         logger.error(f"Error running agent {agent.name} with prompt '{prompt}': {e}", exc_info=True)
         raise
+@RNAseqResearchAgent.tool
+async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) -> WorkflowState:
     logger.info("Starting workflow execution.")
     ctx.deps.ensure_temp_dir()
     workflow_state = WorkflowState(query=query)
@@ -481,6 +482,7 @@ async def run_agent_with_logging(agent: Agent, prompt: str, usage: Usage, deps: 
         workflow_state.current_step = WorkflowStep.DATASET_IDENTIFICATION
         logger.info(f"Dataset identification for query: {query}")
         ds_result = await run_agent_with_logging(
+            DatasetIdentificationAgent,
             f"Identify GEO datasets for: {query}",
             usage=ctx.usage
         )
@@ -496,6 +498,7 @@ async def run_agent_with_logging(agent: Agent, prompt: str, usage: Usage, deps: 
         try:
             top_datasets_json = json.dumps([d.dict() for d in relevant_datasets[:5]])
             sel_result = await run_agent_with_logging(
+                DatasetIdentificationAgent,
                 f"Select the best dataset from these (JSON): {top_datasets_json}",
                 usage=ctx.usage
             )
@@ -525,6 +528,7 @@ async def run_agent_with_logging(agent: Agent, prompt: str, usage: Usage, deps: 
         logger.info(f"Extracting data from dataset {selected_dataset.accession}")
         extraction_deps = WorkflowDependencies(query=ctx.deps.query, temp_dir=ctx.deps.temp_dir)
         de_result = await run_agent_with_logging(
+            DataExtractionAgent,
             f"Extract FASTQ files and metadata for dataset {selected_dataset.accession}.",
             usage=ctx.usage,
             deps=extraction_deps
@@ -544,6 +548,7 @@ async def run_agent_with_logging(agent: Agent, prompt: str, usage: Usage, deps: 
             "Perform quantification, differential expression, and pathway analysis, then summarize the findings."
         )
         an_result = await run_agent_with_logging(
+            DataAnalysisAgent,
             analysis_prompt,
             usage=ctx.usage,
             deps=analysis_deps
