@@ -12,6 +12,7 @@ from io import StringIO
 from enum import Enum
 from typing import List, Dict, Any, Optional, Union, Literal
 
+import logging
 import pandas as pd
 import numpy as np
 from pydantic import BaseModel, Field
@@ -20,7 +21,17 @@ from pydantic import BaseModel, Field
 from Bio import Entrez
 import requests
 
-# Load environment variables (for Entrez and OpenAI keys, etc.)
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,  # Set to DEBUG for more detailed logs
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("workflow.log")  # Logs will also be saved to workflow.log
+    ]
+)
+
+logger = logging.getLogger(__name__)
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -32,7 +43,7 @@ try:
     import nest_asyncio
     nest_asyncio.apply()
 except ImportError:
-    print("nest_asyncio not found. Install it for better notebook compatibility: pip install nest_asyncio")
+    logger.warning("nest_asyncio not found. Install it for better notebook compatibility: pip install nest_asyncio")
 
 # Add these if you have PydanticAI installed
 try:
@@ -40,7 +51,7 @@ try:
     from pydantic_ai.tools import Tool
     from pydantic_ai.usage import Usage
 except ImportError:
-    print("PydanticAI not installed. Using mock classes for demonstration.")
+    logger.warning("PydanticAI not installed. Using mock classes for demonstration.")
     class Agent:
         def __init__(self, name=None, description=None, deps_type=None, system_prompt=None, result_type=None):
             self.name = name
@@ -401,7 +412,7 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
     try:
         # Step 1: Dataset Identification
         workflow_state.current_step = WorkflowStep.DATASET_IDENTIFICATION
-        print(f"Dataset identification for query: {query}")
+        logger.info(f"Dataset identification for query: {query}")
         ds_result = await DatasetIdentificationAgent.run(
             f"Identify GEO datasets for: {query}",
             usage=ctx.usage
@@ -424,26 +435,26 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
 
                 # Safety check - if the result is None or empty, fall back to first dataset
                 if not selected_dataset and relevant_datasets:
-                    print("Warning: Dataset selection returned empty result. Using first dataset.")
+                    logger.warning("Dataset selection returned empty result. Using first dataset.")
                     selected_dataset = relevant_datasets[0]
                 elif not selected_dataset:
-                    print("Warning: No datasets available. Creating mock dataset.")
+                    logger.warning("No datasets available. Creating mock dataset.")
                     selected_dataset = create_mock_dataset()
 
                 workflow_state.selected_dataset = selected_dataset
-                print(f"Selected dataset: {selected_dataset.accession}")
+                logger.info(f"Selected dataset: {selected_dataset.accession}")
             except Exception as e:
-                print(f"Error selecting dataset: {str(e)}. Using first dataset or mock.")
+                logger.error(f"Error selecting dataset: {str(e)}. Using first dataset or mock.")
                 if relevant_datasets:
                     selected_dataset = relevant_datasets[0]
                 else:
                     selected_dataset = create_mock_dataset()
                 workflow_state.selected_dataset = selected_dataset
-                print(f"Using dataset: {selected_dataset.accession}")
+                logger.info(f"Using dataset: {selected_dataset.accession}")
 
         # Step 2: Data Extraction
         workflow_state.current_step = WorkflowStep.DATA_EXTRACTION
-        print(f"Extracting data from dataset {selected_dataset.accession}")
+        logger.info(f"Extracting data from dataset {selected_dataset.accession}")
         extraction_deps = WorkflowDependencies(query=ctx.deps.query, temp_dir=ctx.deps.temp_dir)
         de_result = await DataExtractionAgent.run(
             f"Extract FASTQ files and metadata for dataset {selected_dataset.accession}.",
@@ -452,11 +463,11 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
         )
         extraction_data = de_result.data
         workflow_state.data_files = extraction_data["fastq_files"]
-        print(f"Extracted {len(workflow_state.data_files)} files.")
+        logger.info(f"Extracted {len(workflow_state.data_files)} files.")
 
         # Step 3: Data Analysis
         workflow_state.current_step = WorkflowStep.DATA_ANALYSIS
-        print(f"Analyzing dataset {selected_dataset.accession}")
+        logger.info(f"Analyzing dataset {selected_dataset.accession}")
         analysis_deps = WorkflowDependencies(query=ctx.deps.query, temp_dir=ctx.deps.temp_dir)
         file_info = "\n".join([f"- {f.file_id} ({f.file_type})" for f in workflow_state.data_files[:5]])
         analysis_prompt = (
@@ -470,21 +481,21 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
             deps=analysis_deps
         )
         workflow_state.analysis_results = an_result.data
-        print("Analysis completed.")
+        logger.info("Analysis completed.")
 
         workflow_state.current_step = WorkflowStep.COMPLETED
         workflow_state.status = AnalysisStatus.SUCCESS
-        print("Workflow executed successfully.")
+        logger.info("Workflow executed successfully.")
     except Exception as e:
         workflow_state.status = AnalysisStatus.FAILURE
         workflow_state.error_message = str(e)
-        print(f"Workflow failed: {str(e)}")
+        logger.error(f"Workflow failed: {str(e)}")
     return workflow_state
 
 # %% Testing the Workflow
 async def test_workflow():
     query = "Analyze RNAseq datasets for breast cancer"
-    print(f"Executing workflow for query: {query}")
+    logger.info(f"Executing workflow for query: {query}")
     from pydantic_ai.usage import Usage
     workflow_deps = WorkflowDependencies(query=query)
     usage_tracker = Usage()  # Track token usage across agents
@@ -494,15 +505,15 @@ async def test_workflow():
         deps=workflow_deps
     )
     result = run_result.data
-    print(f"Workflow status: {result.status}")
+    logger.info(f"Workflow status: {result.status}")
     if result.status == AnalysisStatus.SUCCESS:
-        print(f"Dataset: {result.selected_dataset.accession} - {result.selected_dataset.title}")
-        print(f"Files extracted: {len(result.data_files)}")
-        print("Analysis summary:")
-        print(result.analysis_results.summary)
+        logger.info(f"Dataset: {result.selected_dataset.accession} - {result.selected_dataset.title}")
+        logger.info(f"Files extracted: {len(result.data_files)}")
+        logger.info("Analysis summary:")
+        logger.info(result.analysis_results.summary)
     else:
-        print(f"Error: {result.error_message}")
-    print(f"Token usage: {usage_tracker}")
+        logger.error(f"Error: {result.error_message}")
+    logger.info(f"Token usage: {usage_tracker}")
     return result
 
 def test_workflow_sync():
@@ -515,7 +526,7 @@ def test_workflow_sync():
         nest_asyncio.apply()
         return asyncio.run(test_workflow())
     except ImportError:
-        print("Could not import nest_asyncio. If running in a notebook, please install: !pip install nest_asyncio")
+        logger.warning("Could not import nest_asyncio. If running in a notebook, please install: !pip install nest_asyncio")
         # Fallback to running directly if we're not in a notebook or if nest_asyncio is not available
         import sys
         if 'ipykernel' not in sys.modules:
