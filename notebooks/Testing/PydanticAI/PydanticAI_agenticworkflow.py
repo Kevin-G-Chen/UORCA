@@ -188,8 +188,7 @@ DatasetIdentificationAgent = Agent[None, List[GEODataset]](
         "You are a specialist in identifying relevant genomic datasets from GEO databases for research queries. "
         "Use actual GEO search results to rank datasets by relevance."
     ),
-    result_type=List[GEODataset],
-    model_config={"arbitrary_types_allowed": True}
+    result_type=List[GEODataset]
 )
 
 @DatasetIdentificationAgent.tool
@@ -243,8 +242,7 @@ DataExtractionAgent = Agent[WorkflowDependencies, Dict[str, Any]](
     system_prompt=(
         "You are a specialist in extracting genomic data from GEO datasets. "
         "Retrieve FASTQ file URLs and metadata using standard GEO conventions."
-    ),
-    model_config={"arbitrary_types_allowed": True}
+    )
 )
 
 @DataExtractionAgent.tool
@@ -313,8 +311,7 @@ DataAnalysisAgent = Agent[WorkflowDependencies, AnalysisResult](
         "You are a bioinformatics expert analyzing RNA-seq data. "
         "Perform quantification, generate design matrices, run differential expression analysis, "
         "and carry out pathway enrichment to produce a summary of findings."
-    ),
-    model_config={"arbitrary_types_allowed": True}  # Allow arbitrary types like pandas DataFrames
+    )
 )
 
 @DataAnalysisAgent.tool
@@ -401,8 +398,7 @@ RNAseqResearchAgent = Agent[WorkflowDependencies, WorkflowState](
         "Maintain the original research query context throughout."
     ),
     deps_type=WorkflowDependencies,
-    result_type=WorkflowState,
-    model_config={"arbitrary_types_allowed": True}
+    result_type=WorkflowState
 )
 
 @RNAseqResearchAgent.tool
