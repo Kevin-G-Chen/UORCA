@@ -286,6 +286,7 @@ DataExtractionAgent = Agent[WorkflowDependencies, Dict[str, Any]](
 )
 
 @DataExtractionAgent.tool
+@log_function_call
 def extract_fastq_files(ctx: RunContext, dataset: GEODataset) -> List[DataFile]: # This caused problems for me in the past, so will need to look at this carefully
     """Construct FASTQ file URLs based on GEO accession."""
     fastq_files = []
