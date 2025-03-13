@@ -258,33 +258,33 @@ import json  # Ensure json is imported at the top if not already
 
 @DatasetIdentificationAgent.tool
 @log_function_call
-async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], query: str) -> List[GEODataset]:
+async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], query: str) -> List[GEODataset]: # This should use structured outputs, rather than specifying JSON output
     """
     Assess the relevance of each GEO dataset to the research query using an LLM.
-    
+
     Args:
         ctx (RunContext): The run context.
         datasets (List[GEODataset]): List of GEO datasets to assess.
         query (str): The research query.
-    
+
     Returns:
         List[GEODataset]: The list of GEO datasets sorted by relevance score.
     """
     logger.info("assess_relevance_llm: Starting LLM-based relevance assessment.")
-    
+
     # Prepare the prompt
     prompt = f"""
     You are a bioinformatics expert tasked with evaluating the relevance of the following GEO datasets to the research query: "{query}".
-    
+
     For each dataset, provide a relevance score between 0 to 10 based on its title and summary. Consider factors such as the specific focus, methodologies used, and relevance to immunotherapies for lung cancer.
-    
+
     Format your response as a JSON array where each item contains:
     - "accession": GEO accession number
     - "relevance_score": numerical score
-    
+
     Datasets:
     {json.dumps([d.dict() for d in datasets], indent=2)}
-    
+
     Response:
     """
 
@@ -296,10 +296,10 @@ async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], quer
             usage=ctx.usage
         )
         logger.debug(f"assess_relevance_llm: LLM response: {llm_response.data}")
-        
+
         # Parse the JSON response
         relevance_list = json.loads(llm_response.data)
-        
+
         # Update each dataset's relevance_score
         for item in relevance_list:
             accession = item.get("accession")
@@ -308,12 +308,12 @@ async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], quer
                 if ds.accession == accession:
                     ds.relevance_score = score
                     break
-        
+
         # Sort datasets by relevance_score in descending order
         sorted_datasets = sorted(datasets, key=lambda x: x.relevance_score or 0.0, reverse=True)
         logger.info("assess_relevance_llm: Completed LLM-based relevance assessment.")
         return sorted_datasets
-    
+
     except json.JSONDecodeError as jde:
         logger.error(f"assess_relevance_llm: Failed to parse LLM response: {jde}", exc_info=True)
         raise
@@ -506,13 +506,13 @@ RNAseqResearchAgent = Agent[WorkflowDependencies, WorkflowState](
 async def run_agent_with_logging(agent: Agent, prompt: str, usage: Usage, deps: Optional[WorkflowDependencies] = None) -> Any:
     """
     Helper function to run an agent with logging of prompts and responses.
-    
+
     Args:
         agent (Agent): The agent to run.
         prompt (str): The prompt to send to the agent.
         usage (Usage): Usage tracker.
         deps (Optional[WorkflowDependencies]): Dependencies for the agent.
-    
+
     Returns:
         Any: The result returned by the agent.
     """
