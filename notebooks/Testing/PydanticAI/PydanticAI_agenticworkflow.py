@@ -19,6 +19,7 @@ import logging
 import pandas as pd
 import numpy as np
 from pydantic import BaseModel, Field
+from typing import List
 
 # Third‐party modules
 from Bio import Entrez
@@ -117,6 +118,10 @@ class GEODataset(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+class RelevanceItem(BaseModel):
+    accession: str
+    relevance_score: float
 
 class DataFile(BaseModel):
     """A model representing a data file from a GEO dataset."""
@@ -227,7 +232,8 @@ def log_function_call(func):
             raise
     return wrapper
 DatasetIdentificationAgent = Agent[None, List[GEODataset]](
-    'openai:gpt-4o',
+    name="DatasetIdentificationAgent",
+    model="openai:gpt-4o",
     system_prompt=(
         "You are a specialist in identifying relevant genomic datasets from GEO databases for research queries. "
         "Use actual GEO search results to rank datasets by relevance."
@@ -235,7 +241,7 @@ DatasetIdentificationAgent = Agent[None, List[GEODataset]](
     result_type=List[GEODataset]
 )
 
-@DatasetIdentificationAgent.tool
+@DatasetIdentificationAgent.tool(response_model=List[RelevanceItem])
 def query_geo_datasets(ctx: RunContext, query: str, max_results: int = 10) -> List[GEODataset]:
     """Query NCBI GEO for datasets matching the given query using Entrez."""
     search_results = perform_search(query)
@@ -299,8 +305,8 @@ async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], quer
         )
         logger.debug(f"assess_relevance_llm: LLM response: {llm_response.data}")
 
-        # Parse the JSON response
-        relevance_list = json.loads(llm_response.data)
+        # The response is automatically parsed into RelevanceItem objects
+        relevance_list = llm_response.data
 
         # Update each dataset's relevance_score
         for item in relevance_list:
