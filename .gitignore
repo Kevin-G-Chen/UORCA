@@ -1,3 +1,6 @@
+# Misc files
+data/*
+
 # Environment and local config
 .env
 *scratch/*
