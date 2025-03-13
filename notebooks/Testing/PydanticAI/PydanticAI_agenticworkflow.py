@@ -109,8 +109,6 @@ class GEODataset(BaseModel):
     title: str
     summary: str
 
-    class Config:
-        arbitrary_types_allowed = True
     organism: str
     samples: int
     platform: str
@@ -258,7 +256,7 @@ def query_geo_datasets(ctx: RunContext, query: str, max_results: int = 10) -> Li
             organism=row["Species"],
             samples=int(row.get("samples", 6)),  # Use 6 if missing
             platform="Illumina HiSeq 2500"  # Hardcoded; replace if available
-        ))
+        )
         datasets.append(ds)
     return datasets
 
@@ -298,7 +296,7 @@ async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], quer
 
     # Send the prompt to the LLM via DatasetIdentificationAgent
     try:
-        llm_response = await (await run_agent_with_logging(
+        llm_response = await run_agent_with_logging(
             DatasetIdentificationAgent,
             prompt,
             usage=ctx.usage
