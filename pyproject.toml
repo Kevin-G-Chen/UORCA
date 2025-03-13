@@ -4,4 +4,12 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "data-analysis",
+]
+
+[tool.uv.workspace]
+members = ["lib/memory", "lib/data_identification", "lib/data_extraction", "lib/data_analysis"]
+
+[tool.uv.sources]
+data-analysis = { workspace = true }
