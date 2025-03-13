@@ -35,7 +35,7 @@ logger.setLevel(logging.DEBUG)  # Overall logging level
 if not logger.handlers:
     # Create handlers
     console_handler = logging.StreamHandler(sys.stdout)
-    file_handler = RotatingFileHandler("workflow.log", maxBytes=5*1024*1024, backupCount=5)
+    file_handler = RotatingFileHandler("workflow.log", mode="w", maxBytes=5*1024*1024, backupCount=5)
 
     # Create formatters and add them to handlers
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -258,7 +258,7 @@ def query_geo_datasets(ctx: RunContext, query: str, max_results: int = 10) -> Li
             organism=row["Species"],
             samples=int(row.get("samples", 6)),  # Use 6 if missing
             platform="Illumina HiSeq 2500"  # Hardcoded; replace if available
-        )
+        )).data
         datasets.append(ds)
     return datasets
 
@@ -298,7 +298,7 @@ async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], quer
 
     # Send the prompt to the LLM via DatasetIdentificationAgent
     try:
-        llm_response = await run_agent_with_logging(
+        llm_response = await (await run_agent_with_logging(
             DatasetIdentificationAgent,
             prompt,
             usage=ctx.usage
