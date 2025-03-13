@@ -258,7 +258,7 @@ def query_geo_datasets(ctx: RunContext, query: str, max_results: int = 10) -> Li
             organism=row["Species"],
             samples=int(row.get("samples", 6)),  # Use 6 if missing
             platform="Illumina HiSeq 2500"  # Hardcoded; replace if available
-        )).data
+        ))
         datasets.append(ds)
     return datasets
 
