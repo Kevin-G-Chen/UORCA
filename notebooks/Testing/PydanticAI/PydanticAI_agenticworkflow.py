@@ -1,5 +1,4 @@
 # %% Imports
-# Test comment
 
 import os
 import sys
@@ -98,9 +97,6 @@ except ImportError:
             if self.func:
                 return self.func(*args, **kwargs)
             return None
-
-
-
 
 # %% Define Data Models
 class GEODataset(BaseModel):
@@ -239,9 +235,9 @@ DatasetIdentificationAgent = Agent[None, List[GEODataset]](
     result_type=List[GEODataset]
 )
 
-@DatasetIdentificationAgent.tool(response_model=List[RelevanceItem])
+@DatasetIdentificationAgent.tool
 def query_geo_datasets(ctx: RunContext, query: str, max_results: int = 10) -> List[GEODataset]:
-    """Query NCBI GEO for datasets matching the given query using Entrez."""
+    """Query NCBI GEO for datasets for the given query using Entrez. The query should be optimised to match the research question, using keywords and filters as appropriate."""
     search_results = perform_search(query)
     geo_ids = search_results.get("IdList", [])[:max_results]
     if not geo_ids:
@@ -258,6 +254,7 @@ def query_geo_datasets(ctx: RunContext, query: str, max_results: int = 10) -> Li
             platform="Illumina HiSeq 2500"  # Hardcoded; replace if available
         )
         datasets.append(ds)
+    print(datasets)
     return datasets
 
 import json  # Ensure json is imported at the top if not already
@@ -282,7 +279,7 @@ async def assess_relevance_llm(ctx: RunContext, datasets: List[GEODataset], quer
     prompt = f"""
     You are a bioinformatics expert tasked with evaluating the relevance of the following GEO datasets to the research query: "{query}".
 
-    For each dataset, provide a relevance score between 0 to 10 based on its title and summary. Consider factors such as the specific focus, methodologies used, and relevance to immunotherapies for lung cancer.
+    For each dataset, provide a relevance score between 0 to 10 based on its title and summary. Consider factors such as the specific focus, methodologies used, and relevance to the initial research query.
 
     Format your response as a JSON array where each item contains:
     - "accession": GEO accession number
@@ -607,7 +604,7 @@ async def execute_workflow(ctx: RunContext[WorkflowDependencies], query: str) ->
 
 # %% Testing the Workflow
 async def test_workflow():
-    query = "Analyze RNAseq datasets for breast cancer"
+    query = "I already have data relating to the effects of a particular drug on a particular cell line. I would like to identify the differentially expressed genes and enriched pathways."
     logger.info(f"Executing workflow for query: {query}")
     from pydantic_ai.usage import Usage
     workflow_deps = WorkflowDependencies(query=query)
