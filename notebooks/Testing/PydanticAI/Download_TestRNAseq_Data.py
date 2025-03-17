@@ -53,7 +53,10 @@ DEFAULT_OUTPUT_DIR = "../../data/RNAseq_SETBP1_test"
 DEFAULT_NUM_SPOTS = 10000  # Small number of spots to keep downloads manageable
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def create_minimal_fastq(output_path, num_reads):
+def ensure_directory(directory):
+    """Create directory if it doesn't exist."""
+    if not os.path.exists(directory):
+        os.makedirs(directory, exist_ok=True)
     """Create a minimal FASTQ file with a specified number of reads."""
     with open(output_path, 'w') as f:
         for i in range(num_reads):
@@ -61,10 +64,6 @@ def create_minimal_fastq(output_path, num_reads):
             f.write("GATCTGACTGATCGATCGATC\n")
             f.write("+\n")
             f.write("IIIIIIIIIIIIIIIIIIIII\n")
-    """Create directory if it doesn't exist."""
-    if not os.path.exists(directory):
-        os.makedirs(directory, exist_ok=True)
-    return directory
 
 def run_subprocess(cmd, **kwargs):
     """Run subprocess with proper error handling for different Python versions."""
