@@ -266,102 +266,6 @@ def get_sra_ids(geo_accession, output_dir):
         return ["SRR14415242", "SRR14415243", "SRR14415244", "SRR14415245"]
 
 def download_fastq(sra_id, output_dir, num_spots):
-    def download_test_data_fallback(output_dir):
-        """
-        Fallback function to download a small test dataset directly.
-        This bypasses SRA tools entirely for testing purposes.
-        """
-        # Add a few more test datasets for variety
-        additional_test_urls = {
-            "sample2_R1.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_1.fastq.gz",
-            "sample2_R2.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_2.fastq.gz"
-        }
-
-        # If wget is available, add it as an option
-        if shutil.which("wget"):
-            test_urls.update(additional_test_urls)
-        # Add a few more test datasets for variety
-        additional_test_urls = {
-            "sample2_R1.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_1.fastq.gz",
-            "sample2_R2.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_2.fastq.gz"
-        }
-
-        # If wget is available, add it as an option
-        if shutil.which("wget"):
-            test_urls.update(additional_test_urls)
-        logger.info(f"Using fallback to download test data directly")
-        fastq_dir = os.path.join(output_dir, "fastq")
-        ensure_directory(fastq_dir)
-
-        # URLs for a small test RNA-seq dataset
-        test_urls = {
-            "test_R1.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357070_1.fastq.gz",
-            "test_R2.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357070_2.fastq.gz"
-        }
-
-        success = True
-        downloaded_files = []
-
-        for filename, url in test_urls.items():
-            output_path = os.path.join(fastq_dir, filename)
-            logger.info(f"Downloading {filename} from {url}")
-
-            try:
-                # Use wget if available, otherwise fall back to curl
-                if shutil.which("wget"):
-                    process = subprocess.run(
-                        ["wget", "-q", "--show-progress", "-O", output_path, url],
-                        check=True,
-                        text=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        timeout=300
-                        # Use wget if available, otherwise fall back to curl
-                        if shutil.which("wget"):
-                            process = subprocess.run(
-                                ["wget", "-q", "--show-progress", "-O", output_path, url],
-                                check=True,
-                                text=True,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                timeout=300
-                            )
-                        else:
-                            process = subprocess.run(
-                                ["curl", "-L", "-o", output_path, url],
-                                check=True,
-                                text=True,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE,
-                                timeout=300
-                            )
-                logger.info(f"Successfully downloaded {filename}")
-                downloaded_files.append(filename)
-            except Exception as e:
-                logger.error(f"Error downloading {filename}: {e}")
-                success = False
-
-                # Last resort: create a minimal valid FASTQ file
-                logger.warning(f"Creating minimal test FASTQ file as last resort")
-                try:
-                    create_minimal_fastq(output_path, 100)  # Create 100 reads
-                    logger.info(f"Created minimal test file: {output_path}")
-                    downloaded_files.append(filename)
-                except Exception as e2:
-                    logger.error(f"Failed to create minimal test file: {e2}")
-                    success = False
-
-                # Last resort: create a minimal valid FASTQ file
-                logger.warning(f"Creating minimal test FASTQ file as last resort")
-                try:
-                    create_minimal_fastq(output_path, 100)  # Create 100 reads
-                    logger.info(f"Created minimal test file: {output_path}")
-                    downloaded_files.append(filename)
-                except Exception as e2:
-                    logger.error(f"Failed to create minimal test file: {e2}")
-                    success = False
-
-        return success, downloaded_files
     """Download FASTQ files for an SRA ID using fastq-dump to limit the number of spots."""
     logger.info(f"Downloading FASTQ files for {sra_id} (max {num_spots} spots)")
     fastq_dir = os.path.join(output_dir, "fastq")
@@ -471,6 +375,84 @@ def download_fastq(sra_id, output_dir, num_spots):
                         dst.write(src.read(10240))
 
     return True
+
+def download_test_data_fallback(output_dir):
+    """
+    Fallback function to download a small test dataset directly.
+    This bypasses SRA tools entirely for testing purposes.
+    """
+    # Add a few more test datasets for variety
+    additional_test_urls = {
+        "sample2_R1.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_1.fastq.gz",
+        "sample2_R2.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_2.fastq.gz"
+    }
+
+    # If wget is available, add it as an option
+    if shutil.which("wget"):
+        test_urls.update(additional_test_urls)
+    # Add a few more test datasets for variety
+    additional_test_urls = {
+        "sample2_R1.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_1.fastq.gz",
+        "sample2_R2.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_2.fastq.gz"
+    }
+
+    # If wget is available, add it as an option
+    if shutil.which("wget"):
+        test_urls.update(additional_test_urls)
+    logger.info(f"Using fallback to download test data directly")
+    fastq_dir = os.path.join(output_dir, "fastq")
+    ensure_directory(fastq_dir)
+
+    # URLs for a small test RNA-seq dataset
+    test_urls = {
+        "test_R1.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357070_1.fastq.gz",
+        "test_R2.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357070_2.fastq.gz"
+    }
+
+    success = True
+    downloaded_files = []
+
+    for filename, url in test_urls.items():
+        output_path = os.path.join(fastq_dir, filename)
+        logger.info(f"Downloading {filename} from {url}")
+
+        try:
+            # Use wget if available, otherwise fall back to curl
+            if shutil.which("wget"):
+                process = subprocess.run(
+                    ["wget", "-q", "--show-progress", "-O", output_path, url],
+                    check=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=300
+                )
+            else:
+                process = subprocess.run(
+                    ["curl", "-L", "-o", output_path, url],
+                    check=True,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=300
+                )
+            logger.info(f"Successfully downloaded {filename}")
+            downloaded_files.append(filename)
+        except Exception as e:
+            logger.error(f"Error downloading {filename}: {e}")
+            success = False
+
+            # Last resort: create a minimal valid FASTQ file
+            logger.warning(f"Creating minimal test FASTQ file as last resort")
+            try:
+                create_minimal_fastq(output_path, 100)  # Create 100 reads
+                logger.info(f"Created minimal test file: {output_path}")
+                downloaded_files.append(filename)
+            except Exception as e2:
+                logger.error(f"Failed to create minimal test file: {e2}")
+                success = False
+
+    return success, downloaded_files
 
 
 def verify_fastq_files(directory):
