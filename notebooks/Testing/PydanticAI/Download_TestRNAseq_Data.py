@@ -53,7 +53,14 @@ DEFAULT_OUTPUT_DIR = "../../data/RNAseq_SETBP1_test"
 DEFAULT_NUM_SPOTS = 10000  # Small number of spots to keep downloads manageable
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-def ensure_directory(directory):
+def create_minimal_fastq(output_path, num_reads):
+    """Create a minimal FASTQ file with a specified number of reads."""
+    with open(output_path, 'w') as f:
+        for i in range(num_reads):
+            f.write(f"@SEQ_ID_{i}\n")
+            f.write("GATCTGACTGATCGATCGATC\n")
+            f.write("+\n")
+            f.write("IIIIIIIIIIIIIIIIIIIII\n")
     """Create directory if it doesn't exist."""
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
@@ -387,16 +394,11 @@ def download_test_data_fallback(output_dir):
         "sample2_R2.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_2.fastq.gz"
     }
 
-    # If wget is available, add it as an option
-    if shutil.which("wget"):
-        test_urls.update(additional_test_urls)
-    # Add a few more test datasets for variety
-    additional_test_urls = {
-        "sample2_R1.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_1.fastq.gz",
-        "sample2_R2.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357071_2.fastq.gz"
+    # URLs for a small test RNA-seq dataset
+    test_urls = {
+        "test_R1.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357070_1.fastq.gz",
+        "test_R2.fastq.gz": "https://github.com/nf-core/test-datasets/raw/rnaseq/testdata/GSE110004/SRR6357070_2.fastq.gz"
     }
-
-    # If wget is available, add it as an option
     if shutil.which("wget"):
         test_urls.update(additional_test_urls)
     logger.info(f"Using fallback to download test data directly")
