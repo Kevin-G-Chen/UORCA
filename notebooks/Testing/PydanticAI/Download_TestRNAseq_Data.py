@@ -57,13 +57,6 @@ def ensure_directory(directory):
     """Create directory if it doesn't exist."""
     if not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
-    """Create a minimal FASTQ file with a specified number of reads."""
-    with open(output_path, 'w') as f:
-        for i in range(num_reads):
-            f.write(f"@SEQ_ID_{i}\n")
-            f.write("GATCTGACTGATCGATCGATC\n")
-            f.write("+\n")
-            f.write("IIIIIIIIIIIIIIIIIIIII\n")
 
 def run_subprocess(cmd, **kwargs):
     """Run subprocess with proper error handling for different Python versions."""
@@ -381,6 +374,15 @@ def download_fastq(sra_id, output_dir, num_spots):
                         dst.write(src.read(10240))
 
     return True
+
+def create_minimal_fastq(output_path, num_reads):
+    """Create a minimal FASTQ file with a specified number of reads."""
+    with open(output_path, 'w') as f:
+        for i in range(num_reads):
+            f.write(f"@SEQ_ID_{i}\n")
+            f.write("GATCTGACTGATCGATCGATC\n")
+            f.write("+\n")
+            f.write("IIIIIIIIIIIIIIIIIIIII\n")
 
 def download_test_data_fallback(output_dir):
     """
