@@ -472,73 +472,8 @@ def download_fastq(sra_id, output_dir, num_spots):
 
     return True
 
+
 def verify_fastq_files(directory):
-    def create_minimal_fastq(filename, num_reads=100):
-        """
-        Create a minimal valid FASTQ file for testing purposes.
-
-        Args:
-            filename: Output filename (.gz extension will trigger gzip compression)
-            num_reads: Number of fake reads to generate
-        """
-        import gzip
-        import random
-
-        # Create random sequences
-        bases = ['A', 'C', 'G', 'T']
-
-        # Determine if we need to compress
-        open_func = gzip.open if filename.endswith('.gz') else open
-        mode = 'wt' if filename.endswith('.gz') else 'w'
-
-        with open_func(filename, mode) as f:
-            for i in range(num_reads):
-                # Generate a random sequence
-                seq = ''.join(random.choice(bases) for _ in range(50))
-                qual = ''.join(chr(random.randint(33, 73)) for _ in range(50))
-
-                # Write FASTQ format: header, sequence, separator, quality
-                f.write(f"@READ{i} test read\n")
-                f.write(f"{seq}\n")
-                f.write("+\n")
-                f.write(f"{qual}\n")
-
-        return True
-
-    def verify_fastq_files(directory):
-    def create_minimal_fastq(filename, num_reads=100):
-        """
-        Create a minimal valid FASTQ file for testing purposes.
-
-        Args:
-            filename: Output filename (.gz extension will trigger gzip compression)
-            num_reads: Number of fake reads to generate
-        """
-        import gzip
-        import random
-
-        # Create random sequences
-        bases = ['A', 'C', 'G', 'T']
-
-        # Determine if we need to compress
-        open_func = gzip.open if filename.endswith('.gz') else open
-        mode = 'wt' if filename.endswith('.gz') else 'w'
-
-        with open_func(filename, mode) as f:
-            for i in range(num_reads):
-                # Generate a random sequence
-                seq = ''.join(random.choice(bases) for _ in range(50))
-                qual = ''.join(chr(random.randint(33, 73)) for _ in range(50))
-
-                # Write FASTQ format: header, sequence, separator, quality
-                f.write(f"@READ{i} test read\n")
-                f.write(f"{seq}\n")
-                f.write("+\n")
-                f.write(f"{qual}\n")
-
-        return True
-
-    def verify_fastq_files(directory):
     """
     Verify that FASTQ files exist and are not empty
     """
@@ -564,107 +499,8 @@ def verify_fastq_files(directory):
 
     logger.info(f"Verified {len(fastq_files)} FASTQ files in {fastq_dir}")
     return True
+
 def process_all_datasets(output_dir, num_spots, limit=None):
-    def download_kallisto_test_index(output_dir):
-        """
-        Download a precomputed Kallisto index for testing.
-        This can save time when testing the downstream analysis pipeline.
-
-        Args:
-            output_dir: Directory to save the index
-
-        Returns:
-            tuple: (success, index_path)
-        """
-        # Create kallisto directory
-        kallisto_dir = os.path.join(output_dir, "kallisto")
-        ensure_directory(kallisto_dir)
-
-        # URL for a small test Kallisto index
-        index_url = "https://github.com/pachterlab/kallisto-transcriptome-indices/raw/master/transcriptomes/Homo_sapiens/Homo_sapiens.GRCh38.cdna.all.kallisto.idx"
-        index_path = os.path.join(kallisto_dir, "transcriptome.idx")
-
-        logger.info(f"Downloading Kallisto index for testing")
-
-        try:
-            # Use wget if available, otherwise curl
-            if shutil.which("wget"):
-                process = subprocess.run(
-                    ["wget", "-q", "--show-progress", "-O", index_path, index_url],
-                    check=True,
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=300
-                )
-            else:
-                process = subprocess.run(
-                    ["curl", "-L", "-o", index_path, index_url],
-                    check=True,
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=300
-                )
-
-            logger.info(f"Successfully downloaded Kallisto index to {index_path}")
-            return True, index_path
-
-        except Exception as e:
-            logger.error(f"Failed to download Kallisto index: {e}")
-            return False, None
-
-    def process_all_datasets(output_dir, num_spots, limit=None):
-    def download_kallisto_test_index(output_dir):
-        """
-        Download a precomputed Kallisto index for testing.
-        This can save time when testing the downstream analysis pipeline.
-
-        Args:
-            output_dir: Directory to save the index
-
-        Returns:
-            tuple: (success, index_path)
-        """
-        # Create kallisto directory
-        kallisto_dir = os.path.join(output_dir, "kallisto")
-        ensure_directory(kallisto_dir)
-
-        # URL for a small test Kallisto index
-        index_url = "https://github.com/pachterlab/kallisto-transcriptome-indices/raw/master/transcriptomes/Homo_sapiens/Homo_sapiens.GRCh38.cdna.all.kallisto.idx"
-        index_path = os.path.join(kallisto_dir, "transcriptome.idx")
-
-        logger.info(f"Downloading Kallisto index for testing")
-
-        try:
-            # Use wget if available, otherwise curl
-            if shutil.which("wget"):
-                process = subprocess.run(
-                    ["wget", "-q", "--show-progress", "-O", index_path, index_url],
-                    check=True,
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=300
-                )
-            else:
-                process = subprocess.run(
-                    ["curl", "-L", "-o", index_path, index_url],
-                    check=True,
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    timeout=300
-                )
-
-            logger.info(f"Successfully downloaded Kallisto index to {index_path}")
-            return True, index_path
-
-        except Exception as e:
-            logger.error(f"Failed to download Kallisto index: {e}")
-            return False, None
-
-    def process_all_datasets(output_dir, num_spots, limit=None):
     """Process all datasets in the GEO_ACCESSIONS list.
 
     Args:
@@ -760,10 +596,6 @@ def main():
                         help="Process all datasets in batch mode")
     parser.add_argument("-l", "--limit", type=int, default=None,
                         help="Limit the number of datasets to process in batch mode")
-    parser.add_argument("--kallisto-index", action="store_true",
-                        help="Also download a precomputed Kallisto index for testing")
-    parser.add_argument("--kallisto-index", action="store_true",
-                        help="Also download a precomputed Kallisto index for testing")
 
     args = parser.parse_args()
 
