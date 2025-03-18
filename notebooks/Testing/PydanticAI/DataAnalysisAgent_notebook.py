@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 import matplotlib.pyplot as plt
 import seaborn as sns
 import gseapy as gp
+import nest_asyncio
+nest_asyncio.apply()
 
 from pydantic_ai import Agent, RunContext
 
@@ -871,8 +873,8 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
         # Get file paths
         files <- samples$abundance_file
 
-        # Get sample groups
-        group <- factor(samples${{{ctx.deps.merged_column}}})
+        # Get sample groups using the merged analysis column
+        group <- factor(samples[["{ctx.deps.merged_column}"]])
         coldata <- data.frame(row.names=rownames(samples), group=group)
 
         # Check if tx2gene file exists
@@ -901,13 +903,16 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
         write.csv(as.data.frame(res), file="DESeq2_{contrast_name}_results.csv")
         normalized_counts <- counts(dds, normalized=TRUE)
         write.csv(normalized_counts, file="DESeq2_normalized_counts.csv")
+
         png("DESeq2_{contrast_name}_MA_plot.png", width=800, height=600)
         plotMA(res, main="{contrast_name} MA Plot", ylim=c(-5,5))
         dev.off()
+
         png("DESeq2_PCA_plot.png", width=800, height=600)
         vsd <- vst(dds, blind=FALSE)
         plotPCA(vsd, intgroup=c("group")) + theme_bw() + ggtitle("PCA of samples")
         dev.off()
+
         png("DESeq2_{contrast_name}_heatmap.png", width=800, height=800)
         mat <- assay(vsd)
         topgenes <- head(rownames(res), 50)
@@ -915,13 +920,13 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
         mat <- mat - rowMeans(mat)
         pheatmap(mat, main="Top 50 DE genes")
         dev.off()
+
         png("DESeq2_{contrast_name}_volcano_plot.png", width=800, height=600)
         res_df <- as.data.frame(res)
         res_df$gene <- rownames(res_df)
         res_df$sig <- "Not Significant"
         res_df$sig[res_df$padj < 0.05 & res_df$log2FoldChange > 1] <- "Upregulated"
         res_df$sig[res_df$padj < 0.05 & res_df$log2FoldChange < -1] <- "Downregulated"
-        library(ggplot2)
         ggplot(res_df, aes(x=log2FoldChange, y=-log10(padj), color=sig)) +
           geom_point(alpha=0.7) +
           scale_color_manual(values=c("blue", "gray", "red")) +
@@ -931,6 +936,7 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
           labs(title="Volcano Plot", x="Log2 Fold Change", y="-Log10 Adjusted p-value") +
           theme(legend.title=element_blank())
         dev.off()
+
         writeLines(capture.output(sessionInfo()), "DESeq2_session_info.txt")
         """
 
@@ -974,7 +980,9 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
         - PCA plot: DESeq2_PCA_plot.png
         - Heatmap: DESeq2_{contrast_name}_heatmap.png
         - Volcano plot: DESeq2_{contrast_name}_volcano_plot.png
-"""
+        """
+    except Exception as e:
+        return f"Error running DESeq2 analysis: {str(e)}"
 # %% Test/Run the agent (moved to the end)
 if __name__ == "__main__":
     # Create data instance for GSE262710
@@ -1005,7 +1013,7 @@ if __name__ == "__main__":
 
     # Run the agent
     try:
-        result = rnaseq_agent.run_sync(initial_prompt, deps=test_data)
+        result = await rnaseq_agent.run_sync(initial_prompt, deps=test_data)
         print("Analysis completed successfully!")
         print("\nAgent response:")
         print(result.data)
