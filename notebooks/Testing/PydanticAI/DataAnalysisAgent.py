@@ -220,8 +220,8 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
     """
     try:
         console.log(f"[bold blue]Tool Called: find_files[/] with parameters: directory = {directory}, suffix = {suffix}")
-            console.log(f"[bold blue]Initial Context.deps details:[/]\n{vars(ctx.deps)}")
-            setattr(ctx.deps, '_logged_context', True)
+        console.log(f"[bold blue]Initial Context.deps details:[/]\n{vars(ctx.deps)}")
+        setattr(ctx.deps, '_logged_context', True)
         console.log(f"[bold blue]Tool Called:[/] find_files with directory: {directory}, suffix: {suffix}")
         console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
         if hasattr(ctx, "message_history"):
@@ -321,7 +321,7 @@ async def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
       which is vital for matching and merging data from different sources.
     """
     console.log(f"[bold blue]Tool Called: clean_string[/] with parameter: s = {s}")
-        return "NA"  # Handle missing values
+    return "NA"  # Handle missing values
     s = str(s).strip()  # Convert to string and remove leading/trailing whitespaces
     s = unidecode(s)  # Normalize special characters to ASCII
     s = s.replace(" ", "_")  # Replace spaces with underscores
