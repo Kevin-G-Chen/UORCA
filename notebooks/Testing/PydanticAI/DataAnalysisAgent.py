@@ -496,34 +496,110 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
     try:
         console.log(f"[bold cyan]Fastq Directory from context:[/] {ctx.deps.fastq_dir}")
         console.log(f"[bold blue]Full context.deps details:[/]\n{vars(ctx.deps)}")
-        organism = ctx.deps.organism.lower()
-        index_dir = ctx.deps.kallisto_index_dir
+        # Find paired FASTQ files
+        fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
+        if not fastq_files:
+            return f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
 
-        # Look for index files in the specified directory
-        index_files = await find_files(ctx, index_dir, '.idx')
+        # Find the Kallisto index
+        index_result = await find_kallisto_index(ctx)
+        if "Error" in index_result:
+            return index_result
 
-        if not index_files:
-            return f"Error: No Kallisto index files found in {index_dir}"
+        # Extract the index path from the result
+        index_path = None
+        for line in index_result.splitlines():
+            if '.idx' in line:
+                # Extract the path, which should be after the colon
+                if ':' in line:
+                    index_path = line.split(':', 1)[1].strip()
+                else:
+                    # If no colon, look for a path with .idx
+                    words = line.split()
+                    for word in words:
+                        if '.idx' in word:
+                            index_path = word
+                            break
 
-        # Try to find an index matching the organism
-        matching_indices = [idx for idx in index_files if organism in os.path.basename(os.path.dirname(idx)).lower()]
+        if not index_path:
+            return "Error: Could not determine Kallisto index path"
 
-        if matching_indices:
-            index_path = matching_indices[0]
-            # Also find the transcript-to-gene mapping file if available
-            tx2gene_files = await find_files(ctx, os.path.dirname(index_path), '.txt')
-            if tx2gene_files:
-                t2g_files = [f for f in tx2gene_files if any(x in os.path.basename(f).lower() for x in ['t2g', 'tx2gene'])]
-                if t2g_files:
-                    ctx.deps.tx2gene_path = t2g_files[0]
+        # Create output directory
+        output_dir = ctx.deps.output_dir
+        os.makedirs(output_dir, exist_ok=True)
 
-            return f"Found Kallisto index for {organism}: {index_path}"
-        else:
-            # If no organism-specific index found, return the first one
-            return f"No index specific to {organism} found. Using the first available index: {index_files[0]}"
+        # Organize FASTQ files into pairs based on naming conventions
+        paired_files = {}
 
+        # Identify pairs using common naming patterns
+        r1_pattern = re.compile(r'.*_(R1|1)\.fastq\.gz$')
+        r2_pattern = re.compile(r'.*_(R2|2)\.fastq\.gz$')
+
+        r1_files = [f for f in fastq_files if r1_pattern.match(f)]
+        r2_files = [f for f in fastq_files if r2_pattern.match(f)]
+
+        # Match R1 with R2 files
+        for r1_file in r1_files:
+            # Convert R1 to R2 in the filename
+            expected_r2 = r1_file.replace('_R1', '_R2').replace('_1.fastq', '_2.fastq')
+            if expected_r2 in r2_files:
+                # Extract sample name from filename
+                sample_name = os.path.basename(r1_file).split('_R1')[0].split('_1.fastq')[0]
+                paired_files[sample_name] = (r1_file, expected_r2)
+
+        if not paired_files:
+            # If no pairs found, check if files are single-end
+            single_end = all(not r1_pattern.match(f) and not r2_pattern.match(f) for f in fastq_files)
+            if single_end:
+                return "Error: Single-end reads detected. Kallisto requires paired-end reads or additional parameters for single-end analysis."
+            else:
+                return "Error: Could not identify paired FASTQ files"
+
+        # Run Kallisto for each pair
+        results = []
+        for sample_name, (r1, r2) in paired_files.items():
+            sample_output_dir = os.path.join(output_dir, sample_name)
+            os.makedirs(sample_output_dir, exist_ok=True)
+
+            # Build Kallisto command
+            cmd = [
+                "kallisto", "quant",
+                "-i", index_path,
+                "-o", sample_output_dir,
+                "-t", "4",  # Use 4 threads
+                "--plaintext",  # Output plaintext instead of HDF5
+                "--bootstrap-samples=100",  # Number of bootstrap samples
+                r1, r2
+            ]
+
+            # Run Kallisto
+            process = subprocess.run(cmd, capture_output=True, text=True)
+
+            if process.returncode == 0:
+                results.append(f"Successfully processed {sample_name}")
+            else:
+                results.append(f"Error processing {sample_name}: {process.stderr}")
+
+        # Collect paths to abundance files
+        abundance_files = []
+        for sample_name in paired_files.keys():
+            abundance_file = os.path.join(output_dir, sample_name, "abundance.tsv")
+            if os.path.exists(abundance_file):
+                abundance_files.append(abundance_file)
+
+        # Store the abundance file paths
+        ctx.deps.abundance_files = abundance_files
+
+        return f"""
+Kallisto quantification completed for {len(results)} sample pairs.
+
+Results:
+{chr(10).join(results)}
+
+Found {len(abundance_files)} abundance files for downstream analysis.
+        """
     except Exception as e:
-        return f"Error finding Kallisto index: {str(e)}"
+        return f"Error running Kallisto quantification: {str(e)}"
 
 @rnaseq_agent.tool
 async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
