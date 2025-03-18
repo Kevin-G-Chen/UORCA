@@ -272,6 +272,25 @@ Columns with unique values: {', '.join(useful_cols)}
 First 5 rows:
 {metadata_df.head().to_string()}
         """
+        return f"""
+DESeq2 analysis completed successfully for contrast: {contrast_name}
+
+Summary:
+- Total genes analyzed: {len(results_df)}
+- Significant genes (FDR < 0.05): {len(sig_results)}
+- Upregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] > 0])}
+- Downregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] < 0])}
+
+Top 10 differentially expressed genes:
+{sig_results.head(10)[['log2FoldChange', 'pvalue', 'padj']].to_string()}
+
+Generated files:
+- Results table: DESeq2_{contrast_name}_results.csv
+- MA plot: DESeq2_{contrast_name}_MA_plot.png
+- PCA plot: DESeq2_PCA_plot.png
+- Heatmap: DESeq2_{contrast_name}_heatmap.png
+- Volcano plot: DESeq2_{contrast_name}_volcano_plot.png
+"""
     except Exception as e:
         return f"Error loading metadata: {str(e)}"
 
