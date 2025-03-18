@@ -119,10 +119,10 @@ Generated files:
 - GSEA results: gsea_{contrast_name}/
 - Top pathways plot: gsea_{contrast_name}_top5.png
 """
-except Exception as e:
-    return f"Error running GSEA analysis: {str(e)}"
-finally:
-    plt.close('all')  # Ensure all plots are closed
+    except Exception as e:
+        return f"Error running GSEA analysis: {str(e)}"
+    finally:
+        plt.close('all')  # Ensure all plots are closed
 
 @rnaseq_agent.tool
 async def run_ssgsea_analysis(ctx: RunContext[RNAseqData]) -> str:
