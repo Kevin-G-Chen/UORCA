@@ -1,4 +1,6 @@
-# %% Imports
+# ----------------------------
+# Imports
+# ----------------------------
 import os
 import glob
 import re
@@ -20,7 +22,9 @@ nest_asyncio.apply()
 
 from pydantic_ai import Agent, RunContext
 
-# %% Define the dependency type
+# ----------------------------
+# Define the dependency type
+# ----------------------------
 @dataclass
 class RNAseqData:
     """Container for RNAseq analysis data and paths."""
@@ -38,7 +42,9 @@ class RNAseqData:
     merged_column: Optional[str] = None
     contrast_groups: Dict[str, Dict[str, str]] = None
 
-# %% Create an RNAseq analysis agent
+# ----------------------------
+# Create an RNAseq analysis agent
+# ----------------------------
 
 rnaseq_agent = Agent(
     'openai:gpt-4o',
@@ -215,7 +221,9 @@ Number of samples: {len(es_matrix.columns)}
 """
     except Exception as e:
         return f"Error running GSVA analysis: {str(e)}"
-# %% Utility functions
+# ----------------------------
+# Utility Functions
+# ----------------------------
 @rnaseq_agent.tool
 async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -> List[str]:
     """
@@ -316,7 +324,9 @@ async def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     s = re.sub(r'[^\w]', '', s)  # Remove non-word characters
     return s
 
-# %% Metadata analysis tools
+# ----------------------------
+# Metadata Analysis Tools
+# ----------------------------
 @rnaseq_agent.tool
 async def identify_analysis_columns(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -542,7 +552,9 @@ Contrasts:
     except Exception as e:
         return f"Error designing contrasts: {str(e)}"
 
-# %% Kallisto quantification tools
+# ----------------------------
+# Kallisto Quantification Tools
+# ----------------------------
 @rnaseq_agent.tool
 async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -695,7 +707,9 @@ Found {len(abundance_files)} abundance files for downstream analysis.
     except Exception as e:
         return f"Error running Kallisto quantification: {str(e)}"
 
-# %% Differential expression analysis tools
+# ----------------------------
+# Differential Expression Analysis Tools
+# ----------------------------
 @rnaseq_agent.tool
 async def prepare_deseq2_analysis(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -983,7 +997,9 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
         """
     except Exception as e:
         return f"Error running DESeq2 analysis: {str(e)}"
-# %% Test/Run the agent (moved to the end)
+# ----------------------------
+# Main Execution
+# ----------------------------
 if __name__ == "__main__":
     # Create data instance for GSE262710
     test_data = RNAseqData(
@@ -1013,7 +1029,7 @@ if __name__ == "__main__":
 
     # Run the agent
     try:
-        result = await rnaseq_agent.run_sync(initial_prompt, deps=test_data)
+        result = rnaseq_agent.run_sync(initial_prompt, deps=test_data)
         print("Analysis completed successfully!")
         print("\nAgent response:")
         print(result.data)
