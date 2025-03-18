@@ -37,42 +37,6 @@ class RNAseqData:
     contrast_groups: Dict[str, Dict[str, str]] = None
 
 # %% Create an RNAseq analysis agent
-# %% Test/Run the agent
-if __name__ == "__main__":
-    # Create data instance for GSE262710
-    test_data = RNAseqData(
-        fastq_dir="/home/myuser/Doc/UORCA/n/T/P/TestRNAseqData_SETBP1/GSE262710/fastq",
-        metadata_path="/home/myuser/Doc/UORCA/n/T/P/TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
-        kallisto_index_dir="/home/myuser/work/data/kallisto_indices",
-        organism="human",
-        output_dir="./analysis_output/GSE262710"
-    )
-
-    # Initialize conversation with analysis steps
-    initial_prompt = """
-    Please analyze the RNA-seq data with the following steps:
-    1. Run Kallisto quantification on all paired-end FASTQ files
-    2. Load and analyze the metadata to identify experimental groups
-    3. Merge appropriate columns for analysis if needed
-    4. Design appropriate contrasts for differential expression
-    5. Run DESeq2 analysis for each contrast
-    6. Perform pathway analysis using:
-       - Standard GSEA
-       - Single-sample GSEA
-       - GSVA
-    7. Generate appropriate visualizations
-
-    Please provide updates at each step.
-    """
-
-    # Run the agent
-    try:
-        result = rnaseq_agent.run_sync(initial_prompt, deps=test_data)
-        print("Analysis completed successfully!")
-        print("\nAgent response:")
-        print(result.data)
-    except Exception as e:
-        print(f"Error during analysis: {str(e)}")
 
 rnaseq_agent = Agent(
     'openai:gpt-4o',
@@ -1030,3 +994,39 @@ dev.off()
 # Save session info
 writeLines(capture.output(sessionInfo()), "DESeq2_session_info.txt")
 """
+# %% Test/Run the agent (moved to the end)
+if __name__ == "__main__":
+    # Create data instance for GSE262710
+    test_data = RNAseqData(
+        fastq_dir="/home/myuser/Doc/UORCA/n/T/P/TestRNAseqData_SETBP1/GSE262710/fastq",
+        metadata_path="/home/myuser/Doc/UORCA/n/T/P/TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
+        kallisto_index_dir="/home/myuser/work/data/kallisto_indices",
+        organism="human",
+        output_dir="./analysis_output/GSE262710"
+    )
+
+    # Initialize conversation with analysis steps
+    initial_prompt = """
+    Please analyze the RNA-seq data with the following steps:
+    1. Run Kallisto quantification on all paired-end FASTQ files
+    2. Load and analyze the metadata to identify experimental groups
+    3. Merge appropriate columns for analysis if needed
+    4. Design appropriate contrasts for differential expression
+    5. Run DESeq2 analysis for each contrast
+    6. Perform pathway analysis using:
+       - Standard GSEA
+       - Single-sample GSEA
+       - GSVA
+    7. Generate appropriate visualizations
+
+    Please provide updates at each step.
+    """
+
+    # Run the agent
+    try:
+        result = rnaseq_agent.run_sync(initial_prompt, deps=test_data)
+        print("Analysis completed successfully!")
+        print("\nAgent response:")
+        print(result.data)
+    except Exception as e:
+        print(f"Error during analysis: {str(e)}")
