@@ -833,6 +833,88 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
 
         sample_df = pd.read_csv(sample_file, index_col=0)
 
+        # Create the R script for DESeq2 analysis
+        r_script = f"""
+        library(tximport)
+        library(DESeq2)
+        library(ggplot2)
+        library(pheatmap)
+        library(dplyr)
+        library(tibble)
+        library(tidyr)
+
+        # Set working directory
+        setwd("{ctx.deps.output_dir}")
+
+        # Load sample information
+        samples <- read.csv("{sample_file}", row.names=1)
+
+        # Get file paths
+        files <- samples$abundance_file
+
+        # Get sample groups
+        group <- factor(samples${{{ctx.deps.merged_column}}})
+        coldata <- data.frame(row.names=rownames(samples), group=group)
+
+        # Check if tx2gene file exists
+        tx2gene_exists <- {str(ctx.deps.tx2gene_path is not None).upper()}
+
+        if (tx2gene_exists) {{
+          # Import transcript to gene mapping
+          tx2gene <- read.table("{ctx.deps.tx2gene_path}", sep="\\t", header=FALSE)
+          tx2gene <- tx2gene[, c(1, 2)]
+          txi <- tximport(files, type="kallisto", tx2gene=tx2gene, ignoreAfterBar=TRUE)
+          dds <- DESeqDataSetFromTximport(txi, colData=coldata, design=~group)
+        }} else {{
+          txi <- tximport(files, type="kallisto", txOut=TRUE)
+          dds <- DESeqDataSetFromTximport(txi, colData=coldata, design=~group)
+        }}
+
+        # Filter low count genes
+        keep <- rowSums(counts(dds)) >= 10
+        dds <- dds[keep,]
+
+        # Set reference level
+        dds$group <- relevel(dds$group, ref="{denominator}")
+        dds <- DESeq(dds)
+        res <- results(dds, contrast=c("group", "{numerator}", "{denominator}"))
+        res <- res[order(res$padj),]
+        write.csv(as.data.frame(res), file="DESeq2_{contrast_name}_results.csv")
+        normalized_counts <- counts(dds, normalized=TRUE)
+        write.csv(normalized_counts, file="DESeq2_normalized_counts.csv")
+        png("DESeq2_{contrast_name}_MA_plot.png", width=800, height=600)
+        plotMA(res, main="{contrast_name} MA Plot", ylim=c(-5,5))
+        dev.off()
+        png("DESeq2_PCA_plot.png", width=800, height=600)
+        vsd <- vst(dds, blind=FALSE)
+        plotPCA(vsd, intgroup=c("group")) + theme_bw() + ggtitle("PCA of samples")
+        dev.off()
+        png("DESeq2_{contrast_name}_heatmap.png", width=800, height=800)
+        mat <- assay(vsd)
+        topgenes <- head(rownames(res), 50)
+        mat <- mat[topgenes,]
+        mat <- mat - rowMeans(mat)
+        pheatmap(mat, main="Top 50 DE genes")
+        dev.off()
+        png("DESeq2_{contrast_name}_volcano_plot.png", width=800, height=600)
+        res_df <- as.data.frame(res)
+        res_df$gene <- rownames(res_df)
+        res_df$sig <- "Not Significant"
+        res_df$sig[res_df$padj < 0.05 & res_df$log2FoldChange > 1] <- "Upregulated"
+        res_df$sig[res_df$padj < 0.05 & res_df$log2FoldChange < -1] <- "Downregulated"
+        library(ggplot2)
+        ggplot(res_df, aes(x=log2FoldChange, y=-log10(padj), color=sig)) +
+          geom_point(alpha=0.7) +
+          scale_color_manual(values=c("blue", "gray", "red")) +
+          theme_bw() +
+          geom_vline(xintercept=c(-1,1), linetype="dashed") +
+          geom_hline(yintercept=-log10(0.05), linetype="dashed") +
+          labs(title="Volcano Plot", x="Log2 Fold Change", y="-Log10 Adjusted p-value") +
+          theme(legend.title=element_blank())
+        dev.off()
+        writeLines(capture.output(sessionInfo()), "DESeq2_session_info.txt")
+        """
+
         # Write the R script to a file
         r_script_path = os.path.join(ctx.deps.output_dir, f"run_deseq2_{contrast_name}.R")
         with open(r_script_path, "w") as f:
@@ -856,27 +938,24 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
         sig_results = results_df[results_df['padj'] < 0.05].sort_values('padj')
 
         return f"""
-DESeq2 analysis completed successfully for contrast: {contrast_name}
+        DESeq2 analysis completed successfully for contrast: {contrast_name}
 
-Summary:
-- Total genes analyzed: {len(results_df)}
-- Significant genes (FDR < 0.05): {len(sig_results)}
-- Upregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] > 0])}
-- Downregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] < 0])}
+        Summary:
+        - Total genes analyzed: {len(results_df)}
+        - Significant genes (FDR < 0.05): {len(sig_results)}
+        - Upregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] > 0])}
+        - Downregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] < 0])}
 
-Top 10 differentially expressed genes:
-{sig_results.head(10)[['log2FoldChange', 'pvalue', 'padj']].to_string()}
+        Top 10 differentially expressed genes:
+        {sig_results.head(10)[['log2FoldChange', 'pvalue', 'padj']].to_string()}
 
-Generated files:
-- Results table: DESeq2_{contrast_name}_results.csv
-- MA plot: DESeq2_{contrast_name}_MA_plot.png
-- PCA plot: DESeq2_PCA_plot.png
-- Heatmap: DESeq2_{contrast_name}_heatmap.png
-- Volcano plot: DESeq2_{contrast_name}_volcano_plot.png
-"""
-
-        # Create R script for DESeq2 analysis
-        r_script = f"""
+        Generated files:
+        - Results table: DESeq2_{contrast_name}_results.csv
+        - MA plot: DESeq2_{contrast_name}_MA_plot.png
+        - PCA plot: DESeq2_PCA_plot.png
+        - Heatmap: DESeq2_{contrast_name}_heatmap.png
+        - Volcano plot: DESeq2_{contrast_name}_volcano_plot.png
+        """
 library(tximport)
 library(DESeq2)
 library(ggplot2)
