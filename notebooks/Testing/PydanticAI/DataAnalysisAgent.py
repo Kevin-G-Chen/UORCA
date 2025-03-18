@@ -1,4 +1,5 @@
-# ----------------------------
+# Create a global console instance
+console = Console()
 # Imports
 # ----------------------------
 import os
@@ -10,6 +11,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import date
+from rich.console import Console
+from rich.panel import Panel
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Union, Tuple, Any, Literal
 from unidecode import unidecode
@@ -1003,11 +1006,11 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
 if __name__ == "__main__":
     # Create data instance for GSE262710
     test_data = RNAseqData(
-        fastq_dir="/home/myuser/Doc/UORCA/n/T/P/TestRNAseqData_SETBP1/GSE262710/fastq",
-        metadata_path="/home/myuser/Doc/UORCA/n/T/P/TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
-        kallisto_index_dir="/home/myuser/work/data/kallisto_indices",
+        fastq_dir="data/TestRNAseqData_SETBP1/GSE262710/fastq",
+        metadata_path="data/TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
+        kallisto_index_dir="data/kallisto_indices",
         organism="human",
-        output_dir="./analysis_output/GSE262710"
+        output_dir="analysis_output/GSE262710"
     )
 
     # Initialize conversation with analysis steps
@@ -1029,9 +1032,10 @@ if __name__ == "__main__":
 
     # Run the agent
     try:
+        # Run the agent synchronously
         result = rnaseq_agent.run_sync(initial_prompt, deps=test_data)
-        print("Analysis completed successfully!")
-        print("\nAgent response:")
-        print(result.data)
+        console.print(Panel("Analysis completed successfully!", style="bold green"))
+        console.print("\n[bold yellow]Agent response:[/bold yellow]")
+        console.print(result.data)
     except Exception as e:
-        print(f"Error during analysis: {str(e)}")
+        console.print(Panel(f"Error during analysis: {str(e)}", style="bold red"))
