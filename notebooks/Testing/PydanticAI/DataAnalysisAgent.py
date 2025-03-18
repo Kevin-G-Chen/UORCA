@@ -213,7 +213,7 @@ async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
             metadata_df = pd.read_csv(metadata_path, sep='\t')
         else:
             metadata_df = pd.read_csv(metadata_path, sep=None, engine='python')
-    
+
         ctx.deps.metadata_df = metadata_df
         useful_cols = metadata_df.loc[:, metadata_df.nunique() > 1].columns.tolist()
         msg = f"Metadata loaded: {metadata_df.shape[0]} samples, {metadata_df.shape[1]} columns. Useful columns: {', '.join(useful_cols)}."
@@ -324,8 +324,6 @@ Merge needed: {merge_needed}
         """
     except Exception as e:
         return f"Error analyzing metadata columns: {str(e)}"
-    except Exception as e:
-        return f"Error analyzing metadata columns: {str(e)}"
 
 @rnaseq_agent.tool
 async def merge_metadata_columns(ctx: RunContext[RNAseqData], columns: List[str], new_column_name: str = "merged_analysis_group") -> str:
@@ -381,8 +379,6 @@ The merged column '{new_column_name}' contains {len(unique_values)} unique value
 Sample counts per group:
 {metadata_df[new_column_name].value_counts().to_string()}
         """
-    except Exception as e:
-        return f"Error merging metadata columns: {str(e)}"
     except Exception as e:
         return f"Error merging metadata columns: {str(e)}"
 
@@ -494,8 +490,48 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
         Path to the Kallisto index file
     """
     try:
+        console.log(f"[bold blue]Finding Kallisto index for organism:[/] {ctx.deps.organism}")
+        organism = ctx.deps.organism.lower()
+        index_dir = ctx.deps.kallisto_index_dir
+
+        # Look for index files in the specified directory
+        index_files = await find_files(ctx, index_dir, '.idx')
+
+        if not index_files:
+            return f"Error: No Kallisto index files found in {index_dir}"
+
+        # Try to find an index matching the organism
+        matching_indices = [idx for idx in index_files if organism in os.path.basename(os.path.dirname(idx)).lower()]
+
+        if matching_indices:
+            index_path = matching_indices[0]
+            # Also find the transcript-to-gene mapping file if available
+            tx2gene_files = await find_files(ctx, os.path.dirname(index_path), '.txt')
+            if tx2gene_files:
+                t2g_files = [f for f in tx2gene_files if any(x in os.path.basename(f).lower() for x in ['t2g', 'tx2gene'])]
+                if t2g_files:
+                    ctx.deps.tx2gene_path = t2g_files[0]
+
+            return f"Found Kallisto index for {organism}: {index_path}"
+        else:
+            # If no organism-specific index found, return the first one
+            return f"No index specific to {organism} found. Using the first available index: {index_files[0]}"
+
+    except Exception as e:
+        return f"Error finding Kallisto index: {str(e)}"
+
+@rnaseq_agent.tool
+async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
+    """
+    Run Kallisto quantification on the FASTQ files.
+
+    Returns:
+        Summary of the quantification process
+    """
+    try:
         console.log(f"[bold cyan]Fastq Directory from context:[/] {ctx.deps.fastq_dir}")
         console.log(f"[bold blue]Full context.deps details:[/]\n{vars(ctx.deps)}")
+
         # Find paired FASTQ files
         fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
         if not fastq_files:
@@ -600,44 +636,6 @@ Found {len(abundance_files)} abundance files for downstream analysis.
         """
     except Exception as e:
         return f"Error running Kallisto quantification: {str(e)}"
-
-@rnaseq_agent.tool
-async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
-    """
-    Run Kallisto quantification on the FASTQ files.
-
-    Returns:
-        Summary of the quantification process
-    """
-    try:
-        organism = ctx.deps.organism.lower()
-        index_dir = ctx.deps.kallisto_index_dir
-
-        # Look for index files in the specified directory
-        index_files = await find_files(ctx, index_dir, '.idx')
-
-        if not index_files:
-            return f"Error: No Kallisto index files found in {index_dir}"
-
-        # Try to find an index matching the organism
-        matching_indices = [idx for idx in index_files if organism in os.path.basename(os.path.dirname(idx)).lower()]
-
-        if matching_indices:
-            index_path = matching_indices[0]
-            # Also find the transcript-to-gene mapping file if available
-            tx2gene_files = await find_files(ctx, os.path.dirname(index_path), '.txt')
-            if tx2gene_files:
-                t2g_files = [f for f in tx2gene_files if any(x in os.path.basename(f).lower() for x in ['t2g', 'tx2gene'])]
-                if t2g_files:
-                    ctx.deps.tx2gene_path = t2g_files[0]
-
-            return f"Found Kallisto index for {organism}: {index_path}"
-        else:
-            # If no organism-specific index found, return the first one
-            return f"No index specific to {organism} found. Using the first available index: {index_files[0]}"
-
-    except Exception as e:
-        return f"Error finding Kallisto index: {str(e)}"
 
 # ----------------------------
 # Differential Expression Analysis Tools
@@ -890,11 +888,18 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 if __name__ == "__main__":
     # Create data instance for GSE262710
     test_data = RNAseqData(
+        fastq_dir="./notebooks/Testing/PydanticAI/TestRNAseqData_SETBP1/GSE262710/fastq",
+        metadata_path="./notebooks/Testing/PydanticAI/TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
+        kallisto_index_dir="./data/kallisto_indices",
+        organism="human",
+        output_dir="./notebooks/Testing/PydanticAI/analysis_output/GSE262710"
+    )
+    test_data2 = RNAseqData( # Temporary data instance for testing
         fastq_dir="./TestRNAseqData_SETBP1/GSE262710/fastq",
         metadata_path="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
         kallisto_index_dir="../../../data/kallisto_indices",
         organism="human",
-        output_dir="analysis_output/GSE262710"
+        output_dir="./analysis_output/GSE262710"
     )
 
     # Initialize conversation with analysis steps
@@ -907,17 +912,17 @@ if __name__ == "__main__":
     5. Run DESeq2 analysis for each contrast
     6. Perform pathway analysis using:
        - Standard GSEA
-       - Single-sample GSEA
-       - GSVA
     7. Generate appropriate visualizations
 
     Please provide updates at each step.
+
+    Note that the FASTQ files are located at ./TestRNAseqData_SETBP1/GSE262710/fastq
     """
 
     # Run the agent
     try:
         # Run the agent synchronously
-        result = rnaseq_agent.run_sync(initial_prompt, deps=test_data)
+        result = rnaseq_agent.run_sync(initial_prompt, deps=test_data2)
         console.print(Panel("Analysis completed successfully!", style="bold green"))
         console.print("\n[bold yellow]Agent response:[/bold yellow]")
         console.print(result.data)
