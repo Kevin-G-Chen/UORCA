@@ -91,6 +91,7 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
             console.log(f"[bold red]Tool Error:[/] {msg}")
             return msg
 
+        console.log(f"[bold yellow]Progress:[/] Loaded expression data with shape: {expr_data.shape}")
         # Load normalized counts
         expr_data = pd.read_csv(norm_counts_file, index_col=0)
 
@@ -127,6 +128,7 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
             ofname=os.path.join(ctx.deps.output_dir, f"gsea_{contrast_name}_top5.png")
         )
 
+        console.log(f"[bold yellow]Progress:[/] Generated GSEA plots in directory: {os.path.join(ctx.deps.output_dir, f'gsea_{contrast_name}')}")
         # Summarize results
         sig_pathways = gs_res.res2d[gs_res.res2d['FDR q-val'] < 0.25]
         msg = f"""
@@ -170,6 +172,9 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
         List of absolute file paths matching the suffix
     """
     try:
+        if not hasattr(ctx.deps, '_logged_context'):
+            console.log(f"[bold blue]Initial Context.deps details:[/]\n{vars(ctx.deps)}")
+            setattr(ctx.deps, '_logged_context', True)
         console.log(f"[bold blue]Tool Called:[/] find_files with directory: {directory}, suffix: {suffix}")
         console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
         if hasattr(ctx, "message_history"):
@@ -179,6 +184,7 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
             for f in files:
                 if f.endswith(suffix):
                     matched_files.append(os.path.join(root, f))
+        console.log(f"[bold yellow]Progress:[/] Found {len(matched_files)} files matching suffix '{suffix}' in directory: {directory}")
         msg = sorted(matched_files)
         console.log(f"[bold green]Tool Completed:[/] find_files found {len(matched_files)} files")
         return msg
@@ -583,6 +589,7 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                 sample_name = os.path.basename(r1_file).split('_R1')[0].split('_1.fastq')[0]
                 paired_files[sample_name] = (r1_file, expected_r2)
 
+        console.log(f"[bold yellow]Progress:[/] Identified {len(paired_files)} paired FASTQ file groups.")
         if not paired_files:
             # If no pairs found, check if files are single-end
             single_end = all(not r1_pattern.match(f) and not r2_pattern.match(f) for f in fastq_files)
@@ -608,9 +615,10 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                 r1, r2
             ]
 
-            # Run Kallisto
+            console.log(f"[bold yellow]Progress:[/] Running Kallisto quantification for sample: {sample_name}")
             process = subprocess.run(cmd, capture_output=True, text=True)
 
+            console.log(f"[bold yellow]Progress:[/] Completed Kallisto run for sample: {sample_name} (return code: {process.returncode})")
             if process.returncode == 0:
                 results.append(f"Successfully processed {sample_name}")
             else:
