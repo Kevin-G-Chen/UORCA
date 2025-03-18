@@ -107,7 +107,7 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
       after differential expression has been quantified.
     """
     try:
-        console.log(f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
+        console.log(f"[bold blue]Tool Called: run_gsea_analysis[/] with parameters: contrast_name = {contrast_name}")
         if hasattr(ctx, "message_history"):
             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
@@ -219,7 +219,7 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
       enabling subsequent steps (such as quantification with Kallisto) to process the correct data.
     """
     try:
-        if not hasattr(ctx.deps, '_logged_context'):
+        console.log(f"[bold blue]Tool Called: find_files[/] with parameters: directory = {directory}, suffix = {suffix}")
             console.log(f"[bold blue]Initial Context.deps details:[/]\n{vars(ctx.deps)}")
             setattr(ctx.deps, '_logged_context', True)
         console.log(f"[bold blue]Tool Called:[/] find_files with directory: {directory}, suffix: {suffix}")
@@ -276,8 +276,8 @@ async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
       downstream differential expression and pathway analyses.
     """
     try:
-        console.log(f"[bold blue]load_metadata called with metadata_path: {metadata_path}")
-        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+        console.log(f"[bold blue]Tool Called: load_metadata[/] with parameters: metadata_path = {metadata_path}")
+        console.log(f"[bold blue]Tool Called: identify_analysis_columns[/] - no extra parameters.")
         if hasattr(ctx, "message_history"):
             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         if metadata_path.endswith('.csv'):
@@ -320,7 +320,7 @@ async def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
       This tool is used to ensure consistency in sample naming across metadata and quantification outputs,
       which is vital for matching and merging data from different sources.
     """
-    if pd.isna(s):
+    console.log(f"[bold blue]Tool Called: clean_string[/] with parameter: s = {s}")
         return "NA"  # Handle missing values
     s = str(s).strip()  # Convert to string and remove leading/trailing whitespaces
     s = unidecode(s)  # Normalize special characters to ASCII
@@ -365,7 +365,7 @@ async def identify_analysis_columns(ctx: RunContext[RNAseqData]) -> str:
         console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
         if hasattr(ctx, "message_history"):
             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-        if ctx.deps.metadata_df is None:
+        console.log(f"[bold blue]Tool Called: merge_metadata_columns[/] with parameters: columns = {columns}, new_column_name = {new_column_name}")
             return "Error: Metadata not loaded. Please run load_metadata first."
 
         # Get columns with variability
@@ -465,7 +465,7 @@ async def merge_metadata_columns(ctx: RunContext[RNAseqData], columns: List[str]
       this unified grouping is then used for designing contrasts for differential expression analysis.
     """
     try:
-        if ctx.deps.metadata_df is None:
+        console.log(f"[bold blue]Tool Called: design_contrasts[/] - using metadata from merged column: {ctx.deps.merged_column if ctx.deps.merged_column else 'None'}")
             return "Error: Metadata not loaded. Please run load_metadata first."
 
         console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
@@ -657,7 +657,7 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
       quantification step uses the appropriate reference for the organism under study.
     """
     try:
-        console.log(f"[bold blue]Finding Kallisto index for organism:[/] {ctx.deps.organism}")
+        console.log(f"[bold blue]Tool Called: find_kallisto_index[/] - parameters: organism = {ctx.deps.organism}, kallisto_index_dir = {ctx.deps.kallisto_index_dir}")
         organism = ctx.deps.organism.lower()
         index_dir = ctx.deps.kallisto_index_dir
 
@@ -724,10 +724,10 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
       transcript abundance estimates, which are later used for differential expression analysis.
     """
     try:
-        console.log(f"[bold cyan]Fastq Directory from context:[/] {ctx.deps.fastq_dir}")
+        console.log(f"[bold blue]Tool Called: run_kallisto_quantification[/] - parameters: fastq_dir = {ctx.deps.fastq_dir}, output_dir = {ctx.deps.output_dir}")
         console.log(f"[bold blue]Full context.deps details:[/]\n{vars(ctx.deps)}")
 
-        # Find paired FASTQ files
+        console.log(f"[bold blue]Tool Called: prepare_deseq2_analysis[/] - no additional parameters (using context values).")
         fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
         if not fastq_files:
             return f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
@@ -1022,7 +1022,7 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
       for further biological interpretation.
     """
     try:
-        # Check if we have abundance files
+        console.log(f"[bold blue]Tool Called: run_deseq2_analysis[/] with parameters: contrast_name = {contrast_name}")
         if not ctx.deps.abundance_files:
             return "Error: No abundance files found. Please run Kallisto quantification first."
 
