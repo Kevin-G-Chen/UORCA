@@ -1144,11 +1144,11 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 if __name__ == "__main__":
     # Create data instance for GSE262710
     test_data = RNAseqData(
-        fastq_dir="./notebooks/Testing/PydanticAI/TestRNAseqData_SETBP1/GSE262710/fastq",
-        metadata_path="./notebooks/Testing/PydanticAI/TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
-        kallisto_index_dir="./data/kallisto_indices",
+        fastq_dir="./TestRNAseqData_SETBP1/GSE262710/fastq",
+        metadata_path="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
+        kallisto_index_dir="../../../data/kallisto_indices",
         organism="human",
-        output_dir="./notebooks/Testing/PydanticAI/analysis_output/GSE262710"
+        output_dir="./analysis_output/GSE262710"
     )
     initial_prompt = """
     Please analyze the RNA-seq data with the following steps:
