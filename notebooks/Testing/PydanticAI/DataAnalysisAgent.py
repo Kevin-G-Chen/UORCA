@@ -77,6 +77,8 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
     """
     try:
         console.log(f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
+        if hasattr(ctx, "message_history"):
+            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
         if hasattr(ctx, "message_history"):
             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
@@ -166,13 +168,12 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
     Returns:
         List of absolute file paths matching the suffix
     """
-    console.log(f"[bold blue]Tool Called:[/] find_files with directory: {directory}, suffix: {suffix}")
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+    try:
+        console.log(f"[bold blue]Tool Called:[/] find_files with directory: {directory}, suffix: {suffix}")
+        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+        if hasattr(ctx, "message_history"):
+            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+        matched_files = []
         for root, _, files in os.walk(directory):
             for f in files:
                 if f.endswith(suffix):
@@ -183,11 +184,11 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
     except FileNotFoundError:
         msg = f"Error: Directory '{directory}' not found."
         console.log(f"[bold red]Tool Error:[/] {msg}")
-        return msg
+        return [msg]
     except Exception as e:
         error_msg = f"Error: {str(e)}"
         console.log(f"[bold red]Tool Exception:[/] {error_msg}")
-        return error_msg
+        return [error_msg]
 
 @rnaseq_agent.tool
 async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
@@ -200,50 +201,23 @@ async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
     Returns:
         Description of the loaded metadata
     """
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-        # Try to load the metadata file
+    try:
+        console.log(f"[bold blue]load_metadata called with metadata_path: {metadata_path}")
+        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+        if hasattr(ctx, "message_history"):
+            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         if metadata_path.endswith('.csv'):
             metadata_df = pd.read_csv(metadata_path)
         elif metadata_path.endswith('.tsv') or metadata_path.endswith('.txt'):
             metadata_df = pd.read_csv(metadata_path, sep='\t')
         else:
-            # Try to guess the format
             metadata_df = pd.read_csv(metadata_path, sep=None, engine='python')
-
-        # Store in the context
+    
         ctx.deps.metadata_df = metadata_df
-
-        # Remove columns with all identical values as they're not useful for analysis
         useful_cols = metadata_df.loc[:, metadata_df.nunique() > 1].columns.tolist()
-
-        # Provide information about the metadata
-        msg = f"""
-Metadata loaded successfully with {metadata_df.shape[0]} samples and {metadata_df.shape[1]} columns.
-Columns with unique values: {', '.join(useful_cols)}
-First 5 rows:
-{metadata_df.head().to_string()}
-        """
-        return f"""
-DESeq2 analysis completed successfully for contrast: {contrast_name}
-
-Summary:
-- Total genes analyzed: {len(results_df)}
-- Significant genes (FDR < 0.05): {len(sig_results)}
-- Upregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] > 0])}
-- Downregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] < 0])}
-
-Top 10 differentially expressed genes:
-{sig_results.head(10)[['log2FoldChange', 'pvalue', 'padj']].to_string()}
-
-Generated files:
-- Results table: DESeq2_{contrast_name}_results.csv
-- MA plot: DESeq2_{contrast_name}_MA_plot.png
-- PCA plot: DESeq2_PCA_plot.png
-- Heatmap: DESeq2_{contrast_name}_heatmap.png
-- Volcano plot: DESeq2_{contrast_name}_volcano_plot.png
-"""
+        msg = f"Metadata loaded: {metadata_df.shape[0]} samples, {metadata_df.shape[1]} columns. Useful columns: {', '.join(useful_cols)}."
+        console.log(f"[bold green]load_metadata success:[/] {msg}")
+        return msg
     except Exception as e:
         return f"Error loading metadata: {str(e)}"
 
@@ -278,18 +252,13 @@ async def identify_analysis_columns(ctx: RunContext[RNAseqData]) -> str:
     Returns:
         Description of identified columns and recommendation
     """
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-    if ctx.deps.metadata_df is None:
-        return "Error: Metadata not loaded. Please run load_metadata first."
+    try:
+        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+        if hasattr(ctx, "message_history"):
+            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+        if ctx.deps.metadata_df is None:
+            return "Error: Metadata not loaded. Please run load_metadata first."
 
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         # Get columns with variability
         metadata_df = ctx.deps.metadata_df
         variable_cols = metadata_df.loc[:, metadata_df.nunique() > 1].columns.tolist()
@@ -354,6 +323,8 @@ Merge needed: {merge_needed}
         """
     except Exception as e:
         return f"Error analyzing metadata columns: {str(e)}"
+    except Exception as e:
+        return f"Error analyzing metadata columns: {str(e)}"
 
 @rnaseq_agent.tool
 async def merge_metadata_columns(ctx: RunContext[RNAseqData], columns: List[str], new_column_name: str = "merged_analysis_group") -> str:
@@ -367,12 +338,13 @@ async def merge_metadata_columns(ctx: RunContext[RNAseqData], columns: List[str]
     Returns:
         Description of the merged column
     """
-    if ctx.deps.metadata_df is None:
-        return "Error: Metadata not loaded. Please run load_metadata first."
+    try:
+        if ctx.deps.metadata_df is None:
+            return "Error: Metadata not loaded. Please run load_metadata first."
 
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+        if hasattr(ctx, "message_history"):
+            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         metadata_df = ctx.deps.metadata_df
 
         # Check that all columns exist
@@ -410,6 +382,8 @@ Sample counts per group:
         """
     except Exception as e:
         return f"Error merging metadata columns: {str(e)}"
+    except Exception as e:
+        return f"Error merging metadata columns: {str(e)}"
 
 @rnaseq_agent.tool
 async def design_contrasts(ctx: RunContext[RNAseqData]) -> str:
@@ -419,13 +393,13 @@ async def design_contrasts(ctx: RunContext[RNAseqData]) -> str:
     Returns:
         Description of designed contrasts
     """
-    if ctx.deps.metadata_df is None:
-        return "Error: Metadata not loaded. Please run load_metadata first."
-
-    if ctx.deps.merged_column is None:
-        return "Error: Analysis column not identified. Please run identify_analysis_columns first."
-
     try:
+        if ctx.deps.metadata_df is None:
+            return "Error: Metadata not loaded. Please run load_metadata first."
+
+        if ctx.deps.merged_column is None:
+            return "Error: Analysis column not identified. Please run identify_analysis_columns first."
+
         metadata_df = ctx.deps.metadata_df
         group_col = ctx.deps.merged_column
 
@@ -504,6 +478,8 @@ Contrasts:
         """
     except Exception as e:
         return f"Error designing contrasts: {str(e)}"
+    except Exception as e:
+        return f"Error designing contrasts: {str(e)}"
 
 # ----------------------------
 # Kallisto Quantification Tools
@@ -553,6 +529,47 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
 
     Returns:
         Summary of the quantification process
+    """
+    try:
+        organism = ctx.deps.organism.lower()
+        index_dir = ctx.deps.kallisto_index_dir
+
+        # Look for index files in the specified directory
+        index_files = await find_files(ctx, index_dir, '.idx')
+
+        if not index_files:
+            return f"Error: No Kallisto index files found in {index_dir}"
+
+        # Try to find an index matching the organism
+        matching_indices = [idx for idx in index_files if organism in os.path.basename(os.path.dirname(idx)).lower()]
+
+        if matching_indices:
+            index_path = matching_indices[0]
+            # Also find the transcript-to-gene mapping file if available
+            tx2gene_files = await find_files(ctx, os.path.dirname(index_path), '.txt')
+            if tx2gene_files:
+                t2g_files = [f for f in tx2gene_files if any(x in os.path.basename(f).lower() for x in ['t2g', 'tx2gene'])]
+                if t2g_files:
+                    ctx.deps.tx2gene_path = t2g_files[0]
+
+            return f"Found Kallisto index for {organism}: {index_path}"
+        else:
+            # If no organism-specific index found, return the first one
+            return f"No index specific to {organism} found. Using the first available index: {index_files[0]}"
+
+    except Exception as e:
+        return f"Error finding Kallisto index: {str(e)}"
+
+# ----------------------------
+# Differential Expression Analysis Tools
+# ----------------------------
+@rnaseq_agent.tool
+async def prepare_deseq2_analysis(ctx: RunContext[RNAseqData]) -> str:
+    """
+    Prepare data for DESeq2 analysis by integrating Kallisto quantification results with metadata.
+
+    Returns:
+        Description of the prepared data
     """
     try:
         # Find paired FASTQ files
@@ -660,16 +677,16 @@ Found {len(abundance_files)} abundance files for downstream analysis.
     except Exception as e:
         return f"Error running Kallisto quantification: {str(e)}"
 
-# ----------------------------
-# Differential Expression Analysis Tools
-# ----------------------------
 @rnaseq_agent.tool
-async def prepare_deseq2_analysis(ctx: RunContext[RNAseqData]) -> str:
+async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> str:
     """
-    Prepare data for DESeq2 analysis by integrating Kallisto quantification results with metadata.
+    Run DESeq2 differential expression analysis for a specific contrast.
+
+    Args:
+        contrast_name: Name of the contrast to analyze
 
     Returns:
-        Description of the prepared data
+        Summary of the differential expression results
     """
     try:
         # Check if we have abundance files
@@ -788,168 +805,6 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
         """
     except Exception as e:
         return f"Error preparing DESeq2 analysis: {str(e)}"
-
-@rnaseq_agent.tool
-async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> str:
-    """
-    Run DESeq2 differential expression analysis for a specific contrast.
-
-    Args:
-        contrast_name: Name of the contrast to analyze
-
-    Returns:
-        Summary of the differential expression results
-    """
-    try:
-        # Check if we have the contrast definition
-        if not ctx.deps.contrast_groups or contrast_name not in ctx.deps.contrast_groups:
-            return f"Error: Contrast '{contrast_name}' not defined. Please run design_contrasts first."
-
-        # Get contrast details
-        contrast = ctx.deps.contrast_groups[contrast_name]
-        numerator = contrast['numerator']
-        denominator = contrast['denominator']
-
-        # Check if we have the merged column
-        if ctx.deps.merged_column is None:
-            return "Error: Analysis column not identified. Please run identify_analysis_columns first."
-
-        # Load the sample mapping file
-        sample_file = os.path.join(ctx.deps.output_dir, "deseq2_analysis_samples.csv")
-        if not os.path.exists(sample_file):
-            return "Error: Sample mapping file not found. Please run prepare_deseq2_analysis first."
-
-        sample_df = pd.read_csv(sample_file, index_col=0)
-
-        # Create the R script for DESeq2 analysis
-        r_script = f"""
-        library(tximport)
-        library(DESeq2)
-        library(ggplot2)
-        library(pheatmap)
-        library(dplyr)
-        library(tibble)
-        library(tidyr)
-
-        # Set working directory
-        setwd("{ctx.deps.output_dir}")
-
-        # Load sample information
-        samples <- read.csv("{sample_file}", row.names=1)
-
-        # Get file paths
-        files <- samples$abundance_file
-
-        # Get sample groups using the merged analysis column
-        group <- factor(samples[["{ctx.deps.merged_column}"]])
-        coldata <- data.frame(row.names=rownames(samples), group=group)
-
-        # Check if tx2gene file exists
-        tx2gene_exists <- {str(ctx.deps.tx2gene_path is not None).upper()}
-
-        if (tx2gene_exists) {{
-          # Import transcript to gene mapping
-          tx2gene <- read.table("{ctx.deps.tx2gene_path}", sep="\\t", header=FALSE)
-          tx2gene <- tx2gene[, c(1, 2)]
-          txi <- tximport(files, type="kallisto", tx2gene=tx2gene, ignoreAfterBar=TRUE)
-          dds <- DESeqDataSetFromTximport(txi, colData=coldata, design=~group)
-        }} else {{
-          txi <- tximport(files, type="kallisto", txOut=TRUE)
-          dds <- DESeqDataSetFromTximport(txi, colData=coldata, design=~group)
-        }}
-
-        # Filter low count genes
-        keep <- rowSums(counts(dds)) >= 10
-        dds <- dds[keep,]
-
-        # Set reference level
-        dds$group <- relevel(dds$group, ref="{denominator}")
-        dds <- DESeq(dds)
-        res <- results(dds, contrast=c("group", "{numerator}", "{denominator}"))
-        res <- res[order(res$padj),]
-        write.csv(as.data.frame(res), file="DESeq2_{contrast_name}_results.csv")
-        normalized_counts <- counts(dds, normalized=TRUE)
-        write.csv(normalized_counts, file="DESeq2_normalized_counts.csv")
-
-        png("DESeq2_{contrast_name}_MA_plot.png", width=800, height=600)
-        plotMA(res, main="{contrast_name} MA Plot", ylim=c(-5,5))
-        dev.off()
-
-        png("DESeq2_PCA_plot.png", width=800, height=600)
-        vsd <- vst(dds, blind=FALSE)
-        plotPCA(vsd, intgroup=c("group")) + theme_bw() + ggtitle("PCA of samples")
-        dev.off()
-
-        png("DESeq2_{contrast_name}_heatmap.png", width=800, height=800)
-        mat <- assay(vsd)
-        topgenes <- head(rownames(res), 50)
-        mat <- mat[topgenes,]
-        mat <- mat - rowMeans(mat)
-        pheatmap(mat, main="Top 50 DE genes")
-        dev.off()
-
-        png("DESeq2_{contrast_name}_volcano_plot.png", width=800, height=600)
-        res_df <- as.data.frame(res)
-        res_df$gene <- rownames(res_df)
-        res_df$sig <- "Not Significant"
-        res_df$sig[res_df$padj < 0.05 & res_df$log2FoldChange > 1] <- "Upregulated"
-        res_df$sig[res_df$padj < 0.05 & res_df$log2FoldChange < -1] <- "Downregulated"
-        ggplot(res_df, aes(x=log2FoldChange, y=-log10(padj), color=sig)) +
-          geom_point(alpha=0.7) +
-          scale_color_manual(values=c("blue", "gray", "red")) +
-          theme_bw() +
-          geom_vline(xintercept=c(-1,1), linetype="dashed") +
-          geom_hline(yintercept=-log10(0.05), linetype="dashed") +
-          labs(title="Volcano Plot", x="Log2 Fold Change", y="-Log10 Adjusted p-value") +
-          theme(legend.title=element_blank())
-        dev.off()
-
-        writeLines(capture.output(sessionInfo()), "DESeq2_session_info.txt")
-        """
-
-        # Write the R script to a file
-        r_script_path = os.path.join(ctx.deps.output_dir, f"run_deseq2_{contrast_name}.R")
-        with open(r_script_path, "w") as f:
-            f.write(r_script)
-
-        # Run the R script
-        process = subprocess.run(["Rscript", r_script_path], capture_output=True, text=True)
-
-        if process.returncode != 0:
-            return f"Error running DESeq2 analysis: {process.stderr}"
-
-        # Check if the results file was created
-        results_file = os.path.join(ctx.deps.output_dir, f"DESeq2_{contrast_name}_results.csv")
-        if not os.path.exists(results_file):
-            return "Error: DESeq2 analysis did not produce results file"
-
-        # Load the results for summary
-        results_df = pd.read_csv(results_file, index_col=0)
-
-        # Filter for significant genes
-        sig_results = results_df[results_df['padj'] < 0.05].sort_values('padj')
-
-        return f"""
-        DESeq2 analysis completed successfully for contrast: {contrast_name}
-
-        Summary:
-        - Total genes analyzed: {len(results_df)}
-        - Significant genes (FDR < 0.05): {len(sig_results)}
-        - Upregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] > 0])}
-        - Downregulated in {numerator}: {len(sig_results[sig_results['log2FoldChange'] < 0])}
-
-        Top 10 differentially expressed genes:
-        {sig_results.head(10)[['log2FoldChange', 'pvalue', 'padj']].to_string()}
-
-        Generated files:
-        - Results table: DESeq2_{contrast_name}_results.csv
-        - MA plot: DESeq2_{contrast_name}_MA_plot.png
-        - PCA plot: DESeq2_PCA_plot.png
-        - Heatmap: DESeq2_{contrast_name}_heatmap.png
-        - Volcano plot: DESeq2_{contrast_name}_volcano_plot.png
-        """
-    except Exception as e:
-        return f"Error running DESeq2 analysis: {str(e)}"
 # ----------------------------
 # Main Execution
 # ----------------------------
