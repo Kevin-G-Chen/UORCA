@@ -75,11 +75,17 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
     Returns:
         Summary of GSEA results
     """
+    console.log(f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
+    console.log("[bold blue]Tool Called:[/] run_ssgsea_analysis")
+    console.log("[bold blue]Tool Called:[/] run_gsva_analysis")
+    console.log(f"[bold blue]Tool Called:[/] load_metadata with metadata_path: {metadata_path}")
     try:
         # Check if we have normalized expression data
         norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
         if not os.path.exists(norm_counts_file):
-            return "Error: Normalized counts file not found. Please run DESeq2 analysis first."
+            msg = "Error: Normalized counts file not found. Please run DESeq2 analysis first."
+            console.log(f"[bold red]Tool Error:[/] {msg}")
+            return msg
 
         # Load normalized counts
         expr_data = pd.read_csv(norm_counts_file, index_col=0)
@@ -117,7 +123,7 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
 
         # Summarize results
         sig_pathways = gs_res.res2d[gs_res.res2d['FDR q-val'] < 0.25]
-        return f"""
+        msg = f"""
 GSEA Analysis completed for contrast: {contrast_name}
 
 Summary:
@@ -130,7 +136,27 @@ Generated files:
 - GSEA results: gsea_{contrast_name}/
 - Top pathways plot: gsea_{contrast_name}_top5.png
 """
+        console.log(f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
+        return msg
+        console.log("[bold green]Tool Completed:[/] run_ssgsea_analysis")
+        return msg
+        console.log("[bold green]Tool Completed:[/] run_gsva_analysis")
+        return msg
+        console.log(f"[bold green]Tool Completed:[/] load_metadata with {metadata_df.shape[0]} samples and {metadata_df.shape[1]} columns")
+        return msg
     except Exception as e:
+        error_msg = f"Error loading metadata: {str(e)}"
+        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
+        return error_msg
+        error_msg = f"Error running GSVA analysis: {str(e)}"
+        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
+        return error_msg
+        error_msg = f"Error running ssGSEA analysis: {str(e)}"
+        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
+        return error_msg
+        error_msg = f"Error running GSEA analysis: {str(e)}"
+        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
+        return error_msg
         return f"Error running GSEA analysis: {str(e)}"
     finally:
         plt.close('all')  # Ensure all plots are closed
@@ -147,7 +173,9 @@ async def run_ssgsea_analysis(ctx: RunContext[RNAseqData]) -> str:
         # Check for normalized counts
         norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
         if not os.path.exists(norm_counts_file):
-            return "Error: Normalized counts file not found. Please run DESeq2 analysis first."
+            msg = "Error: Normalized counts file not found. Please run DESeq2 analysis first."
+            console.log(f"[bold red]Tool Error:[/] {msg}")
+            return msg
 
         # Run ssGSEA
         ss = gp.ssgsea(
@@ -168,7 +196,7 @@ async def run_ssgsea_analysis(ctx: RunContext[RNAseqData]) -> str:
         plt.savefig(os.path.join(ctx.deps.output_dir, "ssgsea_heatmap.png"))
         plt.close()
 
-        return f"""
+        msg = f"""
 Single Sample GSEA Analysis completed.
 
 Generated files:
@@ -193,7 +221,9 @@ async def run_gsva_analysis(ctx: RunContext[RNAseqData]) -> str:
         # Check for normalized counts
         norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
         if not os.path.exists(norm_counts_file):
-            return "Error: Normalized counts file not found. Please run DESeq2 analysis first."
+            msg = "Error: Normalized counts file not found. Please run DESeq2 analysis first."
+            console.log(f"[bold red]Tool Error:[/] {msg}")
+            return msg
 
         # Run GSVA
         es = gp.gsva(
@@ -212,7 +242,7 @@ async def run_gsva_analysis(ctx: RunContext[RNAseqData]) -> str:
         plt.savefig(os.path.join(ctx.deps.output_dir, "gsva_heatmap.png"))
         plt.close()
 
-        return f"""
+        msg = f"""
 GSVA Analysis completed.
 
 Generated files:
@@ -239,17 +269,24 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
     Returns:
         List of absolute file paths matching the suffix
     """
+    console.log(f"[bold blue]Tool Called:[/] find_files with directory: {directory}, suffix: {suffix}")
     matched_files = []
     try:
         for root, _, files in os.walk(directory):
             for f in files:
                 if f.endswith(suffix):
                     matched_files.append(os.path.join(root, f))
-        return sorted(matched_files)
+        msg = sorted(matched_files)
+        console.log(f"[bold green]Tool Completed:[/] find_files found {len(matched_files)} files")
+        return msg
     except FileNotFoundError:
-        return f"Error: Directory '{directory}' not found."
+        msg = f"Error: Directory '{directory}' not found."
+        console.log(f"[bold red]Tool Error:[/] {msg}")
+        return msg
     except Exception as e:
-        return f"Error: {str(e)}"
+        error_msg = f"Error: {str(e)}"
+        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
+        return error_msg
 
 @rnaseq_agent.tool
 async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
@@ -279,7 +316,7 @@ async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
         useful_cols = metadata_df.loc[:, metadata_df.nunique() > 1].columns.tolist()
 
         # Provide information about the metadata
-        return f"""
+        msg = f"""
 Metadata loaded successfully with {metadata_df.shape[0]} samples and {metadata_df.shape[1]} columns.
 Columns with unique values: {', '.join(useful_cols)}
 First 5 rows:
