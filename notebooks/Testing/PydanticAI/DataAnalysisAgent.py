@@ -365,8 +365,7 @@ async def identify_analysis_columns(ctx: RunContext[RNAseqData]) -> str:
         console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
         if hasattr(ctx, "message_history"):
             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-        console.log(f"[bold blue]Tool Called: merge_metadata_columns[/] with parameters: columns = {columns}, new_column_name = {new_column_name}")
-            return "Error: Metadata not loaded. Please run load_metadata first."
+        console.log(f"[bold blue]Tool Called: identify_analysis_columns[/] - no extra parameters.")
 
         # Get columns with variability
         metadata_df = ctx.deps.metadata_df
@@ -465,8 +464,9 @@ async def merge_metadata_columns(ctx: RunContext[RNAseqData], columns: List[str]
       this unified grouping is then used for designing contrasts for differential expression analysis.
     """
     try:
-        console.log(f"[bold blue]Tool Called: design_contrasts[/] - using metadata from merged column: {ctx.deps.merged_column if ctx.deps.merged_column else 'None'}")
+        if ctx.deps.metadata_df is None:
             return "Error: Metadata not loaded. Please run load_metadata first."
+        console.log(f"[bold blue]Tool Called: merge_metadata_columns[/] with parameters: columns = {columns}, new_column_name = {new_column_name}")
 
         console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
         if hasattr(ctx, "message_history"):
@@ -622,8 +622,6 @@ Designed contrasts based on {group_col} column with values: {', '.join(groups)}
 Contrasts:
 {pd.DataFrame([contrast_details[c] for c in contrasts]).to_string()}
         """
-    except Exception as e:
-        return f"Error designing contrasts: {str(e)}"
     except Exception as e:
         return f"Error designing contrasts: {str(e)}"
 
