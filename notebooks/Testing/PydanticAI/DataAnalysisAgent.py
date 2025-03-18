@@ -1,5 +1,5 @@
 # Create a global console instance
-console = Console()
+# console = Console()
 # Imports
 # ----------------------------
 import os
@@ -22,7 +22,7 @@ import seaborn as sns
 import gseapy as gp
 import nest_asyncio
 nest_asyncio.apply()
-
+console = Console()
 from pydantic_ai import Agent, RunContext
 
 # ----------------------------
@@ -50,7 +50,7 @@ class RNAseqData:
 # ----------------------------
 
 rnaseq_agent = Agent(
-    'openai:gpt-4o',
+    'openai:gpt-4o-mini',
     deps_type=RNAseqData,
     system_prompt="""
     You are an expert RNAseq data analyst. Your task is to analyze RNAseq data using a series of bioinformatics tools.
@@ -1006,9 +1006,9 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
 if __name__ == "__main__":
     # Create data instance for GSE262710
     test_data = RNAseqData(
-        fastq_dir="data/TestRNAseqData_SETBP1/GSE262710/fastq",
-        metadata_path="data/TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
-        kallisto_index_dir="data/kallisto_indices",
+        fastq_dir="./TestRNAseqData_SETBP1/GSE262710/fastq",
+        metadata_path="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
+        kallisto_index_dir="../../../data/kallisto_indices",
         organism="human",
         output_dir="analysis_output/GSE262710"
     )
