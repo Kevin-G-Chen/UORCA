@@ -76,10 +76,12 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
         Summary of GSEA results
     """
     console.log(f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
-    console.log("[bold blue]Tool Called:[/] run_ssgsea_analysis")
-    console.log("[bold blue]Tool Called:[/] run_gsva_analysis")
-    console.log(f"[bold blue]Tool Called:[/] load_metadata with metadata_path: {metadata_path}")
-    try:
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         # Check if we have normalized expression data
         norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
         if not os.path.exists(norm_counts_file):
@@ -144,7 +146,10 @@ Generated files:
         return msg
         console.log(f"[bold green]Tool Completed:[/] load_metadata with {metadata_df.shape[0]} samples and {metadata_df.shape[1]} columns")
         return msg
-    except Exception as e:
+        # Now, print the message history for debugging purposes:
+        all_msgs = result.all_messages()
+        console.print("[bold cyan]Full Message History:[/bold cyan]")
+        console.print(all_msgs)
         error_msg = f"Error loading metadata: {str(e)}"
         console.log(f"[bold red]Tool Exception:[/] {error_msg}")
         return error_msg
@@ -169,7 +174,9 @@ async def run_ssgsea_analysis(ctx: RunContext[RNAseqData]) -> str:
     Returns:
         Summary of ssGSEA results
     """
-    try:
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         # Check for normalized counts
         norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
         if not os.path.exists(norm_counts_file):
@@ -217,7 +224,9 @@ async def run_gsva_analysis(ctx: RunContext[RNAseqData]) -> str:
     Returns:
         Summary of GSVA results
     """
-    try:
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         # Check for normalized counts
         norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
         if not os.path.exists(norm_counts_file):
@@ -270,8 +279,12 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
         List of absolute file paths matching the suffix
     """
     console.log(f"[bold blue]Tool Called:[/] find_files with directory: {directory}, suffix: {suffix}")
-    matched_files = []
-    try:
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         for root, _, files in os.walk(directory):
             for f in files:
                 if f.endswith(suffix):
@@ -299,7 +312,9 @@ async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
     Returns:
         Description of the loaded metadata
     """
-    try:
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         # Try to load the metadata file
         if metadata_path.endswith('.csv'):
             metadata_df = pd.read_csv(metadata_path)
@@ -375,10 +390,18 @@ async def identify_analysis_columns(ctx: RunContext[RNAseqData]) -> str:
     Returns:
         Description of identified columns and recommendation
     """
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
     if ctx.deps.metadata_df is None:
         return "Error: Metadata not loaded. Please run load_metadata first."
 
-    try:
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         # Get columns with variability
         metadata_df = ctx.deps.metadata_df
         variable_cols = metadata_df.loc[:, metadata_df.nunique() > 1].columns.tolist()
@@ -459,7 +482,9 @@ async def merge_metadata_columns(ctx: RunContext[RNAseqData], columns: List[str]
     if ctx.deps.metadata_df is None:
         return "Error: Metadata not loaded. Please run load_metadata first."
 
-    try:
+    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+    if hasattr(ctx, "message_history"):
+        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         metadata_df = ctx.deps.metadata_df
 
         # Check that all columns exist
