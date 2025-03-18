@@ -1150,6 +1150,8 @@ if __name__ == "__main__":
         organism="human",
         output_dir="./analysis_output/GSE262710"
     )
+    console.log(Panel("Context details:\n" + str(vars(test_data)), style="bold blue"))
+
     initial_prompt = """
     Please analyze the RNA-seq data with the following steps:
     1. Run Kallisto quantification on all paired-end FASTQ files
