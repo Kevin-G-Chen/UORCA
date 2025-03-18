@@ -1150,21 +1150,6 @@ if __name__ == "__main__":
         organism="human",
         output_dir="./notebooks/Testing/PydanticAI/analysis_output/GSE262710"
     )
-    test_data2 = RNAseqData( # Temporary data instance for testing
-        fastq_dir="./TestRNAseqData_SETBP1/GSE262710/fastq",
-        metadata_path="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
-        kallisto_index_dir="../../../data/kallisto_indices",
-        organism="human",
-        output_dir="./analysis_output/GSE262710"
-    )
-
-    # Validate workflow state before proceeding
-    try:
-        validation_result = rnaseq_agent.run_sync("Validate workflow state", deps=test_data2)
-        console.print(Panel(validation_result.data, style="bold green"))
-    except WorkflowTerminationError as e:
-        console.print(Panel(f"Workflow terminated: {str(e)}", style="bold red"))
-        raise SystemExit(f"Terminating: {str(e)}")
     initial_prompt = """
     Please analyze the RNA-seq data with the following steps:
     1. Run Kallisto quantification on all paired-end FASTQ files
@@ -1181,7 +1166,7 @@ if __name__ == "__main__":
     # Run the agent
     try:
         # Run the agent synchronously
-        result = rnaseq_agent.run_sync(initial_prompt, deps=test_data2)
+        result = rnaseq_agent.run_sync(initial_prompt, deps=test_data)
         console.print(Panel("Analysis completed successfully!", style="bold green"))
         console.print("\n[bold yellow]Agent response:[/bold yellow]")
         console.print(result.data)
