@@ -75,13 +75,12 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
     Returns:
         Summary of GSEA results
     """
-    console.log(f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+    try:
+        console.log(f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
+        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+        if hasattr(ctx, "message_history"):
+            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+
         # Check if we have normalized expression data
         norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
         if not os.path.exists(norm_counts_file):
@@ -119,9 +118,11 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
 
         # Generate plots
         terms = gs_res.res2d.Term
-        gs_res.plot(terms=terms[:5],
-                   show_ranking=True,
-                   ofname=os.path.join(ctx.deps.output_dir, f"gsea_{contrast_name}_top5.png"))
+        gs_res.plot(
+            terms=terms[:5],
+            show_ranking=True,
+            ofname=os.path.join(ctx.deps.output_dir, f"gsea_{contrast_name}_top5.png")
+        )
 
         # Summarize results
         sig_pathways = gs_res.res2d[gs_res.res2d['FDR q-val'] < 0.25]
@@ -140,129 +141,16 @@ Generated files:
 """
         console.log(f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
         return msg
-        console.log("[bold green]Tool Completed:[/] run_ssgsea_analysis")
-        return msg
-        console.log("[bold green]Tool Completed:[/] run_gsva_analysis")
-        return msg
-        console.log(f"[bold green]Tool Completed:[/] load_metadata with {metadata_df.shape[0]} samples and {metadata_df.shape[1]} columns")
-        return msg
-        # Now, print the message history for debugging purposes:
-        all_msgs = result.all_messages()
-        console.print("[bold cyan]Full Message History:[/bold cyan]")
-        console.print(all_msgs)
-        error_msg = f"Error loading metadata: {str(e)}"
-        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
-        return error_msg
-        error_msg = f"Error running GSVA analysis: {str(e)}"
-        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
-        return error_msg
-        error_msg = f"Error running ssGSEA analysis: {str(e)}"
-        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
-        return error_msg
+
+    except Exception as e:
         error_msg = f"Error running GSEA analysis: {str(e)}"
         console.log(f"[bold red]Tool Exception:[/] {error_msg}")
         return error_msg
-        return f"Error running GSEA analysis: {str(e)}"
+
     finally:
-        plt.close('all')  # Ensure all plots are closed
+        # This finally block will always run, ensuring that any open figures are closed.
+        plt.close('all')
 
-@rnaseq_agent.tool
-async def run_ssgsea_analysis(ctx: RunContext[RNAseqData]) -> str:
-    """
-    Run single sample GSEA analysis.
-
-    Returns:
-        Summary of ssGSEA results
-    """
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-        # Check for normalized counts
-        norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
-        if not os.path.exists(norm_counts_file):
-            msg = "Error: Normalized counts file not found. Please run DESeq2 analysis first."
-            console.log(f"[bold red]Tool Error:[/] {msg}")
-            return msg
-
-        # Run ssGSEA
-        ss = gp.ssgsea(
-            data=norm_counts_file,
-            gene_sets='MSigDB_Hallmark_2020',
-            outdir=os.path.join(ctx.deps.output_dir, "ssgsea"),
-            sample_norm_method='rank',
-            no_plot=False
-        )
-
-        # Create heatmap
-        nes = ss.res2d.pivot(index='Term', columns='Name', values='NES')
-        plt.figure(figsize=(12,8))
-        sns.clustermap(nes,
-                      cmap='RdBu_r',
-                      center=0,
-                      figsize=(12,8))
-        plt.savefig(os.path.join(ctx.deps.output_dir, "ssgsea_heatmap.png"))
-        plt.close()
-
-        msg = f"""
-Single Sample GSEA Analysis completed.
-
-Generated files:
-- ssGSEA results directory: ssgsea/
-- Pathway score heatmap: ssgsea_heatmap.png
-
-Number of pathways analyzed: {len(nes.index)}
-Number of samples: {len(nes.columns)}
-"""
-    except Exception as e:
-        return f"Error running ssGSEA analysis: {str(e)}"
-
-@rnaseq_agent.tool
-async def run_gsva_analysis(ctx: RunContext[RNAseqData]) -> str:
-    """
-    Run Gene Set Variation Analysis.
-
-    Returns:
-        Summary of GSVA results
-    """
-    console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-    if hasattr(ctx, "message_history"):
-        console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-        # Check for normalized counts
-        norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
-        if not os.path.exists(norm_counts_file):
-            msg = "Error: Normalized counts file not found. Please run DESeq2 analysis first."
-            console.log(f"[bold red]Tool Error:[/] {msg}")
-            return msg
-
-        # Run GSVA
-        es = gp.gsva(
-            data=norm_counts_file,
-            gene_sets='MSigDB_Hallmark_2020',
-            outdir=os.path.join(ctx.deps.output_dir, "gsva")
-        )
-
-        # Create visualization
-        es_matrix = es.res2d.pivot(index='Term', columns='Name', values='ES')
-        plt.figure(figsize=(12,8))
-        sns.clustermap(es_matrix,
-                      cmap='RdBu_r',
-                      center=0,
-                      figsize=(12,8))
-        plt.savefig(os.path.join(ctx.deps.output_dir, "gsva_heatmap.png"))
-        plt.close()
-
-        msg = f"""
-GSVA Analysis completed.
-
-Generated files:
-- GSVA results directory: gsva/
-- Enrichment score heatmap: gsva_heatmap.png
-
-Number of gene sets analyzed: {len(es_matrix.index)}
-Number of samples: {len(es_matrix.columns)}
-"""
-    except Exception as e:
-        return f"Error running GSVA analysis: {str(e)}"
 # ----------------------------
 # Utility Functions
 # ----------------------------
