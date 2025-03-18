@@ -79,7 +79,8 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
         console.log(f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
         if hasattr(ctx, "message_history"):
             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+        console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
+        console.log(f"[bold cyan]Fastq Directory:[/] {ctx.deps.fastq_dir}")
         if hasattr(ctx, "message_history"):
             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
 
@@ -170,7 +171,7 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
     """
     try:
         console.log(f"[bold blue]Tool Called:[/] find_files with directory: {directory}, suffix: {suffix}")
-        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
+        console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
         if hasattr(ctx, "message_history"):
             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
         matched_files = []
@@ -493,6 +494,8 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
         Path to the Kallisto index file
     """
     try:
+        console.log(f"[bold cyan]Fastq Directory from context:[/] {ctx.deps.fastq_dir}")
+        console.log(f"[bold blue]Full context.deps details:[/]\n{vars(ctx.deps)}")
         organism = ctx.deps.organism.lower()
         index_dir = ctx.deps.kallisto_index_dir
 
