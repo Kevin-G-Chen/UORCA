@@ -2,6 +2,16 @@
 # console = Console()
 # Imports
 # ----------------------------
+@rnaseq_agent.tool
+async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
+    """
+    Use the find_files tool to list FASTQ files from the dependency's fastq_dir.
+    The file suffix is provided as a dynamic parameter (here: "fastq.gz").
+    """
+    directory = ctx.deps.fastq_dir  # get the FASTQ directory from the dependency container
+    suffix = "fastq.gz"             # dynamic parameter for file suffix
+    files = await find_files(ctx, directory, suffix)
+    return "FASTQ files found: " + ", ".join(files)
 import os
 import glob
 import re
