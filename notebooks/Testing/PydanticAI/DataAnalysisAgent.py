@@ -1171,7 +1171,7 @@ if __name__ == "__main__":
        - Standard GSEA
     7. Generate appropriate visualizations
 
-    Please provide updates at each step. Note that the FASTQ files are located at ./TestRNAseqData_SETBP1/GSE262710/fastq
+    Please provide updates at each step.
     """
 # Note that the FASTQ files are located at ./TestRNAseqData_SETBP1/GSE262710/fastq
     # Run the agent
