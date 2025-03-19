@@ -874,7 +874,7 @@ async def prepare_deseq2_analysis(ctx: RunContext[RNAseqData]) -> str:
       sample’s expression data is accurately linked to its experimental metadata, a prerequisite for DESeq2 analysis.
     """
     try:
-        # Find paired FASTQ files
+        # Find paired FASTQ files using the fastq_dir from the dependency
         fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
         if not fastq_files:
             return f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
