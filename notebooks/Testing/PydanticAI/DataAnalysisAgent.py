@@ -193,7 +193,7 @@ rnaseq_agent = Agent(
 # ----------------------------
 
 @rnaseq_agent.tool
-async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[str, List[str]]) -> List[str]:
+async def find_files(ctx: RunContext[RNAseqData], suffix: Union[str, List[str]]) -> List[str]:
     """
     Recursively search for and return a sorted list of files within the specified directory that have the given suffix.
 
@@ -731,7 +731,7 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
         console.log(f"[bold blue]Full context.deps details:[/]\n{vars(ctx.deps)}")
 
         # Find paired FASTQ files
-        fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
+        fastq_files = await find_files(ctx, 'fastq.gz')
         if not fastq_files:
             return f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
 
@@ -875,7 +875,7 @@ async def prepare_deseq2_analysis(ctx: RunContext[RNAseqData]) -> str:
     """
     try:
         # Find paired FASTQ files
-        fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
+        fastq_files = await find_files(ctx, 'fastq.gz')
         if not fastq_files:
             return f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
 
