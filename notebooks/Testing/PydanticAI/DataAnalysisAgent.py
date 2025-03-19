@@ -192,7 +192,10 @@ rnaseq_agent = Agent(
 # Utility Functions
 # ----------------------------
 @rnaseq_agent.tool
-async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -> List[str]:
+from typing import Union  # (ensure this import is present)
+
+@rnaseq_agent.tool
+async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[str, List[str]]) -> List[str]:
     """
     Recursively search for and return a sorted list of files within the specified directory that have the given suffix.
 
@@ -201,8 +204,8 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
           Contains the dependency context (RNAseqData) that holds directory information and other runtime parameters.
       - directory (str):
           The root directory path in which to search for files. This can be either an absolute or relative path.
-      - suffix (str):
-          The file suffix (for example "fastq.gz" for FASTQ files) that will be used to filter matching files.
+      - suffix (Union[str, List[str]]):
+          The file suffix (for example "fastq.gz" for FASTQ files) or a list of suffixes that will be used to filter matching files.
 
     Process:
       1. Logs the current context details (only once per run, thanks to a flag in ctx.deps).
@@ -230,7 +233,11 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
         matched_files = []
         for root, _, files in os.walk(directory):
             for f in files:
-                if f.endswith(suffix):
+                if isinstance(suffix, str):
+                    condition = f.endswith(suffix)
+                else:
+                    condition = any(f.endswith(s) for s in suffix)
+                if condition:
                     matched_files.append(os.path.join(root, f))
         console.log(f"[bold yellow]Progress:[/] Found {len(matched_files)} files matching suffix '{suffix}' in directory: {directory}")
         msg = sorted(matched_files)
@@ -246,16 +253,13 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: str) -
         return [error_msg]
 
 @rnaseq_agent.tool
-async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
+async def load_metadata(ctx: RunContext[RNAseqData]) -> str:
     """
     Load, validate, and store metadata from a file into the RNAseqData context for later use in the analysis.
 
     Inputs:
       - ctx: RunContext[RNAseqData]
           Contains the RNAseqData dependency where the loaded metadata DataFrame will be stored (in metadata_df).
-      - metadata_path (str):
-          The file path to the metadata. The function supports CSV, TSV, or texts files (with auto-detection of delimiter
-          when needed).
 
     Process:
       1. Determines file format by examining the file extension (.csv, .tsv, .txt) and reads the file accordingly.
@@ -277,16 +281,16 @@ async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
       downstream differential expression and pathway analyses.
     """
     try:
-        console.log(f"[bold blue]load_metadata called with metadata_path: {metadata_path}")
+        console.log(f"[bold blue]load_metadata called with metadata_path: {ctx.deps.metadata_path}")
         console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
         if hasattr(ctx, "message_history"):
             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-        if metadata_path.endswith('.csv'):
-            metadata_df = pd.read_csv(metadata_path)
-        elif metadata_path.endswith('.tsv') or metadata_path.endswith('.txt'):
-            metadata_df = pd.read_csv(metadata_path, sep='\t')
+        if ctx.deps.metadata_path.endswith('.csv'):
+            metadata_df = pd.read_csv(ctx.deps.metadata_path)
+        elif ctx.deps.metadata_path.endswith('.tsv') or ctx.deps.metadata_path.endswith('.txt'):
+            metadata_df = pd.read_csv(ctx.deps.metadata_path, sep='\t')
         else:
-            metadata_df = pd.read_csv(metadata_path, sep=None, engine='python')
+            metadata_df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
 
         ctx.deps.metadata_df = metadata_df
         useful_cols = metadata_df.loc[:, metadata_df.nunique() > 1].columns.tolist()
@@ -297,7 +301,7 @@ async def load_metadata(ctx: RunContext[RNAseqData], metadata_path: str) -> str:
         return f"Error loading metadata: {str(e)}"
 
 @rnaseq_agent.tool
-async def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
+def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     """
     Normalize and clean an input string by removing non-ASCII characters, redundant white space, and unwanted symbols.
 
