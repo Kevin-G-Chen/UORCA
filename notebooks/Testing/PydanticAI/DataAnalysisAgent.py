@@ -191,8 +191,6 @@ rnaseq_agent = Agent(
 # ----------------------------
 # Utility Functions
 # ----------------------------
-@rnaseq_agent.tool
-from typing import Union  # (ensure this import is present)
 
 @rnaseq_agent.tool
 async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[str, List[str]]) -> List[str]:
