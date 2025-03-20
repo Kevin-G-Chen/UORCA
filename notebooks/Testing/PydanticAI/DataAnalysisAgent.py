@@ -89,6 +89,7 @@ class RNAseqData:
     abundance_files: List[str] = None
     merged_column: Optional[str] = None
     contrast_groups: Dict[str, Dict[str, str]] = None
+    sample_mapping: Optional[pd.DataFrame] = None
 
 # ----------------------------
 # Create an RNAseq analysis agent
@@ -1112,6 +1113,8 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
         analysis_df_path = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
         analysis_df.to_csv(analysis_df_path)
         log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
+        # Store the sample mapping DataFrame in the runtime data
+        ctx.deps.sample_mapping = analysis_df
 
         result = f"""
 Successfully prepared data for DESeq2 analysis with {len(analysis_df)} samples.
