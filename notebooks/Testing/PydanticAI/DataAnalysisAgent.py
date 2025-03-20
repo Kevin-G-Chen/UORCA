@@ -446,6 +446,68 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
         log(error_msg, style="bold red")
         log_tool_result(error_msg)
         return [error_msg]
+    """
+    Recursively search for and return a sorted list of files within the specified directory that have the given suffix.
+
+    Inputs:
+      - ctx: RunContext[RNAseqData]
+          Contains the dependency context.
+      - directory (str):
+          The root directory path to search (absolute or relative).
+      - suffix (Union[str, List[str]]):
+          The file suffix to filter by (e.g., "fastq.gz") or a list of suffixes.
+
+    Output:
+      A sorted list of absolute file paths matching the given suffix.
+    """
+    try:
+        if not hasattr(ctx.deps, '_logged_context'):
+            log(f"Initial Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
+            setattr(ctx.deps, '_logged_context', True)
+
+        # Log tool call with parameters
+        log_tool_header("find_files", {"directory": directory, "suffix": suffix})
+
+        # Log context details only in verbose mode
+        log(f"Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
+        if hasattr(ctx, "message_history"):
+            log(f"Message History: {ctx.message_history}", level=LogLevel.DEBUG, style="bold magenta")
+
+        # Execute the actual file search
+        matched_files = []
+        for root, _, files in os.walk(directory):
+            for f in files:
+                if isinstance(suffix, str):
+                    condition = f.endswith(suffix)
+                else:
+                    condition = any(f.endswith(s) for s in suffix)
+                if condition:
+                    matched_files.append(os.path.join(root, f))
+
+        # Sort the files and prepare result
+        matched_files = sorted(matched_files)
+
+        # Log the result
+        result_msg = f"Found {len(matched_files)} files matching suffix '{suffix}' in directory: {directory}"
+        if matched_files and CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
+            result_msg += f"\nFirst few files: {matched_files[:3]}"
+            if len(matched_files) > 3:
+                result_msg += f"\n... and {len(matched_files) - 3} more"
+
+        log_tool_result(result_msg)
+        return matched_files
+
+    except FileNotFoundError:
+        error_msg = f"Error: Directory '{directory}' not found."
+        log(error_msg, style="bold red")
+        log_tool_result(error_msg)
+        return [error_msg]
+
+    except Exception as e:
+        error_msg = f"Error: {str(e)}"
+        log(error_msg, style="bold red")
+        log_tool_result(error_msg)
+        return [error_msg]
 
 @rnaseq_agent.tool
 async def load_metadata(ctx: RunContext[RNAseqData]) -> str:
