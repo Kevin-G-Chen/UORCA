@@ -1,15 +1,8 @@
 # Create a global console instance
-# console = Console()
-# Imports
-    def __post_init__(self):
-        self.fastq_dir = os.path.abspath(self.fastq_dir)
-        self.metadata_path = os.path.abspath(self.metadata_path)
-        self.kallisto_index_dir = os.path.abspath(self.kallisto_index_dir)
-        self.output_dir = os.path.abspath(self.output_dir)
-        if self.tx2gene_path:
-            self.tx2gene_path = os.path.abspath(self.tx2gene_path)
-        self.file_registry = {}
+from rich.console import Console
+console = Console()
 
+# Imports
 import os
 import glob
 import re
@@ -19,18 +12,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import date
-from rich.console import Console
 from rich.panel import Panel
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Union, Tuple, Any, Literal, Callable
 from unidecode import unidecode
 from pydantic import BaseModel, Field
-import matplotlib.pyplot as plt
-import seaborn as sns
 import gseapy as gp
 import nest_asyncio
 nest_asyncio.apply()
-console = Console()
+
 from pydantic_ai import Agent, RunContext
 
 # Configure logging levels

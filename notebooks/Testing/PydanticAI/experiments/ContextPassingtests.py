@@ -21,7 +21,6 @@ please use the provided tool to list all matching file paths.
 """
 )
 
-# Replicate the custom find_files function
 @agent.tool
 async def find_files(ctx: RunContext[TestDependency], directory: str, suffix: Union[str, List[str]]) -> List[str]:
     """
