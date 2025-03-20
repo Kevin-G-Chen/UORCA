@@ -1109,7 +1109,7 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
             analysis_df[col] = [metadata_df.loc[matched_samples[s]['metadata_row'], col] for s in analysis_df.index]
 
         # Save the analysis dataframe for later use
-        analysis_df_path = os.path.join(ctx.deps.output_dir, "deseq2_analysis_samples.csv")
+        analysis_df_path = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
         analysis_df.to_csv(analysis_df_path)
         log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
 
@@ -1132,7 +1132,7 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
         return f"Error running Kallisto quantification: {str(e)}"
 
 @rnaseq_agent.tool
-async def run_deseq2_analysis(
+async def run_edger_analysis(
     ctx: RunContext[RNAseqData],
     sample_mapping_file: str,
     contrast_names: Optional[List[str]] = None,
@@ -1142,7 +1142,7 @@ async def run_deseq2_analysis(
 
     Parameters:
       - sample_mapping_file (str):
-          Path for the sample mapping CSV, typically "<output_dir>/deseq2_analysis_samples.csv".
+          Path for the sample mapping CSV, typically "<output_dir>/edger_analysis_samples.csv".
       - contrast_names (Optional[List[str]]):
           A list of contrast names to be analyzed; if None, all defined contrasts are used.
 
