@@ -1258,10 +1258,13 @@ write.csv(normalized_counts, file="{os.path.join(ctx.deps.output_dir, 'DESeq2_no
         process = subprocess.run(['Rscript', base_r_script_path], capture_output=True, text=True)
 
         if process.returncode != 0:
-            error_msg = f"Error running base DESeq2 analysis: {process.stderr}"
+            error_msg = f"Error running base DESeq2 analysis:\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
             log(error_msg, style="bold red")
             log_tool_result(error_msg)
             return error_msg
+        else:
+            result_msg = f"DESeq2 base analysis completed successfully.\nOutput:\n{process.stdout}"
+            log_tool_result(result_msg)
 
         # Process each contrast
         all_results = []
