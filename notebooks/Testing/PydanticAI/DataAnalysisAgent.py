@@ -1378,9 +1378,9 @@ if __name__ == "__main__":
 
     8. Use the design_contrasts tool to set up contrasts for differential expression analysis.
 
-    9. Use the prepare_deseq2_analysis tool to prepare for DESeq2 analysis.
+    9. Use the prepare_edgeR_analysis tool to prepare for edgeR analysis.
 
-    10. Use the run_deseq2_analysis tool to run DESeq2 analysis for the contrasts.
+    10. Use the run_edger_analysis tool to run edgeR analysis for the contrasts.
 
     After each step, provide a brief summary of what was done and what will be done next. Make sure to call each tool explicitly with the correct parameter values, not variable references.
     """
