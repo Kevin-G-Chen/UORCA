@@ -1189,6 +1189,13 @@ library(tibble)
 # Set the working directory
 setwd("{os.path.abspath(ctx.deps.output_dir)}")
 
+# DEBUG: Print the current working directory
+cat("DEBUG: Current working directory is: ", getwd(), "\\n")
+
+# DEBUG: List all CSV files (recursively) in the working directory
+csv_files <- list.files(path=".", pattern="\\\\.csv$", recursive=TRUE, full.names=TRUE)
+cat("DEBUG: CSV files found recursively: ", paste(csv_files, collapse=", "), "\\n")
+
 # Load sample information
 sample_info <- read.csv("{sample_mapping_file}", row.names=1)
 
