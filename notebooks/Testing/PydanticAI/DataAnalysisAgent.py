@@ -1179,6 +1179,7 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_names: Optio
         with open(base_r_script_path, "w") as f:
             f.write(f'''
 # Load required libraries
+
 library(tximport)
 library(DESeq2)
 library(ggplot2)
@@ -1190,14 +1191,14 @@ library(tibble)
 setwd("{os.path.abspath(ctx.deps.output_dir)}")
 
 # DEBUG: Print the current working directory
-cat("DEBUG: Current working directory is: ", getwd(), "\\n")
+message("DEBUG: Current working directory is: ", getwd(), "\\n")
 
 # DEBUG: List all CSV files (recursively) in the working directory
 csv_files <- list.files(path=".", pattern="\\\\.csv$", recursive=TRUE, full.names=TRUE)
-cat("DEBUG: CSV files found recursively: ", paste(csv_files, collapse=", "), "\\n")
+message("DEBUG: CSV files found recursively: ", paste(csv_files, collapse=", "), "\\n")
 
 # Load sample information
-sample_info <- read.csv("{sample_mapping_file}", row.names=1)
+sample_info <- read.csv(deseq2_analysis_samples.csv, row.names=1) # TEMPORARY HARD CODED FILE NAME
 
 # Define the group column
 group_col <- "{ctx.deps.merged_column}"
