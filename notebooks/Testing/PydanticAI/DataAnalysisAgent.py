@@ -2,16 +2,7 @@
 # console = Console()
 # Imports
 # ----------------------------
-@rnaseq_agent.tool
-async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
-    """
-    Use the find_files tool to list FASTQ files from the dependency's fastq_dir.
-    The file suffix is provided as a dynamic parameter (here: "fastq.gz").
-    """
-    directory = ctx.deps.fastq_dir  # get the FASTQ directory from the dependency container
-    suffix = "fastq.gz"             # dynamic parameter for file suffix
-    files = await find_files(ctx, directory, suffix)
-    return "FASTQ files found: " + ", ".join(files)
+
 import os
 import glob
 import re
@@ -34,6 +25,50 @@ import nest_asyncio
 nest_asyncio.apply()
 console = Console()
 from pydantic_ai import Agent, RunContext
+
+# Configure logging levels
+class LogLevel:
+    MINIMAL = 0   # Only critical information
+    NORMAL = 1    # Default level - tool calls, parameters, and results
+    VERBOSE = 2   # Detailed information including context for each call
+    DEBUG = 3     # Maximum information for debugging
+
+# Set the current log level (change this to adjust verbosity)
+CURRENT_LOG_LEVEL = LogLevel.NORMAL
+
+def log(message, level=LogLevel.NORMAL, style=""):
+    """Log a message if the current log level is equal to or greater than the specified level"""
+    if CURRENT_LOG_LEVEL >= level:
+        if style:
+            console.print(message, style=style)
+        else:
+            console.print(message)
+
+def log_tool_header(tool_name, params=None):
+    """Print a clear header when a tool is called"""
+    if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
+        console.print("╭" + "─" * 100 + "╮")
+        header = f"│ TOOL: {tool_name}"
+        header += " " * (100 - len(header) - 1) + "│"
+        console.print(header, style="bold blue")
+
+        if params and CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
+            param_str = "│ Parameters: " + str(params)
+            param_str += " " * (100 - len(param_str) - 1) + "│"
+            console.print(param_str)
+
+        console.print("├" + "─" * 100 + "┤")
+
+def log_tool_result(result):
+    """Print a clearly formatted tool result"""
+    if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
+        result_lines = str(result).strip().split('\n')
+        for line in result_lines:
+            line_str = "│ " + line
+            line_str += " " * (100 - len(line_str) - 1) + "│"
+            console.print(line_str)
+        console.print("╰" + "─" * 100 + "╯")
+        console.print("")  # Add extra line for separation
 
 # ----------------------------
 # Define the dependency type
@@ -200,6 +235,40 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
 # ----------------------------
 # Utility Functions
 # ----------------------------
+@rnaseq_agent.tool
+async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
+    """
+    List all FASTQ files in the fastq_dir directory from the context.
+    This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
+    """
+    try:
+        log_tool_header("list_fastq_files")
+        fastq_dir = ctx.deps.fastq_dir
+
+        # Check if directory exists
+        if not os.path.exists(fastq_dir):
+            error_msg = f"Error: Directory '{fastq_dir}' does not exist"
+            log_tool_result(error_msg)
+            return error_msg
+
+        # Use find_files to find fastq.gz files
+        fastq_files = await find_files(ctx, fastq_dir, 'fastq.gz')
+
+        if not fastq_files:
+            error_msg = f"No fastq.gz files found in {fastq_dir}. Directory contents: {os.listdir(fastq_dir) if os.path.isdir(fastq_dir) else 'Not a directory'}"
+            log_tool_result(error_msg)
+            return error_msg
+
+        result = f"Found {len(fastq_files)} fastq.gz files in {fastq_dir}"
+        if CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
+            result += f": {', '.join(fastq_files)}"
+        log_tool_result(result)
+        return result
+    except Exception as e:
+        error_msg = f"Error listing FASTQ files: {str(e)}"
+        log(error_msg, style="bold red")
+        log_tool_result(error_msg)
+        return error_msg
 
 @rnaseq_agent.tool
 async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[str, List[str]]) -> List[str]:
@@ -216,7 +285,7 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
 
     Process:
       1. Logs the current context details (only once per run, thanks to a flag in ctx.deps).
-      2. Uses os.walk to recursively traverse the directory structure and check every file’s name.
+      2. Uses os.walk to recursively traverse the directory structure and check every file's name.
       3. For each file that ends with the specified suffix, concatenates its full path and adds it to a list.
       4. Returns the sorted list of matching file paths.
       5. Reports progress by logging the number of files found.
@@ -230,13 +299,20 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
       enabling subsequent steps (such as quantification with Kallisto) to process the correct data.
     """
     try:
+        # Log the initial context only once per run
         if not hasattr(ctx.deps, '_logged_context'):
-            console.log(f"[bold blue]Initial Context.deps details:[/]\n{vars(ctx.deps)}")
+            log(f"Initial Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
             setattr(ctx.deps, '_logged_context', True)
-        console.log(f"[bold blue]Tool Called:[/] find_files with directory: {directory}, suffix: {suffix}")
-        console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
+
+        # Log tool call with parameters
+        log_tool_header("find_files", {"directory": directory, "suffix": suffix})
+
+        # Log context details only in verbose mode
+        log(f"Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
         if hasattr(ctx, "message_history"):
-            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+            log(f"Message History: {ctx.message_history}", level=LogLevel.DEBUG, style="bold magenta")
+
+        # Execute the actual file search
         matched_files = []
         for root, _, files in os.walk(directory):
             for f in files:
@@ -246,23 +322,38 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
                     condition = any(f.endswith(s) for s in suffix)
                 if condition:
                     matched_files.append(os.path.join(root, f))
-        console.log(f"[bold yellow]Progress:[/] Found {len(matched_files)} files matching suffix '{suffix}' in directory: {directory}")
-        msg = sorted(matched_files)
-        console.log(f"[bold green]Tool Completed:[/] find_files found {len(matched_files)} files")
-        return msg
+
+        # Sort the files and prepare result
+        matched_files = sorted(matched_files)
+
+        # Log the result
+        result_msg = f"Found {len(matched_files)} files matching suffix '{suffix}' in directory: {directory}"
+        if matched_files and CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
+            result_msg += f"\nFirst few files: {matched_files[:3]}"
+            if len(matched_files) > 3:
+                result_msg += f"\n... and {len(matched_files) - 3} more"
+
+        log_tool_result(result_msg)
+        return matched_files
+
     except FileNotFoundError:
-        msg = f"Error: Directory '{directory}' not found."
-        console.log(f"[bold red]Tool Error:[/] {msg}")
-        return [msg]
+        error_msg = f"Error: Directory '{directory}' not found."
+        log(error_msg, style="bold red")
+        log_tool_result(error_msg)
+        return [error_msg]
+
     except Exception as e:
         error_msg = f"Error: {str(e)}"
-        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
+        log(error_msg, style="bold red")
+        log_tool_result(error_msg)
         return [error_msg]
 
 @rnaseq_agent.tool
 async def load_metadata(ctx: RunContext[RNAseqData]) -> str:
     """
-    Load, validate, and store metadata from a file into the RNAseqData context for later use in the analysis.
+    Load, validate, and store metadata from the file specified in ctx.deps.metadata_path into the RNAseqData context for later use in the analysis.
+
+    This tool automatically uses the metadata_path from the dependency context - you don't need to provide a path parameter.
 
     Inputs:
       - ctx: RunContext[RNAseqData]
@@ -272,7 +363,7 @@ async def load_metadata(ctx: RunContext[RNAseqData]) -> str:
       1. Determines file format by examining the file extension (.csv, .tsv, .txt) and reads the file accordingly.
       2. Loads the metadata into a pandas DataFrame.
       3. Stores the DataFrame in ctx.deps.metadata_df for downstream analyses.
-      4. Computes a list of “useful columns” (columns with more than one unique value) to help filter out trivial data.
+      4. Computes a list of "useful columns" (columns with more than one unique value) to help filter out trivial data.
       5. Returns a detailed summary string with the number of samples and columns, and lists the useful columns and a sample
          of the dataset.
 
@@ -288,10 +379,9 @@ async def load_metadata(ctx: RunContext[RNAseqData]) -> str:
       downstream differential expression and pathway analyses.
     """
     try:
-        console.log(f"[bold blue]load_metadata called with metadata_path: {ctx.deps.metadata_path}")
-        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-        if hasattr(ctx, "message_history"):
-            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+        log_tool_header("load_metadata", {"metadata_path": ctx.deps.metadata_path})
+
+        # Load metadata based on file extension
         if ctx.deps.metadata_path.endswith('.csv'):
             metadata_df = pd.read_csv(ctx.deps.metadata_path)
         elif ctx.deps.metadata_path.endswith('.tsv') or ctx.deps.metadata_path.endswith('.txt'):
@@ -299,13 +389,23 @@ async def load_metadata(ctx: RunContext[RNAseqData]) -> str:
         else:
             metadata_df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
 
+        # Store metadata and compute useful columns
         ctx.deps.metadata_df = metadata_df
         useful_cols = metadata_df.loc[:, metadata_df.nunique() > 1].columns.tolist()
-        msg = f"Metadata loaded: {metadata_df.shape[0]} samples, {metadata_df.shape[1]} columns. Useful columns: {', '.join(useful_cols)}."
-        console.log(f"[bold green]load_metadata success:[/] {msg}")
-        return msg
+
+        result = f"Metadata loaded: {metadata_df.shape[0]} samples, {metadata_df.shape[1]} columns. Useful columns: {', '.join(useful_cols)}."
+
+        # Add a preview in verbose mode
+        if CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
+            result += f"\n\nPreview of metadata:\n{metadata_df.head().to_string()}"
+
+        log_tool_result(result)
+        return result
     except Exception as e:
-        return f"Error loading metadata: {str(e)}"
+        error_msg = f"Error loading metadata: {str(e)}"
+        log(error_msg, style="bold red")
+        log_tool_result(error_msg)
+        return error_msg
 
 @rnaseq_agent.tool
 def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
@@ -639,6 +739,22 @@ Contrasts:
     except Exception as e:
         return f"Error designing contrasts: {str(e)}"
 
+@rnaseq_agent.tool
+async def print_dependency_paths(ctx: RunContext[RNAseqData]) -> str:
+    """Print out all paths and settings in the dependency object."""
+    log_tool_header("print_dependency_paths")
+    result = f"""
+    Dependency paths:
+    - fastq_dir: {ctx.deps.fastq_dir}
+    - metadata_path: {ctx.deps.metadata_path}
+    - kallisto_index_dir: {ctx.deps.kallisto_index_dir}
+    - organism: {ctx.deps.organism}
+    - output_dir: {ctx.deps.output_dir}
+    - tx2gene_path: {ctx.deps.tx2gene_path}
+    """
+    log_tool_result(result)
+    return result
+
 # ----------------------------
 # Kallisto Quantification Tools
 # ----------------------------
@@ -812,7 +928,7 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                 "-o", sample_output_dir,
                 "-t", "4",  # Use 4 threads
                 "--plaintext",  # Output plaintext instead of HDF5
-                "--bootstrap-samples=100",  # Number of bootstrap samples
+                "--bootstrap-samples=10",  # Number of bootstrap samples
                 r1, r2
             ]
 
@@ -852,24 +968,24 @@ Found {len(abundance_files)} abundance files for downstream analysis.
 @rnaseq_agent.tool
 async def prepare_deseq2_analysis(ctx: RunContext[RNAseqData]) -> str:
     """
-    Prepare an analysis table for downstream DESeq2 differential expression analysis by integrating Kallisto quantification results with sample metadata.
+    Prepare a sample mapping table for downstream DESeq2 differential expression analysis
+    by matching Kallisto abundance files with sample metadata.
 
     Inputs:
       - ctx: RunContext[RNAseqData]
           Must include:
-             • fastq_dir: Used as a check via find_files.
+             • abundance_files: A list of abundance file paths from the Kallisto quantification step.
              • metadata_df: The loaded metadata DataFrame.
              • merged_column: The column name determined by previous analysis or merge steps.
-             • abundance_files: A list of abundance file paths from the Kallisto quantification step.
              • output_dir: Where to save the prepared DESeq2 sample mapping CSV.
 
     Process:
-      1. Validates that FASTQ files exist by calling find_files.
-      2. Confirms the presence of a Kallisto quantification index via find_kallisto_index.
-      3. Organizes paired FASTQ file names and then re-runs Kallisto quantification if needed.
-      4. Matches sample names extracted from abundance file paths with metadata rows – first by exact matching, then substring matching,
-         and if necessary, reverse matching.
-      5. Constructs a pandas DataFrame that maps each sample (as identified by its abundance file) to its metadata.
+      1. Validates that Kallisto quantification has already been run (abundance_files exist).
+      2. Confirms that metadata has been loaded and a merged group column has been identified.
+      3. Extracts sample names from abundance file paths.
+      4. Matches these sample names to metadata rows using various strategies (exact matching,
+         substring matching, reverse matching).
+      5. Constructs a pandas DataFrame that maps each sample to its metadata.
       6. Saves this mapping DataFrame to a CSV file (named "deseq2_analysis_samples.csv") in the output directory.
 
     Output:
@@ -880,174 +996,36 @@ async def prepare_deseq2_analysis(ctx: RunContext[RNAseqData]) -> str:
 
     Purpose in pipeline:
       This tool bridges the quantification and differential expression steps by ensuring that each
-      sample’s expression data is accurately linked to its experimental metadata, a prerequisite for DESeq2 analysis.
+      sample's expression data is accurately linked to its experimental metadata, a prerequisite for DESeq2 analysis.
+      It assumes Kallisto quantification has already been completed in a previous step.
     """
     try:
-        # Find paired FASTQ files using the fastq_dir from the dependency
-        fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
-        if not fastq_files:
-            return f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
+        log_tool_header("prepare_deseq2_analysis")
 
-        # Find the Kallisto index
-        index_result = await find_kallisto_index(ctx)
-        if "Error" in index_result:
-            return index_result
-
-        # Extract the index path from the result
-        index_path = None
-        for line in index_result.splitlines():
-            if '.idx' in line:
-                # Extract the path, which should be after the colon
-                if ':' in line:
-                    index_path = line.split(':', 1)[1].strip()
-                else:
-                    # If no colon, look for a path with .idx
-                    words = line.split()
-                    for word in words:
-                        if '.idx' in word:
-                            index_path = word
-                            break
-
-        if not index_path:
-            return "Error: Could not determine Kallisto index path"
-
-        # Create output directory
-        output_dir = ctx.deps.output_dir
-        os.makedirs(output_dir, exist_ok=True)
-
-        # Organize FASTQ files into pairs based on naming conventions
-        paired_files = {}
-
-        # Identify pairs using common naming patterns
-        r1_pattern = re.compile(r'.*_(R1|1)\.fastq\.gz$')
-        r2_pattern = re.compile(r'.*_(R2|2)\.fastq\.gz$')
-
-        r1_files = [f for f in fastq_files if r1_pattern.match(f)]
-        r2_files = [f for f in fastq_files if r2_pattern.match(f)]
-
-        # Match R1 with R2 files
-        for r1_file in r1_files:
-            # Convert R1 to R2 in the filename
-            expected_r2 = r1_file.replace('_R1', '_R2').replace('_1.fastq', '_2.fastq')
-            if expected_r2 in r2_files:
-                # Extract sample name from filename
-                sample_name = os.path.basename(r1_file).split('_R1')[0].split('_1.fastq')[0]
-                paired_files[sample_name] = (r1_file, expected_r2)
-
-        if not paired_files:
-            # If no pairs found, check if files are single-end
-            single_end = all(not r1_pattern.match(f) and not r2_pattern.match(f) for f in fastq_files)
-            if single_end:
-                return "Error: Single-end reads detected. Kallisto requires paired-end reads or additional parameters for single-end analysis."
-            else:
-                return "Error: Could not identify paired FASTQ files"
-
-        # Run Kallisto for each pair
-        results = []
-        for sample_name, (r1, r2) in paired_files.items():
-            sample_output_dir = os.path.join(output_dir, sample_name)
-            os.makedirs(sample_output_dir, exist_ok=True)
-
-            # Build Kallisto command
-            cmd = [
-                "kallisto", "quant",
-                "-i", index_path,
-                "-o", sample_output_dir,
-                "-t", "4",  # Use 4 threads
-                "--plaintext",  # Output plaintext instead of HDF5
-                "--bootstrap-samples=100",  # Number of bootstrap samples
-                r1, r2
-            ]
-
-            # Run Kallisto
-            process = subprocess.run(cmd, capture_output=True, text=True)
-
-            if process.returncode == 0:
-                results.append(f"Successfully processed {sample_name}")
-            else:
-                results.append(f"Error processing {sample_name}: {process.stderr}")
-
-        # Collect paths to abundance files
-        abundance_files = []
-        for sample_name in paired_files.keys():
-            abundance_file = os.path.join(output_dir, sample_name, "abundance.tsv")
-            if os.path.exists(abundance_file):
-                abundance_files.append(abundance_file)
-
-        # Store the abundance file paths
-        ctx.deps.abundance_files = abundance_files
-
-        return f"""
-Kallisto quantification completed for {len(results)} sample pairs.
-
-Results:
-{chr(10).join(results)}
-
-Found {len(abundance_files)} abundance files for downstream analysis.
-        """
-    except Exception as e:
-        return f"Error running Kallisto quantification: {str(e)}"
-
-@rnaseq_agent.tool
-async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> str:
-    """
-    Run DESeq2 differential expression analysis for a specified contrast using an R script.
-
-    Inputs:
-      - ctx: RunContext[RNAseqData]
-          Must include:
-             • abundance_files: A list of quantification results from Kallisto.
-             • metadata_df: Loaded metadata DataFrame.
-             • merged_column: The column indicating experimental groups.
-             • contrast_groups: A dictionary containing definitions for each contrast.
-             • output_dir: The directory where result files (plots, CSV, etc.) are to be saved.
-      - contrast_name (str):
-          A string identifier that specifies which contrast (comparison between experimental groups) to analyze.
-
-    Process:
-      1. Verifies that abundance files are present, and that metadata and merged analysis columns are available.
-      2. Reads in the sample mapping CSV (generated during DESeq2 preparation).
-      3. Constructs an R script that:
-             • Loads the sample mapping.
-             • Uses tximport to read the Kallisto abundance files.
-             • Constructs a DESeq2 dataset using the experimental groups from the merged column.
-             • Filters low count genes.
-             • Sets the reference level based on the contrast (denominator).
-             • Performs differential expression analysis.
-             • Outputs various diagnostic plots (MA plot, PCA plot, heatmap, volcano plot).
-             • Writes the DESeq2 results to a CSV file.
-      4. Saves the R script to the output directory and executes it using subprocess.
-      5. Reads the results and summarizes key metrics: total genes analyzed, number of significant genes (FDR < 0.05),
-         and counts of up-/down-regulated genes.
-
-    Output:
-      A detailed multiline string summarizing the DESeq2 analysis, including:
-         • The contrast examined.
-         • Total number of genes analyzed.
-         • Number of significant genes.
-         • A brief table of the top 10 differentially expressed genes (log2FoldChange, pvalue, padj).
-         • A list of output files generated (results CSV, diagnostic plots, session info).
-
-    Purpose in pipeline:
-      This tool is the final step in the differential expression branch of the RNAseq pipeline. It uses the input
-      mappings from both quantification and metadata to perform statistical analysis via DESeq2 and generate visualizations
-      for further biological interpretation.
-    """
-    try:
         # Check if we have abundance files
         if not ctx.deps.abundance_files:
-            return "Error: No abundance files found. Please run Kallisto quantification first."
+            error_msg = "Error: No abundance files found. Please run Kallisto quantification first."
+            log_tool_result(error_msg)
+            return error_msg
 
         # Check if we have metadata
         if ctx.deps.metadata_df is None:
-            return "Error: Metadata not loaded. Please run load_metadata first."
+            error_msg = "Error: Metadata not loaded. Please run load_metadata first."
+            log_tool_result(error_msg)
+            return error_msg
 
         # Check if we have merged column
         if ctx.deps.merged_column is None:
-            return "Error: Analysis column not identified. Please run identify_analysis_columns first."
+            error_msg = "Error: Analysis column not identified. Please run identify_analysis_columns first."
+            log_tool_result(error_msg)
+            return error_msg
+
+        # Create output directory if it doesn't exist
+        os.makedirs(ctx.deps.output_dir, exist_ok=True)
 
         # Get sample names from abundance file paths
         sample_names = [os.path.basename(os.path.dirname(f)) for f in ctx.deps.abundance_files]
+        log(f"Extracted {len(sample_names)} sample names from abundance files", level=LogLevel.VERBOSE)
 
         # Create a mapping between abundance files and metadata
         # First, try to match based on exact sample names
@@ -1115,12 +1093,14 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -
                 unmatched_samples = []
 
         if unmatched_samples:
-            return f"""
+            warning_msg = f"""
 Warning: Could not match {len(unmatched_samples)} of {len(sample_names)} samples to metadata.
 Unmatched samples: {', '.join(unmatched_samples)}
 
 Please check that sample names in the FASTQ files correspond to identifiers in the metadata.
             """
+            log_tool_result(warning_msg)
+            return warning_msg
 
         # Create a DataFrame for DESeq2 analysis
         analysis_df = pd.DataFrame(index=list(matched_samples.keys()))
@@ -1133,9 +1113,11 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
             analysis_df[col] = [metadata_df.loc[matched_samples[s]['metadata_row'], col] for s in analysis_df.index]
 
         # Save the analysis dataframe for later use
-        analysis_df.to_csv(os.path.join(ctx.deps.output_dir, "deseq2_analysis_samples.csv"))
+        analysis_df_path = os.path.join(ctx.deps.output_dir, "deseq2_analysis_samples.csv")
+        analysis_df.to_csv(analysis_df_path)
+        log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
 
-        return f"""
+        result = f"""
 Successfully prepared data for DESeq2 analysis with {len(analysis_df)} samples.
 
 Sample mapping:
@@ -1148,8 +1130,259 @@ Group counts:
 
 Analysis is ready to proceed with the following groups: {', '.join(analysis_df[ctx.deps.merged_column].unique())}
         """
+        log_tool_result(result)
+        return result
     except Exception as e:
-        return f"Error preparing DESeq2 analysis: {str(e)}"
+        return f"Error running Kallisto quantification: {str(e)}"
+
+@rnaseq_agent.tool
+async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_names: Optional[List[str]] = None) -> str:
+    """
+    Run DESeq2 differential expression analysis for one or more contrasts.
+    [Documentation as above]
+    """
+    try:
+        log_tool_header("run_deseq2_analysis", {"contrast_names": contrast_names})
+
+        # Check if we have contrast groups defined
+        if not ctx.deps.contrast_groups:
+            error_msg = "Error: No contrast groups defined. Please run design_contrasts first."
+            log_tool_result(error_msg)
+            return error_msg
+
+        # If no specific contrasts provided, analyze all contrasts
+        if contrast_names is None:
+            contrast_names = list(ctx.deps.contrast_groups.keys())
+            log(f"No specific contrasts provided. Analyzing all {len(contrast_names)} contrasts: {contrast_names}", level=LogLevel.NORMAL)
+
+        # Validate that all specified contrasts exist
+        missing_contrasts = [c for c in contrast_names if c not in ctx.deps.contrast_groups]
+        if missing_contrasts:
+            error_msg = f"Error: The following contrasts were not found: {missing_contrasts}. Available contrasts: {list(ctx.deps.contrast_groups.keys())}"
+            log_tool_result(error_msg)
+            return error_msg
+
+        # Check if we have prepared the DESeq2 analysis
+        sample_mapping_file = os.path.join(ctx.deps.output_dir, "deseq2_analysis_samples.csv")
+        if not os.path.exists(sample_mapping_file):
+            error_msg = "Error: Sample mapping file not found. Please run prepare_deseq2_analysis first."
+            log_tool_result(error_msg)
+            return error_msg
+
+        # Load the sample mapping
+        sample_mapping = pd.read_csv(sample_mapping_file, index_col=0)
+
+        # Create a base R script that performs the DESeq2 setup and creates the DESeq dataset
+        # This script will be common for all contrasts
+        base_r_script_path = os.path.join(ctx.deps.output_dir, "run_deseq2_base.R")
+
+        with open(base_r_script_path, "w") as f:
+            f.write(f'''
+# Load required libraries
+library(tximport)
+library(DESeq2)
+library(ggplot2)
+library(pheatmap)
+library(dplyr)
+library(tibble)
+
+# Set the working directory
+setwd("{os.path.abspath(ctx.deps.output_dir)}")
+
+# Load sample information
+sample_info <- read.csv("{sample_mapping_file}", row.names=1)
+
+# Define the group column
+group_col <- "{ctx.deps.merged_column}"
+
+# Get abundance files
+files <- sample_info$abundance_file
+names(files) <- rownames(sample_info)
+
+# Check if tx2gene file exists
+''')
+
+            # Add transcript to gene mapping if available
+            if ctx.deps.tx2gene_path:
+                f.write(f'''
+# Load transcript to gene mapping
+tx2gene <- read.csv("{ctx.deps.tx2gene_path}", header=FALSE, sep="\\t")
+colnames(tx2gene) <- c("TXNAME", "GENEID")
+
+# Import Kallisto data using tximport
+txi <- tximport(files, type="kallisto", tx2gene=tx2gene)
+''')
+            else:
+                f.write('''
+# No tx2gene file, import Kallisto data directly
+txi <- tximport(files, type="kallisto", txOut=TRUE)
+''')
+
+            f.write(f'''
+# Create DESeq2 dataset
+dds <- DESeqDataSetFromTximport(txi, colData=sample_info, design=~{ctx.deps.merged_column})
+
+# Run DESeq2
+dds <- DESeq(dds)
+
+# Get normalized counts and save to a single file (common for all contrasts)
+normalized_counts <- counts(dds, normalized=TRUE)
+write.csv(normalized_counts, file="{os.path.join(ctx.deps.output_dir, 'DESeq2_normalized_counts.csv')}")
+''')
+
+        # Make the base R script executable
+        os.chmod(base_r_script_path, 0o755)
+
+        # Run the base R script
+        log(f"Executing base R script for DESeq2 analysis: {base_r_script_path}", level=LogLevel.NORMAL)
+        process = subprocess.run(['Rscript', base_r_script_path], capture_output=True, text=True)
+
+        if process.returncode != 0:
+            error_msg = f"Error running base DESeq2 analysis: {process.stderr}"
+            log(error_msg, style="bold red")
+            log_tool_result(error_msg)
+            return error_msg
+
+        # Process each contrast
+        all_results = []
+
+        for contrast_name in contrast_names:
+            log(f"Processing contrast: {contrast_name}", level=LogLevel.NORMAL)
+
+            # Get contrast details
+            contrast = ctx.deps.contrast_groups[contrast_name]
+            numerator = contrast['numerator']
+            denominator = contrast['denominator']
+
+            # Create output directory for this contrast
+            contrast_dir = os.path.join(ctx.deps.output_dir, f"deseq2_{contrast_name}")
+            os.makedirs(contrast_dir, exist_ok=True)
+
+            # Define output files
+            results_file = os.path.join(contrast_dir, f"{contrast_name}_results.csv")
+
+            # Create the R script for this specific contrast
+            contrast_r_script_path = os.path.join(ctx.deps.output_dir, f"run_deseq2_{contrast_name}.R")
+
+            with open(contrast_r_script_path, "w") as f:
+                f.write(f'''
+# Load required libraries
+library(DESeq2)
+library(ggplot2)
+library(pheatmap)
+
+# Load the DESeq object
+dds <- readRDS("dds.rds")
+
+# Define the contrast
+contrast_numerator <- "{numerator}"
+contrast_denominator <- "{denominator}"
+
+# Get results for the contrast
+res <- results(dds, contrast=c("{ctx.deps.merged_column}", contrast_numerator, contrast_denominator))
+
+# Order by adjusted p-value
+res_ordered <- res[order(res$padj),]
+
+# Save results
+write.csv(as.data.frame(res_ordered), file="{results_file}")
+
+
+# Save summary statistics
+sink("{os.path.join(contrast_dir, "summary_stats.txt")}")
+cat("Total number of genes tested: ", nrow(res), "\\n")
+cat("Significant genes (padj < 0.05): ", sum(res$padj < 0.05, na.rm=TRUE), "\\n")
+cat("Up-regulated genes: ", sum(res$padj < 0.05 & res$log2FoldChange > 0, na.rm=TRUE), "\\n")
+cat("Down-regulated genes: ", sum(res$padj < 0.05 & res$log2FoldChange < 0, na.rm=TRUE), "\\n")
+sink()
+
+# Exit with success code
+quit(save="no", status=0)
+''')
+
+            # Make the R script executable
+            os.chmod(contrast_r_script_path, 0o755)
+
+            # Run the R script for this contrast
+            log(f"Executing R script for DESeq2 analysis of {contrast_name}: {contrast_r_script_path}", level=LogLevel.NORMAL)
+            process = subprocess.run(['Rscript', contrast_r_script_path], capture_output=True, text=True)
+
+            if process.returncode != 0:
+                error_msg = f"Error running DESeq2 analysis for {contrast_name}: {process.stderr}"
+                log(error_msg, style="bold red")
+                all_results.append(error_msg)
+                continue
+
+            # Read summary statistics
+            summary_stats_file = os.path.join(contrast_dir, "summary_stats.txt")
+            summary_stats = "DESeq2 analysis completed successfully."
+            if os.path.exists(summary_stats_file):
+                with open(summary_stats_file, 'r') as f:
+                    summary_stats = f.read()
+
+            # Read results to get top DE genes
+            if os.path.exists(results_file):
+                results_df = pd.read_csv(results_file, index_col=0)
+                results_df = results_df.sort_values('padj')  # Ensure it's sorted
+
+                # Count significant genes
+                sig_genes_count = sum(results_df['padj'] < 0.05)
+                up_regulated_count = sum((results_df['padj'] < 0.05) & (results_df['log2FoldChange'] > 0))
+                down_regulated_count = sum((results_df['padj'] < 0.05) & (results_df['log2FoldChange'] < 0))
+
+                # Prepare top genes list
+                top_genes = results_df.head(10)[['log2FoldChange', 'pvalue', 'padj']]
+                top_genes_str = top_genes.to_string()
+            else:
+                sig_genes_count = "Unknown"
+                up_regulated_count = "Unknown"
+                down_regulated_count = "Unknown"
+                top_genes_str = "Results file not found"
+
+            result = f"""
+----- DESeq2 analysis for contrast: {contrast_name} ({numerator} vs {denominator}) -----
+
+Summary of results:
+- Total genes analyzed: {len(results_df) if 'results_df' in locals() else 'Unknown'}
+- Significant genes (padj < 0.05): {sig_genes_count}
+  - Up-regulated in {numerator}: {up_regulated_count}
+  - Down-regulated in {numerator}: {down_regulated_count}
+
+Top differentially expressed genes:
+{top_genes_str}
+
+Output files:
+- Results table: {results_file}
+- MA plot: {ma_plot_file}
+- Volcano plot: {volcano_plot_file}
+- Heatmap: {heatmap_file}
+
+{summary_stats}
+"""
+            all_results.append(result)
+
+        # Combine all results
+        combined_results = "\n\n" + "="*80 + "\n\n".join(all_results) + "\n\n" + "="*80
+
+        # Add an overall summary
+        overall_summary = f"""
+DESeq2 analysis completed for {len(contrast_names)} contrasts:
+{', '.join(contrast_names)}
+
+Normalized counts file: {os.path.join(ctx.deps.output_dir, 'DESeq2_normalized_counts.csv')}
+
+See individual contrast summaries below for details.
+"""
+
+        final_result = overall_summary + combined_results
+        log_tool_result(final_result)
+        return final_result
+
+    except Exception as e:
+        error_msg = f"Error running DESeq2 analysis: {str(e)}"
+        log(error_msg, style="bold red")
+        log_tool_result(error_msg)
+        return error_msg
 # ----------------------------
 # Main Execution
 # ----------------------------
@@ -1172,22 +1405,31 @@ if __name__ == "__main__":
 
     # Initialize conversation with analysis steps
     initial_prompt = """
-    Please analyze the RNA-seq data with the following steps:
-        1. Identify the locations of all relevant files.
-    2. Run Kallisto quantification on all paired-end FASTQ files
-    3. Load and analyze the metadata to identify experimental groups
-    4. Merge appropriate columns for analysis if needed
-    5. Design appropriate contrasts for differential expression
-    6. Run DESeq2 analysis for each contrast
-    7. Perform pathway analysis using:
-       - Standard GSEA
-    8. Generate appropriate visualizations
+    Please analyze the RNA-seq data by calling the following tools in sequence:
 
-    Please provide updates at each step.
+    1. First, use the print_dependency_paths tool to see all the paths available in the context.
 
-    Throughout each step, please make note of the context and dependencies that are being used. Do not make up placeholder values, and if no context is available, please EXPLICITLY state this in your response.
+    2. Next, use the find_files tool to locate FASTQ files. DO NOT pass "ctx.deps.fastq_dir" as a string - instead, use the actual directory value . The suffix parameter should be 'fastq.gz'.
+
+    3. Use the find_kallisto_index tool to locate the Kallisto index for human.
+
+    4. Use the run_kallisto_quantification tool to perform quantification on the identified FASTQ files.
+
+    5. Use the load_metadata tool to load the metadata file.
+
+    6. Use the identify_analysis_columns tool to analyze the metadata columns.
+
+    7. If needed, use the merge_metadata_columns tool with the columns identified in the previous step.
+
+    8. Use the design_contrasts tool to set up contrasts for differential expression analysis.
+
+    9. Use the prepare_deseq2_analysis tool to prepare for DESeq2 analysis.
+
+    10. Use the run_deseq2_analysis tool to run DESeq2 analysis for the contrasts.
+
+    After each step, provide a brief summary of what was done and what will be done next. Make sure to call each tool explicitly with the correct parameter values, not variable references.
     """
-# Note that the FASTQ files are located at ./TestRNAseqData_SETBP1/GSE262710/fastq
+
     # Run the agent
     try:
         # Run the agent synchronously
