@@ -1113,6 +1113,11 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
         analysis_df_path = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
         analysis_df.to_csv(analysis_df_path)
         log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
+        # Optionally, store in a registry for later reference:
+        ctx.deps.file_registry = getattr(ctx.deps, 'file_registry', {})
+        ctx.deps.file_registry['sample_mapping'] = analysis_df_path
+        ctx.deps.sample_mapping = analysis_df
+        log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
         # Store the sample mapping DataFrame in the runtime data
         ctx.deps.sample_mapping = analysis_df
 
@@ -1397,3 +1402,27 @@ if __name__ == "__main__":
         console.print(result.data)
     except Exception as e:
         console.print(Panel(f"Error during analysis: {str(e)}", style="bold red"))
+@rnaseq_agent.tool
+async def check_file_existence(ctx: RunContext[RNAseqData], filepath: str) -> str:
+    """
+    Check if a file exists at the given filepath. If not, report the contents of the directory.
+    
+    Inputs:
+      - ctx: RunContext[RNAseqData] (provides context and directory info)
+      - filepath (str): Absolute file path to check.
+    
+    Output:
+      A string message indicating success or an error with diagnostic directory contents.
+    """
+    log_tool_header("check_file_existence", {"filepath": filepath})
+    if os.path.exists(filepath):
+        result = f"SUCCESS: File exists at {filepath}"
+    else:
+        dir_path = os.path.dirname(filepath)
+        if os.path.exists(dir_path):
+            contents = os.listdir(dir_path)
+            result = f"ERROR: File {os.path.basename(filepath)} not found in {dir_path}.\nDirectory contents: {contents}"
+        else:
+            result = f"ERROR: Directory {dir_path} does not exist."
+    log_tool_result(result)
+    return result
