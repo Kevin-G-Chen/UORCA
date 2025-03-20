@@ -1188,7 +1188,7 @@ async def run_edger_analysis(
             else:
                 sample_mapping_file = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
         log(f"Using sample mapping file: {sample_mapping_file}", level=LogLevel.NORMAL)
-                
+
         # Verify the file exists, trying the absolute path first. If not, check relative.
         if not os.path.exists(sample_mapping_file):
             alternative_path = os.path.join(ctx.deps.output_dir, os.path.basename(sample_mapping_file))
@@ -1215,7 +1215,7 @@ suppressMessages(library(pheatmap))
 # Set working directory explicitly
 setwd("{os.path.abspath(ctx.deps.output_dir)}")
 cat("DEBUG: Working directory set to:", getwd(), "\\n")
-  
+
 # Use full path to sample mapping file
 sample_file <- "{os.path.abspath(sample_mapping_file)}"
 if (file.exists(sample_file)) {{
@@ -1467,14 +1467,14 @@ async def verify_analysis_files(ctx: RunContext[RNAseqData]) -> str:
     if hasattr(ctx.deps, 'file_registry'):
         for name, path in ctx.deps.file_registry.items():
             files_to_check.append((f"Registry: {name}", path))
-    
+
     results = []
     for name, path in files_to_check:
         if os.path.exists(path):
             results.append(f"✓ {name}: File exists at {path}")
         else:
             results.append(f"✗ {name}: File NOT found at {path}")
-    
+
     result = "\n".join(results)
     log_tool_result(result)
     return result
