@@ -72,6 +72,8 @@ if __name__ == "__main__":
     # (Adjust the directory value to one that exists in your testing environment.)
     test_dep = TestDependency(test_dir="../TestRNAseqData_SETBP1")
 
-    # Run the agent synchronously with the provided dependency.
+    # Create a dependency instance with an example test directory.
+    # (Adjust the directory value to one that exists in your testing environment.)
+    test_dep = TestDependency(test_dir="../TestRNAseqData_SETBP1")
     result = agent.run_sync("Please list the files with suffix .txt", deps=test_dep)
     console.print(result.data)

@@ -242,52 +242,31 @@ async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
     This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
     """
     """
-    Run DESeq2 differential expression analysis for one or more contrasts.
-
-    Parameters:
-      - contrast_names (Optional[List[str]]):
-          A list of contrast names to be analyzed; if None, all defined contrasts are used.
-      - sample_mapping_file (Optional[str]):
-          The file path for the DESeq2 sample mapping CSV. By default, if not provided, it is set to:
-              "<output_dir>/deseq2_analysis_samples.csv"
-          where <output_dir> is the value in ctx.deps.output_dir. In cases of a retry,
-          the agent should examine the working directory as reported by the R output to adjust this path if necessary.
-
-    (Other parameters remain managed via the dependency container in RNAseqData).
-
-    Returns:
-      A detailed multiline string report summarizing the DESeq2 analysis for the requested contrasts.
+    List all FASTQ files in the fastq_dir directory from the context.
+    This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
     """
-    if sample_mapping_file is None:
-        sample_mapping_file = os.path.join(ctx.deps.output_dir, "deseq2_analysis_samples.csv")
+    log_tool_header("list_fastq_files")
+    fastq_dir = ctx.deps.fastq_dir
 
-        log_tool_header("list_fastq_files")
-        fastq_dir = ctx.deps.fastq_dir
-
-        # Check if directory exists
-        if not os.path.exists(fastq_dir):
-            error_msg = f"Error: Directory '{fastq_dir}' does not exist"
-            log_tool_result(error_msg)
-            return error_msg
-
-        # Use find_files to find fastq.gz files
-        fastq_files = await find_files(ctx, fastq_dir, 'fastq.gz')
-
-        if not fastq_files:
-            error_msg = f"No fastq.gz files found in {fastq_dir}. Directory contents: {os.listdir(fastq_dir) if os.path.isdir(fastq_dir) else 'Not a directory'}"
-            log_tool_result(error_msg)
-            return error_msg
-
-        result = f"Found {len(fastq_files)} fastq.gz files in {fastq_dir}"
-        if CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
-            result += f": {', '.join(fastq_files)}"
-        log_tool_result(result)
-        return result
-    except Exception as e:
-        error_msg = f"Error listing FASTQ files: {str(e)}"
-        log(error_msg, style="bold red")
+    # Check if directory exists
+    if not os.path.exists(fastq_dir):
+        error_msg = f"Error: Directory '{fastq_dir}' does not exist"
         log_tool_result(error_msg)
         return error_msg
+
+    # Use find_files to find fastq.gz files
+    fastq_files = await find_files(ctx, fastq_dir, 'fastq.gz')
+
+    if not fastq_files:
+        error_msg = f"No fastq.gz files found in {fastq_dir}. Directory contents: {os.listdir(fastq_dir) if os.path.isdir(fastq_dir) else 'Not a directory'}"
+        log_tool_result(error_msg)
+        return error_msg
+
+    result = f"Found {len(fastq_files)} fastq.gz files in {fastq_dir}"
+    if CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
+        result += f": {', '.join(fastq_files)}"
+    log_tool_result(result)
+    return result
 
 @rnaseq_agent.tool
 async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[str, List[str]]) -> List[str]:
@@ -753,8 +732,6 @@ Designed contrasts based on {group_col} column with values: {', '.join(groups)}
 Contrasts:
 {pd.DataFrame([contrast_details[c] for c in contrasts]).to_string()}
         """
-    except Exception as e:
-        return f"Error designing contrasts: {str(e)}"
     except Exception as e:
         return f"Error designing contrasts: {str(e)}"
 
@@ -1233,7 +1210,7 @@ csv_files <- list.files(path=".", pattern="\\\\.csv$", recursive=TRUE, full.name
 message("DEBUG: CSV files found recursively: ", paste(csv_files, collapse=", "), "\\n")
 
 # Load sample information
-sample_info <- read.csv(deseq2_analysis_samples.csv, row.names=1) # TEMPORARY HARD CODED FILE NAME
+sample_info <- read.csv("{os.path.join(ctx.deps.output_dir, 'deseq2_analysis_samples.csv')}", row.names=1)
 
 # Define the group column
 group_col <- "{ctx.deps.merged_column}"
