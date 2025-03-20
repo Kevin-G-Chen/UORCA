@@ -70,8 +70,8 @@ async def list_files(ctx: RunContext[TestDependency]) -> str:
 if __name__ == "__main__":
     # Create a dependency instance with an example test directory.
     # (Adjust the directory value to one that exists in your testing environment.)
-    test_dep = TestDependency(test_dir="./example_files")
-    
+    test_dep = TestDependency(test_dir="../TestRNAseqData_SETBP1")
+
     # Run the agent synchronously with the provided dependency.
     result = agent.run_sync("Please list the files with suffix .txt", deps=test_dep)
     console.print(result.data)
