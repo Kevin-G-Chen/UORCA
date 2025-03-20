@@ -1190,14 +1190,14 @@ async def run_deseq2_analysis(
 
         with open(base_r_script_path, "w") as f:
             f.write(f'''
-# Load required libraries
-
-library(tximport)
-library(DESeq2)
-library(ggplot2)
-library(pheatmap)
-library(dplyr)
-library(tibble)
+# Loading libraries
+message("Loading libraries ...")
+suppressMessages(library(tximport))
+suppressMessages(library(DESeq2))
+suppressMessages(library(ggplot2))
+suppressMessages(library(pheatmap))
+suppressMessages(library(dplyr))
+suppressMessages(library(tibble))
 
 # Set the working directory
 setwd("{os.path.abspath(ctx.deps.output_dir)}")
