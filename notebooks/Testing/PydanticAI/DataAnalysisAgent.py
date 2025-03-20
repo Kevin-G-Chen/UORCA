@@ -1135,7 +1135,7 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 async def run_deseq2_analysis(
     ctx: RunContext[RNAseqData],
     contrast_names: Optional[List[str]] = None,
-    sample_mapping_file: Optional[str] = None
+    sample_mapping_file: str = None
 ) -> str:
     """
     Run DESeq2 differential expression analysis for one or more contrasts.
