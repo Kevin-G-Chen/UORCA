@@ -1113,9 +1113,13 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
         analysis_df_path = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
         analysis_df.to_csv(analysis_df_path)
         log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
-        # Optionally, store in a registry for later reference:
+        # Store both absolute and relative paths for the sample mapping file
         ctx.deps.file_registry = getattr(ctx.deps, 'file_registry', {})
-        ctx.deps.file_registry['sample_mapping'] = analysis_df_path
+        ctx.deps.file_registry['sample_mapping_absolute'] = os.path.abspath(analysis_df_path)
+        ctx.deps.file_registry['sample_mapping_relative'] = os.path.basename(analysis_df_path)
+        # Also store the path in a dedicated field for convenience
+        ctx.deps.sample_mapping_file = analysis_df_path
+        # Save the sample mapping DataFrame in the dependency for later use
         ctx.deps.sample_mapping = analysis_df
         log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
         # Store the sample mapping DataFrame in the runtime data
@@ -1142,7 +1146,7 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 @rnaseq_agent.tool
 async def run_edger_analysis(
     ctx: RunContext[RNAseqData],
-    sample_mapping_file: str,
+    sample_mapping_file: Optional[str] = None,
     contrast_names: Optional[List[str]] = None,
 ) -> str:
     # Oh, you get a new window! I see...
@@ -1175,11 +1179,26 @@ async def run_edger_analysis(
             contrast_names = list(ctx.deps.contrast_groups.keys())
             log(f"No specific contrasts provided. Analyzing all {len(contrast_names)} contrasts: {contrast_names}", level=LogLevel.NORMAL)
 
-        # Check that the sample mapping file exists
+        # Use the provided sample_mapping_file or retrieve it from the dependency's registry
+        if sample_mapping_file is None:
+            if hasattr(ctx.deps, 'sample_mapping_file'):
+                sample_mapping_file = ctx.deps.sample_mapping_file
+            elif hasattr(ctx.deps, 'file_registry') and 'sample_mapping_absolute' in ctx.deps.file_registry:
+                sample_mapping_file = ctx.deps.file_registry['sample_mapping_absolute']
+            else:
+                sample_mapping_file = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
+        log(f"Using sample mapping file: {sample_mapping_file}", level=LogLevel.NORMAL)
+                
+        # Verify the file exists, trying the absolute path first. If not, check relative.
         if not os.path.exists(sample_mapping_file):
-            error_msg = "Error: Sample mapping file not found. Please run prepare_edgeR_analysis first."
-            log_tool_result(error_msg)
-            return error_msg
+            alternative_path = os.path.join(ctx.deps.output_dir, os.path.basename(sample_mapping_file))
+            if os.path.exists(alternative_path):
+                sample_mapping_file = alternative_path
+                log(f"Found sample mapping file at alternative path: {sample_mapping_file}", level=LogLevel.NORMAL)
+            else:
+                error_msg = f"Error: Sample mapping file not found at {sample_mapping_file} or {alternative_path}."
+                log_tool_result(error_msg)
+                return error_msg
 
         # ----------------------------
         # Create the base R script for edgeR analysis
@@ -1420,5 +1439,31 @@ async def check_file_existence(ctx: RunContext[RNAseqData], filepath: str) -> st
             result = f"ERROR: File {os.path.basename(filepath)} not found in {dir_path}.\nDirectory contents: {contents}"
         else:
             result = f"ERROR: Directory {dir_path} does not exist."
+    log_tool_result(result)
+    return result
+@rnaseq_agent.tool
+async def verify_analysis_files(ctx: RunContext[RNAseqData]) -> str:
+    """
+    Verify that essential analysis files exist and report their locations.
+    This includes the sample mapping file and the edgeR object.
+    """
+    log_tool_header("verify_analysis_files")
+    output_dir = ctx.deps.output_dir
+    files_to_check = [
+        ("Sample mapping", os.path.join(output_dir, "edger_analysis_samples.csv")),
+        ("edgeR object", os.path.join(output_dir, "dge.rds")),
+    ]
+    if hasattr(ctx.deps, 'file_registry'):
+        for name, path in ctx.deps.file_registry.items():
+            files_to_check.append((f"Registry: {name}", path))
+    
+    results = []
+    for name, path in files_to_check:
+        if os.path.exists(path):
+            results.append(f"✓ {name}: File exists at {path}")
+        else:
+            results.append(f"✗ {name}: File NOT found at {path}")
+    
+    result = "\n".join(results)
     log_tool_result(result)
     return result
