@@ -962,9 +962,9 @@ Found {len(abundance_files)} abundance files for downstream analysis.
 # Differential Expression Analysis Tools
 # ----------------------------
 @rnaseq_agent.tool
-async def prepare_deseq2_analysis(ctx: RunContext[RNAseqData]) -> str:
+async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
     """
-    Prepare a sample mapping table for downstream DESeq2 differential expression analysis
+    Prepare a sample mapping table for downstream edgeR differential expression analysis
     by matching Kallisto abundance files with sample metadata.
 
     Inputs:
@@ -973,7 +973,7 @@ async def prepare_deseq2_analysis(ctx: RunContext[RNAseqData]) -> str:
              • abundance_files: A list of abundance file paths from the Kallisto quantification step.
              • metadata_df: The loaded metadata DataFrame.
              • merged_column: The column name determined by previous analysis or merge steps.
-             • output_dir: Where to save the prepared DESeq2 sample mapping CSV.
+             • output_dir: Where to save the prepared edgeR sample mapping CSV.
 
     Process:
       1. Validates that Kallisto quantification has already been run (abundance_files exist).
@@ -1138,307 +1138,203 @@ async def run_deseq2_analysis(
     contrast_names: Optional[List[str]] = None,
 ) -> str:
     """
-    Run DESeq2 differential expression analysis for one or more contrasts.
+    Run edgeR differential expression analysis for one or more contrasts using dynamic R code.
 
-         Parameters:
-           - contrast_names (Optional[List[str]]):
-               A list of contrast names to be analyzed; if None, all defined contrasts are used.
-           - sample_mapping_file (str):
-               The file path for the DESeq2 sample mapping CSV. This value is required.
-               Typically, it should be set to "<output_dir>/deseq2_analysis_samples.csv", where <output_dir>
-               is the value in ctx.deps.output_dir. In cases of a retry, the agent should examine the working
-               directory as reported by the R output to determine or adjust this path if necessary.
+    Parameters:
+      - sample_mapping_file (str):
+          Path for the sample mapping CSV, typically "<output_dir>/deseq2_analysis_samples.csv".
+      - contrast_names (Optional[List[str]]):
+          A list of contrast names to be analyzed; if None, all defined contrasts are used.
 
-         (Other parameters remain managed via the dependency container in RNAseqData).
-
-         Returns:
-           A detailed multiline string report summarizing the DESeq2 analysis for the requested contrasts.
+    This tool creates a base R script that builds an edgeR DGEList from tximport data,
+    applies dynamic filtering via filterByExpr (using the merged group column), and estimates dispersions.
+    It then writes a separate R script for each contrast (using the provided numerator and denominator).
     """
     try:
         log_tool_header("run_deseq2_analysis", {"contrast_names": contrast_names, "sample_mapping_file": sample_mapping_file})
 
-        # Check if we have contrast groups defined
+        # Validate that contrast groups exist
         if not ctx.deps.contrast_groups:
             error_msg = "Error: No contrast groups defined. Please run design_contrasts first."
             log_tool_result(error_msg)
             return error_msg
 
-        # If no specific contrasts provided, analyze all contrasts
+        # If no specific contrasts provided, use all defined contrasts
         if contrast_names is None:
             contrast_names = list(ctx.deps.contrast_groups.keys())
             log(f"No specific contrasts provided. Analyzing all {len(contrast_names)} contrasts: {contrast_names}", level=LogLevel.NORMAL)
 
-        # Validate that all specified contrasts exist
-        missing_contrasts = [c for c in contrast_names if c not in ctx.deps.contrast_groups]
-        if missing_contrasts:
-            error_msg = f"Error: The following contrasts were not found: {missing_contrasts}. Available contrasts: {list(ctx.deps.contrast_groups.keys())}"
-            log_tool_result(error_msg)
-            return error_msg
-
-        # Check if we have prepared the DESeq2 analysis
+        # Check that the sample mapping file exists
         if not os.path.exists(sample_mapping_file):
             error_msg = "Error: Sample mapping file not found. Please run prepare_deseq2_analysis first."
             log_tool_result(error_msg)
             return error_msg
 
-        # Load the sample mapping
-        sample_mapping = pd.read_csv(sample_mapping_file, index_col=0)
-
-        # Create a base R script that performs the DESeq2 setup and creates the DESeq dataset
-        # This script will be common for all contrasts
-        base_r_script_path = os.path.join("run_deseq2_base.R")
-
+        # ----------------------------
+        # Create the base R script for edgeR analysis
+        # ----------------------------
+        base_r_script_path = os.path.join(ctx.deps.output_dir, "run_edger_base.R")
         with open(base_r_script_path, "w") as f:
             f.write(f'''
-# Loading libraries
-message("Loading libraries ...")
+# Load required libraries
 suppressMessages(library(tximport))
-suppressMessages(library(DESeq2))
+suppressMessages(library(edgeR))
 suppressMessages(library(ggplot2))
 suppressMessages(library(pheatmap))
-suppressMessages(library(dplyr))
-suppressMessages(library(tibble))
-
-# Set the working directory
-# setwd("{os.path.abspath(ctx.deps.output_dir)}")
 
 # Load sample information
 sample_info <- read.csv("{os.path.join(ctx.deps.output_dir, 'deseq2_analysis_samples.csv')}", row.names=1)
 
-# Define the group column
+# Define the grouping column (as provided by the dependency)
 group_col <- "{ctx.deps.merged_column}"
+if(!(group_col %in% colnames(sample_info))) {{
+    stop(paste("Group column", group_col, "not found in sample information"))
+}}
 
-# Get abundance files
+# Get abundance files and assign sample names
 files <- sample_info$abundance_file
 names(files) <- rownames(sample_info)
 
-# Check if tx2gene file exists
+# Import Kallisto data using tximport, with optional tx2gene mapping if available
 ''')
-
-            # Add transcript to gene mapping if available
             if ctx.deps.tx2gene_path:
                 f.write(f'''
-# Load transcript to gene mapping
+# Load transcript-to-gene mapping
 tx2gene <- read.csv("{ctx.deps.tx2gene_path}", header=FALSE, sep="\\t")
 colnames(tx2gene) <- c("TXNAME", "GENEID")
-
-# Import Kallisto data using tximport
 txi <- tximport(files, type="kallisto", tx2gene=tx2gene)
 ''')
             else:
                 f.write('''
-# No tx2gene file, import Kallisto data directly
 txi <- tximport(files, type="kallisto", txOut=TRUE)
 ''')
-
             f.write(f'''
-# Create DESeq2 dataset from imported counts
-dds <- DGEList(txi$counts)
-dds$samples <- bind_cols(DGE$samples, sample_info)
-dds$genes <- bitr(
-geneID = rownames(dds),
-fromType = "ENTREZID",
-toType = "SYMBOL",
-OrgDb = org.Hs.eg.db,
-drop = FALSE
-)
+# Create an edgeR DGEList using the imported counts
+dge <- DGEList(counts=txi$counts)
 
-# Filter out low count genes (for example, requiring at least 10 total counts)
-keep.exprs <- filterByExpr(dds,
-    dds = DGE$samples$merged_group # change this to reflect the actual column of interest AI!
-)
-dds <- dds[keep.exprs, keep.lib.sizes = FALSE]
+# Assign group information from the sample info using the specified group column
+dge$samples$group <- sample_info[[group_col]]
 
-# Normalize the counts
-dds <- calcNormFactors(dds)
+# Apply filtering using filterByExpr (your preferred methodology)
+keep <- filterByExpr(dge, group = dge$samples$group)
+dge <- dge[keep, , keep.lib.sizes=FALSE]
 
-# Run DESeq2 differential expression analysis
-design <- model.matrix(
-    data = dds$samples,
-    ~ 0 + merged_group # change this to the actual column of interest AI!
-)
+# Calculate normalization factors
+dge <- calcNormFactors(dge)
 
-# Change all of the following to be generalisable to the various contrasts, and to use the variables defined here AI!
-colnames(design) <- str_remove_all(colnames(design), "merged_group")
-str(design)
-contrast.matrix <- makeContrasts(
-    WT_differentiation = "WT_NPC - WT_IPSC",
-    CFC1_differnetiation = "CFC1_NPC - CFC1_IPSC",
-    DiffBetweenNPCs = "CFC1_NPC - WT_NPC",
-    DiffofDiffns = "(CFC1_NPC - CFC1_IPSC) - (WT_NPC - WT_IPSC)",
-    levels = colnames(design)
-)
-contrasts <- colnames(contrast.matrix)
-v <- voom(DGE.final,
-    design = design,
-    plot = TRUE
-)
-vfit <- lmFit(
-    v,
-    design
-)
-vfit <- contrasts.fit(vfit,
-    contrasts = contrast.matrix
-)
-efit <- eBayes(vfit)
-plotSA(efit,
-    main = "Mean-variance trend (using Empirical Bayes)"
-)
+# Create the design matrix based on the group variable
+design <- model.matrix(~0 + group, data=dge$samples)
+colnames(design) <- levels(as.factor(dge$samples$group))
+
+# Estimate dispersions
+dge <- estimateDisp(dge, design)
+
+# Save the edgeR object for downstream contrast analysis
+saveRDS(dge, file="{os.path.join(ctx.deps.output_dir, 'dge.rds')}")
 ''')
-
-        # Make the base R script executable
         os.chmod(base_r_script_path, 0o755)
-
-        # Run the base R script
-        log(f"Executing base R script for DESeq2 analysis: {base_r_script_path}", level=LogLevel.NORMAL)
+        log(f"Executing base R script for edgeR analysis: {base_r_script_path}", level=LogLevel.NORMAL)
         process = subprocess.run(['Rscript', base_r_script_path], capture_output=True, text=True)
-
         if process.returncode != 0:
-            error_msg = f"Error running base DESeq2 analysis:\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
-            log(error_msg, style="bold red")
+            error_msg = f"Error running edgeR base analysis:\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
             log_tool_result(error_msg)
             return error_msg
         else:
-            result_msg = f"DESeq2 base analysis completed successfully.\nOutput:\n{process.stdout}"
-            log_tool_result(result_msg)
+            log_tool_result("Base edgeR analysis completed successfully.\nOutput:\n" + process.stdout)
 
-        # Process each contrast
+        # ----------------------------
+        # Process each contrast using dynamically generated R scripts
+        # ----------------------------
         all_results = []
-
         for contrast_name in contrast_names:
-            log(f"Processing contrast: {contrast_name}", level=LogLevel.NORMAL)
-
-            # Get contrast details
             contrast = ctx.deps.contrast_groups[contrast_name]
             numerator = contrast['numerator']
             denominator = contrast['denominator']
-
-            # Create output directory for this contrast
-            contrast_dir = os.path.join(ctx.deps.output_dir, f"deseq2_{contrast_name}")
+            contrast_dir = os.path.join(ctx.deps.output_dir, f"edger_{contrast_name}")
             os.makedirs(contrast_dir, exist_ok=True)
-
-            # Define output files
             results_file = os.path.join(contrast_dir, f"{contrast_name}_results.csv")
-
-            # Create the R script for this specific contrast
-            contrast_r_script_path = os.path.join(ctx.deps.output_dir, f"run_deseq2_{contrast_name}.R")
-
+            ma_plot_file = os.path.join(contrast_dir, f"{contrast_name}_MAplot.png")
+            summary_stats_file = os.path.join(contrast_dir, "summary_stats.txt")
+            contrast_r_script_path = os.path.join(ctx.deps.output_dir, f"run_edger_{contrast_name}.R")
             with open(contrast_r_script_path, "w") as f:
                 f.write(f'''
-# Load required libraries
-library(DESeq2)
-library(ggplot2)
-library(pheatmap)
+suppressMessages(library(edgeR))
+suppressMessages(library(ggplot2))
 
-# Load the DESeq object
-dds <- readRDS("dds.rds")
+# Load the saved edgeR object
+dge <- readRDS("{os.path.join(ctx.deps.output_dir, 'dge.rds')}")
 
-# Define the contrast
-contrast_numerator <- "{numerator}"
-contrast_denominator <- "{denominator}"
+# Re-create the design matrix
+design <- model.matrix(~0 + group, data=dge$samples)
+colnames(design) <- levels(as.factor(dge$samples$group))
 
-# Get results for the contrast
-res <- results(dds, contrast=c("{ctx.deps.merged_column}", contrast_numerator, contrast_denominator))
+# Fit the model using quasi-likelihood methods
+fit <- glmQLFit(dge, design)
 
-# Order by adjusted p-value
-res_ordered <- res[order(res$padj),]
+# Define the contrast: numerator vs denominator
+contrast_vector <- makeContrasts(contrasts = "{numerator} - {denominator}", levels=design)
 
-# Save results
-write.csv(as.data.frame(res_ordered), file="{results_file}")
+# Perform the quasi-likelihood F-test
+qlf <- glmQLFTest(fit, contrast=contrast_vector)
 
+# Get full results table
+res <- topTags(qlf, n=Inf)$table
+
+# Write the results to CSV
+write.csv(as.data.frame(res), file="{results_file}")
+
+# Generate an MA plot (using plotMD, which is analogous in edgeR)
+png(filename="{ma_plot_file}")
+plotMD(qlf, main="MA Plot: {contrast_name}")
+dev.off()
 
 # Save summary statistics
-sink("{os.path.join(contrast_dir, "summary_stats.txt")}")
-cat("Total number of genes tested: ", nrow(res), "\\n")
-cat("Significant genes (padj < 0.05): ", sum(res$padj < 0.05, na.rm=TRUE), "\\n")
-cat("Up-regulated genes: ", sum(res$padj < 0.05 & res$log2FoldChange > 0, na.rm=TRUE), "\\n")
-cat("Down-regulated genes: ", sum(res$padj < 0.05 & res$log2FoldChange < 0, na.rm=TRUE), "\\n")
+sink("{summary_stats_file}")
+cat("Contrast: {contrast_name}\\n")
+cat("Total genes tested: ", nrow(res), "\\n")
+cat("Significant genes (FDR < 0.05): ", sum(res$FDR < 0.05, na.rm=TRUE), "\\n")
+cat("Up-regulated genes (logFC > 0): ", sum(res$FDR < 0.05 & res$logFC > 0, na.rm=TRUE), "\\n")
+cat("Down-regulated genes (logFC < 0): ", sum(res$FDR < 0.05 & res$logFC < 0, na.rm=TRUE), "\\n")
 sink()
 
-# Exit with success code
 quit(save="no", status=0)
 ''')
-
-            # Make the R script executable
             os.chmod(contrast_r_script_path, 0o755)
-
-            # Run the R script for this contrast
-            log(f"Executing R script for DESeq2 analysis of {contrast_name}: {contrast_r_script_path}", level=LogLevel.NORMAL)
+            log(f"Executing R script for edgeR analysis of {contrast_name}: {contrast_r_script_path}", level=LogLevel.NORMAL)
             process = subprocess.run(['Rscript', contrast_r_script_path], capture_output=True, text=True)
-
             if process.returncode != 0:
-                error_msg = f"Error running DESeq2 analysis for {contrast_name}: {process.stderr}"
-                log(error_msg, style="bold red")
+                error_msg = f"Error running edgeR analysis for {contrast_name}:\n{process.stderr}"
+                log_tool_result(error_msg)
                 all_results.append(error_msg)
-                continue
-
-            # Read summary statistics
-            summary_stats_file = os.path.join(contrast_dir, "summary_stats.txt")
-            summary_stats = "DESeq2 analysis completed successfully."
-            if os.path.exists(summary_stats_file):
-                with open(summary_stats_file, 'r') as f:
-                    summary_stats = f.read()
-
-            # Read results to get top DE genes
-            if os.path.exists(results_file):
-                results_df = pd.read_csv(results_file, index_col=0)
-                results_df = results_df.sort_values('padj')  # Ensure it's sorted
-
-                # Count significant genes
-                sig_genes_count = sum(results_df['padj'] < 0.05)
-                up_regulated_count = sum((results_df['padj'] < 0.05) & (results_df['log2FoldChange'] > 0))
-                down_regulated_count = sum((results_df['padj'] < 0.05) & (results_df['log2FoldChange'] < 0))
-
-                # Prepare top genes list
-                top_genes = results_df.head(10)[['log2FoldChange', 'pvalue', 'padj']]
-                top_genes_str = top_genes.to_string()
             else:
-                sig_genes_count = "Unknown"
-                up_regulated_count = "Unknown"
-                down_regulated_count = "Unknown"
-                top_genes_str = "Results file not found"
+                if os.path.exists(summary_stats_file):
+                    with open(summary_stats_file, 'r') as f:
+                        summary_stats = f.read()
+                else:
+                    summary_stats = "No summary statistics available."
+                result = f"""
+----- edgeR analysis for contrast: {contrast_name} ({numerator} vs {denominator}) -----
 
-            result = f"""
------ DESeq2 analysis for contrast: {contrast_name} ({numerator} vs {denominator}) -----
-
-Summary of results:
-- Total genes analyzed: {len(results_df) if 'results_df' in locals() else 'Unknown'}
-- Significant genes (padj < 0.05): {sig_genes_count}
-  - Up-regulated in {numerator}: {up_regulated_count}
-  - Down-regulated in {numerator}: {down_regulated_count}
-
-Top differentially expressed genes:
-{top_genes_str}
-
-Output files:
-- Results table: {results_file}
-- MA plot: {ma_plot_file}
-- Volcano plot: {volcano_plot_file}
-- Heatmap: {heatmap_file}
+Results file: {results_file}
+MA plot: {ma_plot_file}
 
 {summary_stats}
 """
-            all_results.append(result)
+                all_results.append(result)
 
-        # Combine all results
         combined_results = "\n\n" + "="*80 + "\n\n".join(all_results) + "\n\n" + "="*80
-
-        # Add an overall summary
         overall_summary = f"""
-DESeq2 analysis completed for {len(contrast_names)} contrasts:
+edgeR analysis completed for {len(contrast_names)} contrasts:
 {', '.join(contrast_names)}
 
-Normalized counts file: {os.path.join(ctx.deps.output_dir, 'DESeq2_normalized_counts.csv')}
-
-See individual contrast summaries below for details.
+Base edgeR object saved as: {os.path.join(ctx.deps.output_dir, 'dge.rds')}
 """
-
         final_result = overall_summary + combined_results
         log_tool_result(final_result)
         return final_result
 
     except Exception as e:
-        error_msg = f"Error running DESeq2 analysis: {str(e)}"
+        error_msg = f"Error running edgeR analysis: {str(e)}"
         log(error_msg, style="bold red")
         log_tool_result(error_msg)
         return error_msg
