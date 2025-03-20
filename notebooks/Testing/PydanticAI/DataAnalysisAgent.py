@@ -1178,7 +1178,7 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 async def register_file(ctx: RunContext[RNAseqData], file_name: str, file_path: str, description: str = "") -> str:
     """
     Register a file in the dependency context's file registry.
-    
+
     Args:
         file_name: A unique name to identify this file.
         file_path: Absolute or relative path to the file.
@@ -1200,17 +1200,17 @@ async def register_file(ctx: RunContext[RNAseqData], file_name: str, file_path: 
     log_tool_result(result)
     return result
 
+async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[str, List[str]]) -> List[str]:
+
 def get_file_path(ctx: RunContext[RNAseqData], file_name: str, fallback_path: Optional[str] = None) -> str:
     if hasattr(ctx.deps, 'file_registry') and file_name in ctx.deps.file_registry:
         return ctx.deps.file_registry[file_name]["path"]
     return fallback_path
-    ctx: RunContext[RNAseqData],
+    ctx: RunContext[RNAseqData] -> str,
     sample_mapping_file: Optional[str] = None,
     contrast_names: Optional[List[str]] = None,
-) -> str:
-    # Oh, you get a new window! I see...
-    #
-    # There is a chat function somewhere... top left
+ -> str:
+
     """
     Run edgeR differential expression analysis for one or more contrasts using dynamic R code.
 
