@@ -1,7 +1,14 @@
 # Create a global console instance
 # console = Console()
 # Imports
-# ----------------------------
+    def __post_init__(self):
+        self.fastq_dir = os.path.abspath(self.fastq_dir)
+        self.metadata_path = os.path.abspath(self.metadata_path)
+        self.kallisto_index_dir = os.path.abspath(self.kallisto_index_dir)
+        self.output_dir = os.path.abspath(self.output_dir)
+        if self.tx2gene_path:
+            self.tx2gene_path = os.path.abspath(self.tx2gene_path)
+        self.file_registry = {}
 
 import os
 import glob
@@ -15,7 +22,7 @@ from datetime import date
 from rich.console import Console
 from rich.panel import Panel
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Union, Tuple, Any, Literal
+from typing import List, Dict, Optional, Union, Tuple, Any, Literal, Callable
 from unidecode import unidecode
 from pydantic import BaseModel, Field
 import matplotlib.pyplot as plt
@@ -70,7 +77,49 @@ def log_tool_result(result):
         console.print("╰" + "─" * 100 + "╯")
         console.print("")  # Add extra line for separation
 
-# ----------------------------
+@rnaseq_agent.tool
+async def list_directory_contents(ctx: RunContext[RNAseqData], directory: str) -> str:
+    """List all files and subdirectories in the specified directory."""
+    log_tool_header("list_directory_contents", {"directory": directory})
+    if not os.path.exists(directory):
+        return f"ERROR: Directory '{directory}' does not exist."
+    if not os.path.isdir(directory):
+        return f"ERROR: Path '{directory}' exists but is not a directory."
+    files = []
+    subdirs = []
+    for item in os.listdir(directory):
+        path = os.path.join(directory, item)
+        if os.path.isdir(path):
+            subdirs.append(item)
+        else:
+            files.append(item)
+    result = f"Directory '{directory}' contains:\nSubdirectories:\n  " + "\n  ".join(sorted(subdirs))
+    result += "\nFiles:\n  " + "\n  ".join(sorted(files))
+    log_tool_result(result)
+    return result
+
+@rnaseq_agent.tool
+async def take_file_system_snapshot(ctx: RunContext[RNAseqData]) -> str:
+    """Take a snapshot of input paths and registered files."""
+    log_tool_header("take_file_system_snapshot")
+    result = "File System Snapshot:\n\n"
+    input_paths = [
+        ("fastq_dir", ctx.deps.fastq_dir),
+        ("metadata_path", ctx.deps.metadata_path),
+        ("kallisto_index_dir", ctx.deps.kallisto_index_dir),
+        ("output_dir", ctx.deps.output_dir)
+    ]
+    result += "Input Paths:\n"
+    for name, path in input_paths:
+        exists = "✓" if os.path.exists(path) else "✗"
+        result += f"{exists} {name}: {path}\n"
+    if hasattr(ctx.deps, "file_registry"):
+        result += "\nRegistered Files:\n"
+        for name, info in ctx.deps.file_registry.items():
+            exists = "✓" if os.path.exists(info["path"]) else "✗"
+            result += f"{exists} {name}: {info['path']}\n"
+    log_tool_result(result)
+    return result
 # Define the dependency type
 # ----------------------------
 @dataclass
@@ -1113,16 +1162,8 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
         analysis_df_path = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
         analysis_df.to_csv(analysis_df_path)
         log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
-        # Store both absolute and relative paths for the sample mapping file
-        ctx.deps.file_registry = getattr(ctx.deps, 'file_registry', {})
-        ctx.deps.file_registry['sample_mapping_absolute'] = os.path.abspath(analysis_df_path)
-        ctx.deps.file_registry['sample_mapping_relative'] = os.path.basename(analysis_df_path)
-        # Also store the path in a dedicated field for convenience
-        ctx.deps.sample_mapping_file = analysis_df_path
-        # Save the sample mapping DataFrame in the dependency for later use
-        ctx.deps.sample_mapping = analysis_df
-        log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
-        # Store the sample mapping DataFrame in the runtime data
+        # Register the sample mapping file
+        await register_file(ctx, "sample_mapping", analysis_df_path, "Sample mapping file for edgeR analysis")
         ctx.deps.sample_mapping = analysis_df
 
         result = f"""
@@ -1144,7 +1185,35 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
         return f"Error running Kallisto quantification: {str(e)}"
 
 @rnaseq_agent.tool
-async def run_edger_analysis(
+async def register_file(ctx: RunContext[RNAseqData], file_name: str, file_path: str, description: str = "") -> str:
+    """
+    Register a file in the dependency context's file registry.
+    
+    Args:
+        file_name: A unique name to identify this file.
+        file_path: Absolute or relative path to the file.
+        description: Optional description of the file.
+    """
+    log_tool_header("register_file", {"file_name": file_name, "file_path": file_path})
+    abs_path = os.path.abspath(file_path)
+    if not hasattr(ctx.deps, "file_registry"):
+        ctx.deps.file_registry = {}
+    ctx.deps.file_registry[file_name] = {
+        "path": abs_path,
+        "relative_path": os.path.basename(file_path),
+        "description": description,
+        "registered_at": pd.Timestamp.now().isoformat()
+    }
+    exists = os.path.exists(abs_path)
+    result = f"File '{file_name}' registered as {abs_path}"
+    result += " (verified)" if exists else " (WARNING: file not found at registration time)"
+    log_tool_result(result)
+    return result
+
+def get_file_path(ctx: RunContext[RNAseqData], file_name: str, fallback_path: Optional[str] = None) -> str:
+    if hasattr(ctx.deps, 'file_registry') and file_name in ctx.deps.file_registry:
+        return ctx.deps.file_registry[file_name]["path"]
+    return fallback_path
     ctx: RunContext[RNAseqData],
     sample_mapping_file: Optional[str] = None,
     contrast_names: Optional[List[str]] = None,
@@ -1180,25 +1249,15 @@ async def run_edger_analysis(
             log(f"No specific contrasts provided. Analyzing all {len(contrast_names)} contrasts: {contrast_names}", level=LogLevel.NORMAL)
 
         # Use the provided sample_mapping_file or retrieve it from the dependency's registry
-        if sample_mapping_file is None:
-            if hasattr(ctx.deps, 'sample_mapping_file'):
-                sample_mapping_file = ctx.deps.sample_mapping_file
-            elif hasattr(ctx.deps, 'file_registry') and 'sample_mapping_absolute' in ctx.deps.file_registry:
-                sample_mapping_file = ctx.deps.file_registry['sample_mapping_absolute']
-            else:
-                sample_mapping_file = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
+        # Use the provided sample_mapping_file or retrieve it from the dependency’s registry
+        sample_mapping_file = get_file_path(ctx, "sample_mapping", sample_mapping_file)
         log(f"Using sample mapping file: {sample_mapping_file}", level=LogLevel.NORMAL)
 
-        # Verify the file exists, trying the absolute path first. If not, check relative.
+        # Verify the file exists
         if not os.path.exists(sample_mapping_file):
-            alternative_path = os.path.join(ctx.deps.output_dir, os.path.basename(sample_mapping_file))
-            if os.path.exists(alternative_path):
-                sample_mapping_file = alternative_path
-                log(f"Found sample mapping file at alternative path: {sample_mapping_file}", level=LogLevel.NORMAL)
-            else:
-                error_msg = f"Error: Sample mapping file not found at {sample_mapping_file} or {alternative_path}."
-                log_tool_result(error_msg)
-                return error_msg
+            error_msg = f"Error: Sample mapping file not found at {sample_mapping_file}."
+            log_tool_result(error_msg)
+            return error_msg
 
         # ----------------------------
         # Create the base R script for edgeR analysis
@@ -1216,22 +1275,29 @@ suppressMessages(library(pheatmap))
 setwd("{os.path.abspath(ctx.deps.output_dir)}")
 cat("DEBUG: Working directory set to:", getwd(), "\\n")
 
-# Use full path to sample mapping file
-sample_file <- "{os.path.abspath(sample_mapping_file)}"
-if (file.exists(sample_file)) {{
-  cat("SUCCESS: Sample mapping file found at:", sample_file, "\\n")
-  sample_info <- read.csv(sample_file, row.names=1)
-}} else {{
-  # Fallback: try relative path
-  relative_path <- "{os.path.basename(sample_mapping_file)}"
-  if (file.exists(relative_path)) {{
-    cat("SUCCESS: Sample mapping file found at relative path:", relative_path, "\\n")
-    sample_info <- read.csv(relative_path, row.names=1)
-  }} else {{
-    cat("ERROR: Sample mapping file not found at:", sample_file, "or", relative_path, "\\n")
+# Comprehensive file checking with informative messages for sample mapping file
+sample_files_to_check <- c(
+    "{os.path.abspath(sample_mapping_file)}",
+    "{os.path.basename(sample_mapping_file)}"
+)
+sample_file_found <- FALSE
+for (sample_file in sample_files_to_check) {{
+    if (file.exists(sample_file)) {{
+        cat("SUCCESS: Found sample mapping file at:", sample_file, "\\n")
+        sample_info <- read.csv(sample_file, row.names=1)
+        sample_file_found <- TRUE
+        break
+    }} else {{
+        cat("INFO: Sample mapping file not found at:", sample_file, "\\n")
+    }}
+}}
+if (!sample_file_found) {{
+    cat("ERROR: Could not find sample mapping file at any of these locations:\\n")
+    for (path in sample_files_to_check) {{
+        cat("  -", path, "\\n")
+    }}
     cat("Directory contents:", paste(list.files(), collapse=", "), "\\n")
-    stop(paste("File not found:", sample_file, "and", relative_path))
-  }}
+    stop("Sample mapping file not found")
 }}
 
 # Define the grouping column
