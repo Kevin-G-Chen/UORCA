@@ -67,9 +67,6 @@ async def list_files(ctx: RunContext[TestDependency]) -> str:
     return "The files found are: " + ", ".join(files)
 
 if __name__ == "__main__":
-    # Create a dependency instance with an example test directory.
-    # (Adjust the directory value to one that exists in your testing environment.)
-    test_dep = TestDependency(test_dir="../TestRNAseqData_SETBP1")
 
     # Create a dependency instance with an example test directory.
     # (Adjust the directory value to one that exists in your testing environment.)

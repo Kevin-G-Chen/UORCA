@@ -146,7 +146,7 @@ rnaseq_agent = Agent(
     3. Provide clear explanations of what's happening
     4. Handle errors gracefully
     5. Generate appropriate visualizations when needed
-    6. Be comprehensive, both in the analysis steps but also more routine steps. For example, if you ncannot find a file, ensure you check other common file extensions.
+    6. Be comprehensive, both in the analysis steps but also in routine checks. For example, if you cannot find a file, check for alternative extensions.
     """
 )
 
@@ -277,10 +277,22 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
 # ----------------------------
 @rnaseq_agent.tool
 async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
-    """
-    List all FASTQ files in the fastq_dir directory from the context.
-    This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
-    """
+    log_tool_header("list_fastq_files")
+    fastq_dir = ctx.deps.fastq_dir
+    if not os.path.exists(fastq_dir):
+        error_msg = f"Error: Directory '{fastq_dir}' does not exist"
+        log_tool_result(error_msg)
+        return error_msg
+    fastq_files = await find_files(ctx, fastq_dir, 'fastq.gz')
+    if not fastq_files:
+        error_msg = f"No fastq.gz files found in {fastq_dir}. Directory contents: {os.listdir(fastq_dir) if os.path.isdir(fastq_dir) else 'Not a directory'}"
+        log_tool_result(error_msg)
+        return error_msg
+    result = f"Found {len(fastq_files)} fastq.gz files in {fastq_dir}"
+    if CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
+        result += f": {', '.join(fastq_files)}"
+    log_tool_result(result)
+    return result
     """
     List all FASTQ files in the fastq_dir directory from the context.
     This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
@@ -315,29 +327,16 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
 
     Inputs:
       - ctx: RunContext[RNAseqData]
-          Contains the dependency context (RNAseqData) that holds directory information and other runtime parameters.
+          Contains the dependency context.
       - directory (str):
-          The root directory path in which to search for files. This can be either an absolute or relative path.
+          The root directory path to search (absolute or relative).
       - suffix (Union[str, List[str]]):
-          The file suffix (for example "fastq.gz" for FASTQ files) or a list of suffixes that will be used to filter matching files.
-
-    Process:
-      1. Logs the current context details (only once per run, thanks to a flag in ctx.deps).
-      2. Uses os.walk to recursively traverse the directory structure and check every file's name.
-      3. For each file that ends with the specified suffix, concatenates its full path and adds it to a list.
-      4. Returns the sorted list of matching file paths.
-      5. Reports progress by logging the number of files found.
+          The file suffix to filter by (e.g., "fastq.gz") or a list of suffixes.
 
     Output:
-      A sorted list of absolute file path strings that match the file suffix provided. In case of errors
-      (e.g. directory not found), an error message string is returned inside a list.
-
-    Purpose in pipeline:
-      This tool locates critical input FASTQ files using the fastq.gz suffix (or other types based on suffix) from the file system,
-      enabling subsequent steps (such as quantification with Kallisto) to process the correct data.
+      A sorted list of absolute file paths matching the given suffix.
     """
     try:
-        # Log the initial context only once per run
         if not hasattr(ctx.deps, '_logged_context'):
             log(f"Initial Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
             setattr(ctx.deps, '_logged_context', True)
@@ -1206,10 +1205,10 @@ def get_file_path(ctx: RunContext[RNAseqData], file_name: str, fallback_path: Op
     if hasattr(ctx.deps, 'file_registry') and file_name in ctx.deps.file_registry:
         return ctx.deps.file_registry[file_name]["path"]
     return fallback_path
-    ctx: RunContext[RNAseqData] -> str,
-    sample_mapping_file: Optional[str] = None,
-    contrast_names: Optional[List[str]] = None,
- -> str:
+@rnaseq_agent.tool
+async def run_edger_analysis(ctx: RunContext[RNAseqData],
+                             sample_mapping_file: Optional[str] = None,
+                             contrast_names: Optional[List[str]] = None) -> str:
 
     """
     Run edgeR differential expression analysis for one or more contrasts using dynamic R code.
