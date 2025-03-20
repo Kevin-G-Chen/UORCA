@@ -1212,15 +1212,26 @@ suppressMessages(library(edgeR))
 suppressMessages(library(ggplot2))
 suppressMessages(library(pheatmap))
 
-# Check that sample mapping file exists (using its basename)
-sample_file <- "{os.path.basename(sample_mapping_file)}"
+# Set working directory explicitly
+setwd("{os.path.abspath(ctx.deps.output_dir)}")
+cat("DEBUG: Working directory set to:", getwd(), "\\n")
+  
+# Use full path to sample mapping file
+sample_file <- "{os.path.abspath(sample_mapping_file)}"
 if (file.exists(sample_file)) {{
   cat("SUCCESS: Sample mapping file found at:", sample_file, "\\n")
   sample_info <- read.csv(sample_file, row.names=1)
 }} else {{
-  cat("ERROR: Sample mapping file not found at:", sample_file, "\\n")
-  cat("Directory contents:", paste(list.files(), collapse=", "), "\\n")
-  stop(paste("File not found:", sample_file))
+  # Fallback: try relative path
+  relative_path <- "{os.path.basename(sample_mapping_file)}"
+  if (file.exists(relative_path)) {{
+    cat("SUCCESS: Sample mapping file found at relative path:", relative_path, "\\n")
+    sample_info <- read.csv(relative_path, row.names=1)
+  }} else {{
+    cat("ERROR: Sample mapping file not found at:", sample_file, "or", relative_path, "\\n")
+    cat("Directory contents:", paste(list.files(), collapse=", "), "\\n")
+    stop(paste("File not found:", sample_file, "and", relative_path))
+  }}
 }}
 
 # Define the grouping column
