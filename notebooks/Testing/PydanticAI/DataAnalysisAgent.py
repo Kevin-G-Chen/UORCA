@@ -1233,20 +1233,57 @@ txi <- tximport(files, type="kallisto", txOut=TRUE)
 
             f.write(f'''
 # Create DESeq2 dataset from imported counts
-dds <- DESeqDataSetFromTximport(txi, colData=sample_info, design=~group_col)
+dds <- DGEList(txi$counts)
+dds$samples <- bind_cols(DGE$samples, sample_info)
+dds$genes <- bitr(
+geneID = rownames(dds),
+fromType = "ENTREZID",
+toType = "SYMBOL",
+OrgDb = org.Hs.eg.db,
+drop = FALSE
+)
 
 # Filter out low count genes (for example, requiring at least 10 total counts)
-dds <- dds[rowSums(counts(dds)) >= 10, ]
+keep.exprs <- filterByExpr(dds,
+    dds = DGE$samples$merged_group # change this to reflect the actual column of interest AI!
+)
+dds <- dds[keep.exprs, keep.lib.sizes = FALSE]
 
 # Normalize the counts
-dds <- estimateSizeFactors(dds)
+dds <- calcNormFactors(dds)
 
 # Run DESeq2 differential expression analysis
-dds <- DESeq(dds)
+design <- model.matrix(
+    data = dds$samples,
+    ~ 0 + merged_group # change this to the actual column of interest AI!
+)
 
-# Save normalized counts to CSV for downstream visualization
-normalized_counts <- counts(dds, normalized=TRUE)
-write.csv(normalized_counts, file="{os.path.join(ctx.deps.output_dir, 'DESeq2_normalized_counts.csv')}")
+# Change all of the following to be generalisable to the various contrasts, and to use the variables defined here AI!
+colnames(design) <- str_remove_all(colnames(design), "merged_group")
+str(design)
+contrast.matrix <- makeContrasts(
+    WT_differentiation = "WT_NPC - WT_IPSC",
+    CFC1_differnetiation = "CFC1_NPC - CFC1_IPSC",
+    DiffBetweenNPCs = "CFC1_NPC - WT_NPC",
+    DiffofDiffns = "(CFC1_NPC - CFC1_IPSC) - (WT_NPC - WT_IPSC)",
+    levels = colnames(design)
+)
+contrasts <- colnames(contrast.matrix)
+v <- voom(DGE.final,
+    design = design,
+    plot = TRUE
+)
+vfit <- lmFit(
+    v,
+    design
+)
+vfit <- contrasts.fit(vfit,
+    contrasts = contrast.matrix
+)
+efit <- eBayes(vfit)
+plotSA(efit,
+    main = "Mean-variance trend (using Empirical Bayes)"
+)
 ''')
 
         # Make the base R script executable
