@@ -131,7 +131,7 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
 
      Process:
        1. Logs key information from the dependency context.
-       2. Checks for the existence of a normalized counts CSV file (generated from DESeq2 analysis).
+       2. Checks for the existence of a normalized counts CSV file (generated from edgeR analysis).
        3. Loads expression data from the file.
        4. Retrieves the contrast details (numerator and denominator groups) from ctx.deps.contrast_groups.
        5. Constructs a class vector for samples by comparing sample names in the expression data with entries in the
@@ -162,9 +162,9 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
              console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
 
          # Check if we have normalized expression data
-         norm_counts_file = os.path.join(ctx.deps.output_dir, "DESeq2_normalized_counts.csv")
+         norm_counts_file = os.path.join(ctx.deps.output_dir, "edgeR_normalized_counts.csv")
          if not os.path.exists(norm_counts_file):
-             msg = "Error: Normalized counts file not found. Please run DESeq2 analysis first."
+             msg = "Error: Normalized counts file not found. Please run edgeR analysis first."
              console.log(f"[bold red]Tool Error:[/] {msg}")
              return msg
 
@@ -648,7 +648,7 @@ async def design_contrasts(ctx: RunContext[RNAseqData]) -> str:
 
     Purpose in pipeline:
       Designing contrasts is a critical step that defines comparisons between experimental conditions for subsequent
-      differential expression analysis (e.g., by DESeq2).
+      differential expression analysis (e.g., by edgeR).
     """
     try:
         if ctx.deps.metadata_df is None:
@@ -983,7 +983,7 @@ async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
       4. Matches these sample names to metadata rows using various strategies (exact matching,
          substring matching, reverse matching).
       5. Constructs a pandas DataFrame that maps each sample to its metadata.
-      6. Saves this mapping DataFrame to a CSV file (named "deseq2_analysis_samples.csv") in the output directory.
+      6. Saves this mapping DataFrame to a CSV file (named "edgeR_analysis_samples.csv") in the output directory.
 
     Output:
       Returns a detailed multiline string that includes:
@@ -993,11 +993,11 @@ async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
 
     Purpose in pipeline:
       This tool bridges the quantification and differential expression steps by ensuring that each
-      sample's expression data is accurately linked to its experimental metadata, a prerequisite for DESeq2 analysis.
+      sample's expression data is accurately linked to its experimental metadata, a prerequisite for edgeR analysis.
       It assumes Kallisto quantification has already been completed in a previous step.
     """
     try:
-        log_tool_header("prepare_deseq2_analysis")
+        log_tool_header("prepare_edgeR_analysis")
 
         # Check if we have abundance files
         if not ctx.deps.abundance_files:
@@ -1099,7 +1099,7 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
             log_tool_result(warning_msg)
             return warning_msg
 
-        # Create a DataFrame for DESeq2 analysis
+        # Create a DataFrame for edgeR analysis
         analysis_df = pd.DataFrame(index=list(matched_samples.keys()))
 
         # Add the file paths
@@ -1145,6 +1145,9 @@ async def run_edger_analysis(
     sample_mapping_file: str,
     contrast_names: Optional[List[str]] = None,
 ) -> str:
+    # Oh, you get a new window! I see...
+    #
+    # There is a chat function somewhere... top left
     """
     Run edgeR differential expression analysis for one or more contrasts using dynamic R code.
 
@@ -1159,7 +1162,7 @@ async def run_edger_analysis(
     It then writes a separate R script for each contrast (using the provided numerator and denominator).
     """
     try:
-        log_tool_header("run_deseq2_analysis", {"contrast_names": contrast_names, "sample_mapping_file": sample_mapping_file})
+        log_tool_header("run_edgeR_analysis", {"contrast_names": contrast_names, "sample_mapping_file": sample_mapping_file})
 
         # Validate that contrast groups exist
         if not ctx.deps.contrast_groups:
@@ -1174,7 +1177,7 @@ async def run_edger_analysis(
 
         # Check that the sample mapping file exists
         if not os.path.exists(sample_mapping_file):
-            error_msg = "Error: Sample mapping file not found. Please run prepare_deseq2_analysis first."
+            error_msg = "Error: Sample mapping file not found. Please run prepare_edgeR_analysis first."
             log_tool_result(error_msg)
             return error_msg
 
@@ -1189,13 +1192,6 @@ suppressMessages(library(tximport))
 suppressMessages(library(edgeR))
 suppressMessages(library(ggplot2))
 suppressMessages(library(pheatmap))
-
-# Set working directory explicitly
-setwd("{os.path.abspath(ctx.deps.output_dir)}")
-cat("DEBUG: Working directory set to:", getwd(), "\\n")
-
-# Diagnostic: List contents of working directory
-cat("DEBUG: Files in working directory:", paste(list.files(), collapse=", "), "\\n")
 
 # Check that sample mapping file exists (using its basename)
 sample_file <- "{os.path.basename(sample_mapping_file)}"
@@ -1406,11 +1402,11 @@ if __name__ == "__main__":
 async def check_file_existence(ctx: RunContext[RNAseqData], filepath: str) -> str:
     """
     Check if a file exists at the given filepath. If not, report the contents of the directory.
-    
+
     Inputs:
       - ctx: RunContext[RNAseqData] (provides context and directory info)
       - filepath (str): Absolute file path to check.
-    
+
     Output:
       A string message indicating success or an error with diagnostic directory contents.
     """
