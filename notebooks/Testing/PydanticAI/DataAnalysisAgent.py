@@ -1186,7 +1186,7 @@ async def run_deseq2_analysis(
 
         # Create a base R script that performs the DESeq2 setup and creates the DESeq dataset
         # This script will be common for all contrasts
-        base_r_script_path = os.path.join(ctx.deps.output_dir, "run_deseq2_base.R")
+        base_r_script_path = os.path.join("run_deseq2_base.R")
 
         with open(base_r_script_path, "w") as f:
             f.write(f'''
@@ -1200,14 +1200,7 @@ suppressMessages(library(dplyr))
 suppressMessages(library(tibble))
 
 # Set the working directory
-setwd("{os.path.abspath(ctx.deps.output_dir)}")
-
-# DEBUG: Print the current working directory
-message("DEBUG: Current working directory is: ", getwd(), "\\n")
-
-# DEBUG: List all CSV files (recursively) in the working directory
-csv_files <- list.files(path=".", pattern="\\\\.csv$", recursive=TRUE, full.names=TRUE)
-message("DEBUG: CSV files found recursively: ", paste(csv_files, collapse=", "), "\\n")
+# setwd("{os.path.abspath(ctx.deps.output_dir)}")
 
 # Load sample information
 sample_info <- read.csv("{os.path.join(ctx.deps.output_dir, 'deseq2_analysis_samples.csv')}", row.names=1)
@@ -1240,8 +1233,7 @@ txi <- tximport(files, type="kallisto", txOut=TRUE)
 
             f.write(f'''
 # Create DESeq2 dataset
-dds <- DESeqDataSetFromTximport(txi, colData=sample_info, design=~{ctx.deps.merged_column})
-
+DGE <- DGEList(txi$counts)
 # Run DESeq2
 dds <- DESeq(dds)
 
