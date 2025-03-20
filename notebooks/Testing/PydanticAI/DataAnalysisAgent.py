@@ -241,7 +241,26 @@ async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
     List all FASTQ files in the fastq_dir directory from the context.
     This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
     """
-    try:
+    """
+    Run DESeq2 differential expression analysis for one or more contrasts.
+
+    Parameters:
+      - contrast_names (Optional[List[str]]):
+          A list of contrast names to be analyzed; if None, all defined contrasts are used.
+      - sample_mapping_file (Optional[str]):
+          The file path for the DESeq2 sample mapping CSV. By default, if not provided, it is set to:
+              "<output_dir>/deseq2_analysis_samples.csv"
+          where <output_dir> is the value in ctx.deps.output_dir. In cases of a retry,
+          the agent should examine the working directory as reported by the R output to adjust this path if necessary.
+
+    (Other parameters remain managed via the dependency container in RNAseqData).
+
+    Returns:
+      A detailed multiline string report summarizing the DESeq2 analysis for the requested contrasts.
+    """
+    if sample_mapping_file is None:
+        sample_mapping_file = os.path.join(ctx.deps.output_dir, "deseq2_analysis_samples.csv")
+        
         log_tool_header("list_fastq_files")
         fastq_dir = ctx.deps.fastq_dir
 
@@ -1136,13 +1155,17 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
         return f"Error running Kallisto quantification: {str(e)}"
 
 @rnaseq_agent.tool
-async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_names: Optional[List[str]] = None) -> str:
+async def run_deseq2_analysis(
+    ctx: RunContext[RNAseqData],
+    contrast_names: Optional[List[str]] = None,
+    sample_mapping_file: Optional[str] = None
+) -> str:
     """
     Run DESeq2 differential expression analysis for one or more contrasts.
     [Documentation as above]
     """
     try:
-        log_tool_header("run_deseq2_analysis", {"contrast_names": contrast_names})
+        log_tool_header("run_deseq2_analysis", {"contrast_names": contrast_names, "sample_mapping_file": sample_mapping_file})
 
         # Check if we have contrast groups defined
         if not ctx.deps.contrast_groups:
@@ -1163,7 +1186,6 @@ async def run_deseq2_analysis(ctx: RunContext[RNAseqData], contrast_names: Optio
             return error_msg
 
         # Check if we have prepared the DESeq2 analysis
-        sample_mapping_file = os.path.join(ctx.deps.output_dir, "deseq2_analysis_samples.csv")
         if not os.path.exists(sample_mapping_file):
             error_msg = "Error: Sample mapping file not found. Please run prepare_deseq2_analysis first."
             log_tool_result(error_msg)
