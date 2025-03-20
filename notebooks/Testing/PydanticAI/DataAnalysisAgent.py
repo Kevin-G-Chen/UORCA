@@ -1232,12 +1232,19 @@ txi <- tximport(files, type="kallisto", txOut=TRUE)
 ''')
 
             f.write(f'''
-# Create DESeq2 dataset
-DGE <- DGEList(txi$counts)
-# Run DESeq2
+# Create DESeq2 dataset from imported counts
+dds <- DESeqDataSetFromTximport(txi, colData=sample_info, design=~group_col)
+
+# Filter out low count genes (for example, requiring at least 10 total counts)
+dds <- dds[rowSums(counts(dds)) >= 10, ]
+
+# Normalize the counts
+dds <- estimateSizeFactors(dds)
+
+# Run DESeq2 differential expression analysis
 dds <- DESeq(dds)
 
-# Get normalized counts and save to a single file (common for all contrasts)
+# Save normalized counts to CSV for downstream visualization
 normalized_counts <- counts(dds, normalized=TRUE)
 write.csv(normalized_counts, file="{os.path.join(ctx.deps.output_dir, 'DESeq2_normalized_counts.csv')}")
 ''')
