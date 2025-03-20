@@ -1190,54 +1190,54 @@ suppressMessages(library(edgeR))
 suppressMessages(library(ggplot2))
 suppressMessages(library(pheatmap))
 
-# Load sample information
-sample_info <- read.csv("{os.path.join(ctx.deps.output_dir, 'deseq2_analysis_samples.csv')}", row.names=1)
+# Set working directory explicitly
+setwd("{os.path.abspath(ctx.deps.output_dir)}")
+cat("DEBUG: Working directory set to:", getwd(), "\\n")
 
-# Define the grouping column (as provided by the dependency)
-group_col <- "{ctx.deps.merged_column}"
-if(!(group_col %in% colnames(sample_info))) {{
-    stop(paste("Group column", group_col, "not found in sample information"))
+# Diagnostic: List contents of working directory
+cat("DEBUG: Files in working directory:", paste(list.files(), collapse=", "), "\\n")
+
+# Check that sample mapping file exists (using its basename)
+sample_file <- "{os.path.basename(sample_mapping_file)}"
+if (file.exists(sample_file)) {{
+  cat("SUCCESS: Sample mapping file found at:", sample_file, "\\n")
+  sample_info <- read.csv(sample_file, row.names=1)
+}} else {{
+  cat("ERROR: Sample mapping file not found at:", sample_file, "\\n")
+  cat("Directory contents:", paste(list.files(), collapse=", "), "\\n")
+  stop(paste("File not found:", sample_file))
 }}
 
-# Get abundance files and assign sample names
+# Define the grouping column
+group_col <- "{ctx.deps.merged_column}"
+
+# Get abundance files from sample_info
 files <- sample_info$abundance_file
 names(files) <- rownames(sample_info)
 
 # Import Kallisto data using tximport, with optional tx2gene mapping if available
-''')
-            if ctx.deps.tx2gene_path:
-                f.write(f'''
-# Load transcript-to-gene mapping
-tx2gene <- read.csv("{ctx.deps.tx2gene_path}", header=FALSE, sep="\\t")
-colnames(tx2gene) <- c("TXNAME", "GENEID")
-txi <- tximport(files, type="kallisto", tx2gene=tx2gene)
-''')
-            else:
-                f.write('''
-txi <- tximport(files, type="kallisto", txOut=TRUE)
-''')
-            f.write(f'''
+{ "tx2gene <- read.csv(\"" + ctx.deps.tx2gene_path + "\", header=FALSE, sep=\"\\t\"); colnames(tx2gene) <- c(\"TXNAME\", \"GENEID\");" if ctx.deps.tx2gene_path else "# No tx2gene file specified" }
+txi <- tximport(files, type="kallisto", { "tx2gene=tx2gene" if ctx.deps.tx2gene_path else "txOut=TRUE" })
+
 # Create an edgeR DGEList using the imported counts
 dge <- DGEList(counts=txi$counts)
 
-# Assign group information from the sample info using the specified group column
+# Assign group information from sample_info
 dge$samples$group <- sample_info[[group_col]]
 
-# Apply filtering using filterByExpr (your preferred methodology)
-keep <- filterByExpr(dge, group = dge$samples$group)
+# Apply filtering using filterByExpr
+keep <- filterByExpr(dge, group=dge$samples$group)
 dge <- dge[keep, , keep.lib.sizes=FALSE]
 
 # Calculate normalization factors
 dge <- calcNormFactors(dge)
 
-# Create the design matrix based on the group variable
+# Create design matrix and estimate dispersions
 design <- model.matrix(~0 + group, data=dge$samples)
 colnames(design) <- levels(as.factor(dge$samples$group))
-
-# Estimate dispersions
 dge <- estimateDisp(dge, design)
 
-# Save the edgeR object for downstream contrast analysis
+# Save the edgeR object for downstream analysis
 saveRDS(dge, file="{os.path.join(ctx.deps.output_dir, 'dge.rds')}")
 ''')
         os.chmod(base_r_script_path, 0o755)
