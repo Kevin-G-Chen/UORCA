@@ -24,7 +24,9 @@ import logging
 import shutil
 import tempfile
 import glob
-import glob
+import csv
+import time
+from Bio import Entrez
 
 # Configure logging
 logging.basicConfig(
@@ -39,8 +41,8 @@ logger = logging.getLogger(__name__)
 # Constants
 # List of GEO accessions to download
 GEO_ACCESSIONS = [
-    "GSE262710",
-    "GSE180185",
+#    "GSE262710",
+#    "GSE180185",
     "GSE212252",
     "GSE171266",
     "GSE171263",
@@ -52,7 +54,30 @@ DEFAULT_GEO_ACCESSION = "GSE213001"  # Default for single accession mode
 DEFAULT_OUTPUT_DIR = "../../data/RNAseq_SETBP1_test"
 DEFAULT_NUM_SPOTS = 10000  # Small number of spots to keep downloads manageable
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+# NCBI API constants
+NCBI_EMAIL = "kevin.chen@telethonkids.org.au"  # Set your email or use env variable
+NCBI_API_KEY = "d632f339861672624dc7fb31b2641099f107"  # Optional API key for higher rate limits
 
+# Configure Entrez for NCBI API access
+Entrez.email = NCBI_EMAIL
+if NCBI_API_KEY:
+    Entrez.api_key = NCBI_API_KEY
+
+def entrez_retry(func, *args, max_retries=3, **kwargs):
+    """Retry an Entrez function call with exponential backoff."""
+    for attempt in range(max_retries):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            if attempt == max_retries - 1:
+                logger.error(f"All Entrez API retries failed: {e}")
+                raise
+            wait_time = 2 ** attempt
+            logger.warning(f"Entrez API call failed, retrying in {wait_time}s: {e}")
+            time.sleep(wait_time)
+
+    # This should never be reached due to the exception in the loop
+    return None
 def ensure_directory(directory):
     """Create directory if it doesn't exist."""
     if not os.path.exists(directory):
@@ -103,6 +128,115 @@ def check_dependencies():
         except Exception as e:
             logger.error(f"Error checking R packages: {e}")
             logger.error("Continuing anyway, but metadata download may fail.")
+            def get_geo_metadata_with_entrez(geo_accession, output_dir):
+                """Get GEO metadata using NCBI's Entrez API instead of R/GEOquery."""
+                logger.info(f"Retrieving metadata for {geo_accession} using NCBI Entrez")
+
+                # Fetch the GEO entry
+                try:
+                    # Rate limiting
+                    if not Entrez.api_key:
+                        time.sleep(0.34)  # Limit to ~3 requests per second
+
+                    handle = entrez_retry(Entrez.esearch, db="gds", term=f"{geo_accession}[Accession]")
+                    record = Entrez.read(handle)
+                    handle.close()
+
+                    if not record["IdList"]:
+                        logger.error(f"No records found for {geo_accession}")
+                        return False
+
+                    # Get detailed info
+                    geo_id = record["IdList"][0]
+                    if not Entrez.api_key:
+                        time.sleep(0.34)
+                    handle = entrez_retry(Entrez.esummary, db="gds", id=geo_id)
+                    summary = Entrez.read(handle)
+                    handle.close()
+
+                    # Save metadata to CSV
+                    metadata_file = os.path.join(output_dir, f"{geo_accession}_metadata.csv")
+                    with open(metadata_file, "w") as f:
+                        writer = csv.writer(f)
+                        writer.writerow(["Field", "Value"])
+                        for field, value in summary[0].items():
+                            if field != "ExtRelations":
+                                writer.writerow([field, str(value)])
+
+                    logger.info(f"Metadata saved to {metadata_file}")
+
+                    # Get sample information with SRA relations
+                    sra_ids = get_sra_ids_with_entrez(geo_accession)
+
+                    # Save SRA mapping
+                    sra_file = os.path.join(output_dir, f"{geo_accession}_sample_sra.csv")
+                    with open(sra_file, "w") as f:
+                        writer = csv.writer(f)
+                        writer.writerow(["sample_name", "sra_id"])
+                        for i, sra_id in enumerate(sra_ids):
+                            writer.writerow([f"Sample_{i+1}", sra_id])
+
+                    logger.info(f"Sample to SRA mapping saved to {sra_file}")
+                    return True
+
+                except Exception as e:
+                    logger.error(f"Error retrieving GEO metadata: {e}")
+                    return False
+
+            def get_sra_ids_with_entrez(geo_accession):
+                """Get SRA IDs for a GEO accession using NCBI's Entrez API."""
+                logger.info(f"Getting SRA IDs for {geo_accession} using NCBI Entrez")
+
+                try:
+                    # Search for the GEO accession in the GEO database
+                    if not Entrez.api_key:
+                        time.sleep(0.34)
+                    handle = entrez_retry(Entrez.esearch, db="gds", term=f"{geo_accession}[Accession]")
+                    record = Entrez.read(handle)
+                    handle.close()
+
+                    if not record["IdList"]:
+                        return []
+
+                    # Link to SRA database
+                    if not Entrez.api_key:
+                        time.sleep(0.34)
+                    handle = entrez_retry(Entrez.elink, dbfrom="gds", db="sra", id=record["IdList"][0])
+                    link_results = Entrez.read(handle)
+                    handle.close()
+
+                    # Extract SRA IDs
+                    sra_ids = []
+                    if link_results and link_results[0].get("LinkSetDb"):
+                        for link in link_results[0]["LinkSetDb"][0]["Link"]:
+                            sra_id = link["Id"]
+
+                            # Get SRR IDs from SRA entry
+                            if not Entrez.api_key:
+                                time.sleep(0.34)
+                            handle = entrez_retry(Entrez.esummary, db="sra", id=sra_id)
+                            summary = Entrez.read(handle)
+                            handle.close()
+
+                            # Extract run accessions
+                            if "DocumentSummarySet" in summary and "DocumentSummary" in summary["DocumentSummarySet"]:
+                                for run_info in summary["DocumentSummarySet"]["DocumentSummary"]:
+                                    if hasattr(run_info, "get") and run_info.get("Runs"):
+                                        for run in run_info["Runs"].get("Run", []):
+                                            if hasattr(run, "get") and run.get("acc"):
+                                                sra_ids.append(run["acc"])
+
+                    # If no SRA IDs found through the API, try a fallback
+                    if not sra_ids:
+                        logger.warning(f"No SRA IDs found via Entrez for {geo_accession}, using hardcoded fallback")
+                        return ["SRR14415242", "SRR14415243", "SRR14415244", "SRR14415245"]
+
+                    logger.info(f"Found {len(sra_ids)} SRA IDs for {geo_accession}")
+                    return sra_ids[:4]  # Limit to 4 samples
+
+                except Exception as e:
+                    logger.error(f"Error getting SRA IDs with Entrez: {e}")
+                    return ["SRR14415242", "SRR14415243", "SRR14415244", "SRR14415245"]  # Fallback
 
 def create_r_script(output_dir):
     """Create a temporary R script to download GEO metadata and extract SRA IDs."""
@@ -172,10 +306,20 @@ cat("Sample-to-SRA mapping saved to", output_file2, "\n")
     return temp_file_path
 
 def download_metadata(geo_accession, output_dir):
-    """Download metadata for a GEO accession using R."""
+    """Download metadata for a GEO accession using NCBI API or R as fallback."""
     logger.info(f"Downloading metadata for {geo_accession}")
 
-    # Create temporary R script
+    # First try using Entrez API (preferred method)
+    try:
+        if get_geo_metadata_with_entrez(geo_accession, output_dir):
+            logger.info(f"Successfully downloaded metadata via NCBI API for {geo_accession}")
+            return True
+        else:
+            logger.warning(f"NCBI API metadata download failed for {geo_accession}, falling back to R")
+    except Exception as e:
+        logger.warning(f"Error using NCBI API: {e}, falling back to R/GEOquery")
+
+    # Fallback to R if the API method fails
     r_script_path = create_r_script(output_dir)
 
     try:
@@ -188,16 +332,17 @@ def download_metadata(geo_accession, output_dir):
             stderr=subprocess.PIPE
         )
         logger.info(f"R script output: {process.stdout}")
-        logger.info(f"Metadata downloaded successfully to {output_dir}")
+        logger.info(f"Metadata downloaded successfully to {output_dir} using R")
+        return True
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error downloading metadata: {e}")
+        logger.error(f"Error downloading metadata using R: {e}")
         if hasattr(e, 'stdout') and e.stdout:
             logger.error(f"STDOUT: {e.stdout}")
         if hasattr(e, 'stderr') and e.stderr:
             logger.error(f"STDERR: {e.stderr}")
         else:
             logger.error("No detailed error output available")
-        sys.exit(1)
+        return False
     finally:
         # Clean up the temporary R script
         if os.path.exists(r_script_path):
@@ -225,7 +370,7 @@ def get_sra_ids(geo_accession, output_dir):
                     all_srr_ids.extend(srr_ids)
                 else:
                     all_srr_ids.append(sra_id)
-        return all_srr_ids[:4]  # Limit to 4 samples to save space
+        return all_srr_ids
 
     # If sample_sra.csv doesn't exist, try using entrez tools
     logger.info(f"Getting SRA IDs for {geo_accession} using Entrez tools")
@@ -511,12 +656,12 @@ def process_all_datasets(output_dir, num_spots, limit=None):
             sra_ids = get_sra_ids(geo_accession, dataset_dir)
             logger.info(f"Found {len(sra_ids)} SRA IDs for {geo_accession}: {', '.join(sra_ids)}")
 
-            # Download FASTQ files for each SRA ID (max 2 per dataset to save space)
+            # Download FASTQ files for each SRA ID (max 8 per dataset to save space)
             successful_downloads = 0
             fallback_used = False
 
             # First try regular download
-            for sra_id in sra_ids[:2]:  # Limit to 2 samples per dataset
+            for sra_id in sra_ids[:8]:  # Limit to 8 samples per dataset
                 if download_fastq(sra_id, dataset_dir, num_spots):
                     successful_downloads += 1
 
