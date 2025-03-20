@@ -1135,7 +1135,7 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 async def run_deseq2_analysis(
     ctx: RunContext[RNAseqData],
     contrast_names: Optional[List[str]] = None,
-    sample_mapping_file: str = None
+    sample_mapping_file: str
 ) -> str:
     """
     Run DESeq2 differential expression analysis for one or more contrasts.
@@ -1143,11 +1143,11 @@ async def run_deseq2_analysis(
          Parameters:
            - contrast_names (Optional[List[str]]):
                A list of contrast names to be analyzed; if None, all defined contrasts are used.
-           - sample_mapping_file (Optional[str]):
-               The file path for the DESeq2 sample mapping CSV. By default, if not provided, it is set to:
-                   "<output_dir>/deseq2_analysis_samples.csv"
-               where <output_dir> is the value in ctx.deps.output_dir. In cases of a retry,
-               the agent should examine the working directory as reported by the R output to adjust this path if necessary.
+           - sample_mapping_file (str):
+               The file path for the DESeq2 sample mapping CSV. This value is required.
+               Typically, it should be set to "<output_dir>/deseq2_analysis_samples.csv", where <output_dir>
+               is the value in ctx.deps.output_dir. In cases of a retry, the agent should examine the working
+               directory as reported by the R output to determine or adjust this path if necessary.
 
          (Other parameters remain managed via the dependency container in RNAseqData).
 
