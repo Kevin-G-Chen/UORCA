@@ -260,7 +260,7 @@ async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
     """
     if sample_mapping_file is None:
         sample_mapping_file = os.path.join(ctx.deps.output_dir, "deseq2_analysis_samples.csv")
-        
+
         log_tool_header("list_fastq_files")
         fastq_dir = ctx.deps.fastq_dir
 
@@ -1162,7 +1162,20 @@ async def run_deseq2_analysis(
 ) -> str:
     """
     Run DESeq2 differential expression analysis for one or more contrasts.
-    [Documentation as above]
+
+         Parameters:
+           - contrast_names (Optional[List[str]]):
+               A list of contrast names to be analyzed; if None, all defined contrasts are used.
+           - sample_mapping_file (Optional[str]):
+               The file path for the DESeq2 sample mapping CSV. By default, if not provided, it is set to:
+                   "<output_dir>/deseq2_analysis_samples.csv"
+               where <output_dir> is the value in ctx.deps.output_dir. In cases of a retry,
+               the agent should examine the working directory as reported by the R output to adjust this path if necessary.
+
+         (Other parameters remain managed via the dependency container in RNAseqData).
+
+         Returns:
+           A detailed multiline string report summarizing the DESeq2 analysis for the requested contrasts.
     """
     try:
         log_tool_header("run_deseq2_analysis", {"contrast_names": contrast_names, "sample_mapping_file": sample_mapping_file})
