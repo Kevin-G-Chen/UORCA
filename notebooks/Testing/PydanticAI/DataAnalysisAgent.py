@@ -1,8 +1,8 @@
 # Create a global console instance
-from rich.console import Console
-console = Console()
-
+# console = Console()
 # Imports
+# ----------------------------
+
 import os
 import glob
 import re
@@ -12,16 +12,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import date
+from rich.console import Console
 from rich.panel import Panel
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Union, Tuple, Any, Literal, Callable
+from typing import List, Dict, Optional, Union, Tuple, Any, Literal
 from unidecode import unidecode
 from pydantic import BaseModel, Field
+import matplotlib.pyplot as plt
+import seaborn as sns
 import gseapy as gp
 import nest_asyncio
 nest_asyncio.apply()
-
+console = Console()
 from pydantic_ai import Agent, RunContext
+import logfire
+logfire.configure(token=os.environ.get("LOGFIRE_KEY"))
+logfire.instrument_openai()
+
 
 # Configure logging levels
 class LogLevel:
@@ -67,49 +74,7 @@ def log_tool_result(result):
         console.print("╰" + "─" * 100 + "╯")
         console.print("")  # Add extra line for separation
 
-@rnaseq_agent.tool
-async def list_directory_contents(ctx: RunContext[RNAseqData], directory: str) -> str:
-    """List all files and subdirectories in the specified directory."""
-    log_tool_header("list_directory_contents", {"directory": directory})
-    if not os.path.exists(directory):
-        return f"ERROR: Directory '{directory}' does not exist."
-    if not os.path.isdir(directory):
-        return f"ERROR: Path '{directory}' exists but is not a directory."
-    files = []
-    subdirs = []
-    for item in os.listdir(directory):
-        path = os.path.join(directory, item)
-        if os.path.isdir(path):
-            subdirs.append(item)
-        else:
-            files.append(item)
-    result = f"Directory '{directory}' contains:\nSubdirectories:\n  " + "\n  ".join(sorted(subdirs))
-    result += "\nFiles:\n  " + "\n  ".join(sorted(files))
-    log_tool_result(result)
-    return result
-
-@rnaseq_agent.tool
-async def take_file_system_snapshot(ctx: RunContext[RNAseqData]) -> str:
-    """Take a snapshot of input paths and registered files."""
-    log_tool_header("take_file_system_snapshot")
-    result = "File System Snapshot:\n\n"
-    input_paths = [
-        ("fastq_dir", ctx.deps.fastq_dir),
-        ("metadata_path", ctx.deps.metadata_path),
-        ("kallisto_index_dir", ctx.deps.kallisto_index_dir),
-        ("output_dir", ctx.deps.output_dir)
-    ]
-    result += "Input Paths:\n"
-    for name, path in input_paths:
-        exists = "✓" if os.path.exists(path) else "✗"
-        result += f"{exists} {name}: {path}\n"
-    if hasattr(ctx.deps, "file_registry"):
-        result += "\nRegistered Files:\n"
-        for name, info in ctx.deps.file_registry.items():
-            exists = "✓" if os.path.exists(info["path"]) else "✗"
-            result += f"{exists} {name}: {info['path']}\n"
-    log_tool_result(result)
-    return result
+# ----------------------------
 # Define the dependency type
 # ----------------------------
 @dataclass
@@ -134,19 +99,327 @@ class RNAseqData:
 # Create an RNAseq analysis agent
 # ----------------------------
 
+# Adding temporary rough information for the agent until I develop a proper way of implementing documentation
+
 rnaseq_agent = Agent(
-    'openai:gpt-4o-mini',
+    'openai:o3-mini', # Change to more powerful model
     deps_type=RNAseqData,
     system_prompt="""
     You are an expert RNAseq data analyst. Your task is to analyze RNAseq data using a series of bioinformatics tools.
 
-    Follow these general principles:
+    Follow these general principles throughout your analysis:
     1. Work systematically through the RNA-seq analysis workflow
     2. Validate inputs at each step
     3. Provide clear explanations of what's happening
     4. Handle errors gracefully
     5. Generate appropriate visualizations when needed
-    6. Be comprehensive, both in the analysis steps but also in routine checks. For example, if you cannot find a file, check for alternative extensions.
+    6. Be comprehensive, both in the analysis steps but also more routine steps. For example, if you cannot find a file, ensure you check other common file extensions.
+    7. After completing each step, take careful note of any output files. Specifically, make note of the location and names of saved files, and ensure these are added to context.
+
+    One of the most important tools is running the edgeR analysis. The following is an example of how an equivalent analysis was performed previously. Use this as a foundational idea of how to structure the analysis:
+
+    # This notebook will contain code pertaining to the original processing of the RNAseq analysis for BRAF samples.
+    # The overall design involves three separate analyses - CFC1, SNV2, and NS4. I actually don't know which is the "main" one of interest...
+
+    # %% Loading libraries
+    library(pacman)
+    p_load(
+        tidyverse,
+        edgeR,
+        limma,
+        DESeq2,
+        org.Hs.eg.db,
+        enrichplot,
+        clusterProfiler,
+        matrixStats,
+        ComplexUpset,
+        patchwork,
+        DOSE,
+        tximport,
+        viridis
+    )
+    getwd()
+    # %% Load files
+    metadata <- read_csv("../input/2024_12_18_InitialInputs/metadata/RNASeq_Metadata_BRAF.csv")
+    kallisto_paths <- list.files(
+        path = "../input/2024_12_18_InitialInputs/Kallisto/CFC1",
+        recursive = TRUE,
+        full.names = TRUE,
+        pattern = "abundance.h5"
+    )
+    kallisto_filenames <- basename(dirname(kallisto_paths))
+    kallisto_df <- data.frame(
+        path = kallisto_paths,
+        file_name = kallisto_filenames
+    )
+    # Light processing on the metadata
+    metadata <- metadata %>%
+        left_join(kallisto_df,
+            by = "file_name"
+        ) %>%
+        mutate(
+            geno_short = if_else(
+                genotype == "WT/WT",
+                "WT",
+                "CFC1"
+            ),
+            merged_group = paste0(geno_short, "_", cell_type)
+        ) %>%
+        filter(!is.na(path))
+    str(metadata)
+
+    # %% Prepare the DGEList object
+    tx2gene <- read_csv(file = "../input/2024_12_18_InitialInputs/tx2gene_entrez_v38.csv", col_names = FALSE)
+    kallisto <- tximport(metadata$path,
+        type = "kallisto",
+        tx2gene = tx2gene,
+        countsFromAbundance = "lengthScaledTPM",
+        ignoreAfterBar = T
+    )
+    # %% Prepare DGEList object part 2
+    DGE <- DGEList(kallisto$counts)
+    DGE$samples <- bind_cols(DGE$samples, metadata)
+    DGE$genes <- bitr(
+        geneID = rownames(DGE),
+        fromType = "ENTREZID",
+        toType = "SYMBOL",
+        OrgDb = "org.Hs.eg.db",
+        drop = FALSE
+    )
+    colnames(DGE$genes) <- c("GeneID", "Symbol")
+    identical(rownames(DGE), DGE$genes$GeneID) # Sanity check that the genes match
+
+    # Because they match we can save the output and be happy
+    saveRDS(DGE, "../scratch/R_outputs/InitialProcessing/CFC1/RawDGE.RDS")
+    # %% Now perform some processing
+
+    # Filtering
+    keep.exprs <- filterByExpr(DGE,
+        group = DGE$samples$merged_group
+    )
+    DGE.filtered <- DGE[keep.exprs, keep.lib.sizes = FALSE]
+    dim(DGE)
+    dim(DGE.filtered)
+
+
+    dev.off()
+
+    # Normalisation
+
+    DGE.final <- calcNormFactors(DGE.filtered)
+    pdf("../results/2024_12_20_InitialProcessing/CFC1/QC/Normalisation.pdf",
+        height = 7,
+        width = 9
+    )
+
+    # %% Generate PCA plot
+    DGE.final <- readRDS("../scratch/R_outputs/InitialProcessing/CFC1/DGE_processed.RDS")
+
+    lcpm <- cpm(DGE.final, log = TRUE)
+
+    # Define colors using viridis palette for consistency
+    geno_colour <- DGE.final$samples$geno_short
+    colours <- c("red", "blue")
+    geno_colour <- colours[as.factor(geno_colour)]
+
+    genotypes <- c("CFC1", "WT")
+    pdf("../results/2024_12_20_InitialProcessing/CFC1/QC/PCA_plot.pdf",
+        height = 7,
+        width = 7
+    )
+
+    # Plot MDS
+    plotMDS(lcpm,
+        col = geno_colour,
+        labels = DGE.final$samples$sample_name,
+        main = "PCA plot (CFC samples only)",
+        cex = 0.7 # Reduce text size to 70% of default
+    )
+
+    # Add legend
+    legend("topright",
+        legend = genotypes,
+        col = colours,
+        pch = 16,
+        title = "Genotype"
+    )
+    dev.off()
+    # %% Produce CPM
+    cpm_towrite <- cpm(DGE.final) %>%
+        as.data.frame()
+
+    colnames(cpm_towrite) <- DGE.final$samples$sample_name
+
+    Symbols <- bitr(rownames(cpm_towrite),
+        fromType = "ENTREZID",
+        toType = "SYMBOL",
+        OrgDb = "org.Hs.eg.db",
+        drop = FALSE
+    )
+    cpm_towrite$Symbol <- Symbols$SYMBOL
+
+    cpm_towrite <- cpm_towrite %>%
+        rownames_to_column(var = "GeneID") %>%
+        dplyr::select(Symbol, GeneID, everything())
+
+    write_csv(
+        cpm_towrite,
+        "../results/2024_12_20_InitialProcessing/CFC1/CPM.csv"
+    )
+
+    # %% Produce gene expression plots
+
+    # As a small sanity check, I will plot the expression of various iPSC and NPC cell markers.
+
+    SampleInfo <- DGE.final$samples %>%
+        rownames_to_column(var = "SampleName") %>%
+        dplyr::select(SampleName, sample_name, geno_short, cell_type, merged_group)
+
+    EntrezIDs <- c(
+        "10763",
+        "5080",
+        "6656"
+    )
+    GeneData <- bitr(
+        geneID = EntrezIDs,
+        fromType = "ENTREZID",
+        toType = "SYMBOL",
+        OrgDb = "org.Hs.eg.db",
+        drop = FALSE
+    )
+
+
+    cpm <- cpm(DGE.final) %>%
+        as.data.frame() %>%
+        rownames_to_column(var = "ENTREZID") %>%
+        filter(ENTREZID %in% EntrezIDs) %>%
+        pivot_longer(
+            cols = starts_with("Sample"),
+            names_to = "SampleName",
+            values_to = "CPM"
+        )
+
+    data <- left_join(cpm, SampleInfo, by = "SampleName") %>%
+        left_join(GeneData, by = "ENTREZID")
+
+    # %% DEG analysis
+    # I will now perform the DEG analysis
+
+    # First, construct the model matrix
+    design <- model.matrix(
+        data = DGE.final$samples,
+        ~ 0 + merged_group
+    )
+    colnames(design) <- str_remove_all(colnames(design), "merged_group")
+    str(design)
+    contrast.matrix <- makeContrasts(
+        WT_differentiation = "WT_NPC - WT_IPSC",
+        CFC1_differnetiation = "CFC1_NPC - CFC1_IPSC",
+        DiffBetweenNPCs = "CFC1_NPC - WT_NPC",
+        DiffofDiffns = "(CFC1_NPC - CFC1_IPSC) - (WT_NPC - WT_IPSC)",
+        levels = colnames(design)
+    )
+    contrasts <- colnames(contrast.matrix)
+    v <- voom(DGE.final,
+        design = design,
+        plot = TRUE
+    )
+    vfit <- lmFit(
+        v,
+        design
+    )
+    vfit <- contrasts.fit(vfit,
+        contrasts = contrast.matrix
+    )
+    efit <- eBayes(vfit)
+    plotSA(efit,
+        main = "Mean-variance trend (using Empirical Bayes)"
+    )
+    summary(decideTests(efit))
+
+    LFC.summary <- sapply(contrasts, function(x) {
+        lfc.list <- list()
+        top <- topTable(efit,
+            coef = x,
+            number = Inf
+        ) %>%
+            list()
+
+        lfc.list <- append(lfc.list, top)
+    })
+
+    saveRDS(
+        LFC.summary,
+        "../scratch/R_outputs/InitialProcessing/CFC1/LFC_summary.RDS"
+    )
+
+    # %% Save DEG CSVs
+
+    LFC.summary <- readRDS("../scratch/R_outputs/InitialProcessing/CFC1/LFC_summary.RDS")
+    contrasts <- names(LFC.summary)
+    sapply(contrasts, FUN = function(x) {
+        a <- LFC.summary[[x]] %>%
+            arrange(desc(logFC))
+
+        write_csv(a, file = paste0("../results/2024_12_20_InitialProcessing/CFC1/DifferentialGeneExpression/", x, ".csv"))
+    })
+
+
+
+
+
+    # %% Enrichment analysis
+    contrasts <- colnames(contrast.matrix)
+
+    GSEA.lists <- sapply(contrasts, function(x) {
+        gsea.list <- list()
+        top <- topTable(efit,
+            coef = x,
+            number = Inf
+        ) %>%
+            arrange(desc(logFC))
+        lfc <- top$logFC
+        names(lfc) <- top$GeneID
+
+        gsea.list <- append(gsea.list, list(lfc))
+    })
+    saveRDS(
+        GSEA.lists,
+        "./../scratch/R_outputs/InitialProcessing/CFC1/GSEALists.RDS"
+    )
+
+    # %% Performing enrichments
+    GSEA.Lists <- readRDS("../scratch/R_outputs/InitialProcessing/CFC1/GSEALists.RDS")
+
+    # %% Run DGN functions
+    str(GSEA.Lists)
+    DGN.unfiltered <- compareCluster(
+        geneClusters = GSEA.Lists,
+        fun = "gseDGN",
+        pvalueCutoff = 1,
+        pAdjustMethod = "BH",
+        nPermSimple = 10000,
+        seed = 42,
+        eps = 0
+    ) %>%
+        setReadable("org.Hs.eg.db",
+            keyType = "ENTREZID"
+        )
+
+    DGN.p005 <- compareCluster(
+        geneClusters = GSEA.Lists,
+        fun = "gseDGN",
+        pvalueCutoff = 0.05,
+        pAdjustMethod = "BH",
+        nPermSimple = 10000,
+        seed = 42,
+        eps = 0
+    ) %>%
+        setReadable("org.Hs.eg.db",
+            keyType = "ENTREZID"
+        ) %>%
+        pairwise_termsim(showCategory = Inf)
+
     """
 )
 
@@ -277,22 +550,10 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
 # ----------------------------
 @rnaseq_agent.tool
 async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
-    log_tool_header("list_fastq_files")
-    fastq_dir = ctx.deps.fastq_dir
-    if not os.path.exists(fastq_dir):
-        error_msg = f"Error: Directory '{fastq_dir}' does not exist"
-        log_tool_result(error_msg)
-        return error_msg
-    fastq_files = await find_files(ctx, fastq_dir, 'fastq.gz')
-    if not fastq_files:
-        error_msg = f"No fastq.gz files found in {fastq_dir}. Directory contents: {os.listdir(fastq_dir) if os.path.isdir(fastq_dir) else 'Not a directory'}"
-        log_tool_result(error_msg)
-        return error_msg
-    result = f"Found {len(fastq_files)} fastq.gz files in {fastq_dir}"
-    if CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
-        result += f": {', '.join(fastq_files)}"
-    log_tool_result(result)
-    return result
+    """
+    List all FASTQ files in the fastq_dir directory from the context.
+    This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
+    """
     """
     List all FASTQ files in the fastq_dir directory from the context.
     This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
@@ -327,202 +588,29 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
 
     Inputs:
       - ctx: RunContext[RNAseqData]
-          Contains the dependency context.
+          Contains the dependency context (RNAseqData) that holds directory information and other runtime parameters.
       - directory (str):
-          The root directory path to search (absolute or relative).
+          The root directory path in which to search for files. This can be either an absolute or relative path.
       - suffix (Union[str, List[str]]):
-          The file suffix to filter by (e.g., "fastq.gz") or a list of suffixes.
+          The file suffix (for example "fastq.gz" for FASTQ files) or a list of suffixes that will be used to filter matching files.
+
+    Process:
+      1. Logs the current context details (only once per run, thanks to a flag in ctx.deps).
+      2. Uses os.walk to recursively traverse the directory structure and check every file's name.
+      3. For each file that ends with the specified suffix, concatenates its full path and adds it to a list.
+      4. Returns the sorted list of matching file paths.
+      5. Reports progress by logging the number of files found.
 
     Output:
-      A sorted list of absolute file paths matching the given suffix.
+      A sorted list of absolute file path strings that match the file suffix provided. In case of errors
+      (e.g. directory not found), an error message string is returned inside a list.
+
+    Purpose in pipeline:
+      This tool locates critical input FASTQ files using the fastq.gz suffix (or other types based on suffix) from the file system,
+      enabling subsequent steps (such as quantification with Kallisto) to process the correct data.
     """
     try:
-        if not hasattr(ctx.deps, '_logged_context'):
-            log(f"Initial Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
-            setattr(ctx.deps, '_logged_context', True)
-
-        # Log tool call with parameters
-        log_tool_header("find_files", {"directory": directory, "suffix": suffix})
-
-        # Log context details only in verbose mode
-        log(f"Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
-        if hasattr(ctx, "message_history"):
-            log(f"Message History: {ctx.message_history}", level=LogLevel.DEBUG, style="bold magenta")
-
-        # Execute the actual file search
-        matched_files = []
-        for root, _, files in os.walk(directory):
-            for f in files:
-                if isinstance(suffix, str):
-                    condition = f.endswith(suffix)
-                else:
-                    condition = any(f.endswith(s) for s in suffix)
-                if condition:
-                    matched_files.append(os.path.join(root, f))
-
-        # Sort the files and prepare result
-        matched_files = sorted(matched_files)
-
-        # Log the result
-        result_msg = f"Found {len(matched_files)} files matching suffix '{suffix}' in directory: {directory}"
-        if matched_files and CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
-            result_msg += f"\nFirst few files: {matched_files[:3]}"
-            if len(matched_files) > 3:
-                result_msg += f"\n... and {len(matched_files) - 3} more"
-
-        log_tool_result(result_msg)
-        return matched_files
-
-    except FileNotFoundError:
-        error_msg = f"Error: Directory '{directory}' not found."
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return [error_msg]
-
-    except Exception as e:
-        error_msg = f"Error: {str(e)}"
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return [error_msg]
-    """
-    Recursively search for and return a sorted list of files within the specified directory that have the given suffix.
-
-    Inputs:
-      - ctx: RunContext[RNAseqData]
-          Contains the dependency context.
-      - directory (str):
-          The root directory path to search (absolute or relative).
-      - suffix (Union[str, List[str]]):
-          The file suffix to filter by (e.g., "fastq.gz") or a list of suffixes.
-
-    Output:
-      A sorted list of absolute file paths matching the given suffix.
-    """
-    try:
-        if not hasattr(ctx.deps, '_logged_context'):
-            log(f"Initial Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
-            setattr(ctx.deps, '_logged_context', True)
-
-        # Log tool call with parameters
-        log_tool_header("find_files", {"directory": directory, "suffix": suffix})
-
-        # Log context details only in verbose mode
-        log(f"Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
-        if hasattr(ctx, "message_history"):
-            log(f"Message History: {ctx.message_history}", level=LogLevel.DEBUG, style="bold magenta")
-
-        # Execute the actual file search
-        matched_files = []
-        for root, _, files in os.walk(directory):
-            for f in files:
-                if isinstance(suffix, str):
-                    condition = f.endswith(suffix)
-                else:
-                    condition = any(f.endswith(s) for s in suffix)
-                if condition:
-                    matched_files.append(os.path.join(root, f))
-
-        # Sort the files and prepare result
-        matched_files = sorted(matched_files)
-
-        # Log the result
-        result_msg = f"Found {len(matched_files)} files matching suffix '{suffix}' in directory: {directory}"
-        if matched_files and CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
-            result_msg += f"\nFirst few files: {matched_files[:3]}"
-            if len(matched_files) > 3:
-                result_msg += f"\n... and {len(matched_files) - 3} more"
-
-        log_tool_result(result_msg)
-        return matched_files
-
-    except FileNotFoundError:
-        error_msg = f"Error: Directory '{directory}' not found."
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return [error_msg]
-
-    except Exception as e:
-        error_msg = f"Error: {str(e)}"
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return [error_msg]
-    """
-    Recursively search for and return a sorted list of files within the specified directory that have the given suffix.
-
-    Inputs:
-      - ctx: RunContext[RNAseqData]
-          Contains the dependency context.
-      - directory (str):
-          The root directory path to search (absolute or relative).
-      - suffix (Union[str, List[str]]):
-          The file suffix to filter by (e.g., "fastq.gz") or a list of suffixes.
-
-    Output:
-      A sorted list of absolute file paths matching the given suffix.
-    """
-    try:
-        if not hasattr(ctx.deps, '_logged_context'):
-            log(f"Initial Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
-            setattr(ctx.deps, '_logged_context', True)
-
-        # Log tool call with parameters
-        log_tool_header("find_files", {"directory": directory, "suffix": suffix})
-
-        # Log context details only in verbose mode
-        log(f"Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
-        if hasattr(ctx, "message_history"):
-            log(f"Message History: {ctx.message_history}", level=LogLevel.DEBUG, style="bold magenta")
-
-        # Execute the actual file search
-        matched_files = []
-        for root, _, files in os.walk(directory):
-            for f in files:
-                if isinstance(suffix, str):
-                    condition = f.endswith(suffix)
-                else:
-                    condition = any(f.endswith(s) for s in suffix)
-                if condition:
-                    matched_files.append(os.path.join(root, f))
-
-        # Sort the files and prepare result
-        matched_files = sorted(matched_files)
-
-        # Log the result
-        result_msg = f"Found {len(matched_files)} files matching suffix '{suffix}' in directory: {directory}"
-        if matched_files and CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
-            result_msg += f"\nFirst few files: {matched_files[:3]}"
-            if len(matched_files) > 3:
-                result_msg += f"\n... and {len(matched_files) - 3} more"
-
-        log_tool_result(result_msg)
-        return matched_files
-
-    except FileNotFoundError:
-        error_msg = f"Error: Directory '{directory}' not found."
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return [error_msg]
-
-    except Exception as e:
-        error_msg = f"Error: {str(e)}"
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return [error_msg]
-    """
-    Recursively search for and return a sorted list of files within the specified directory that have the given suffix.
-
-    Inputs:
-      - ctx: RunContext[RNAseqData]
-          Contains the dependency context.
-      - directory (str):
-          The root directory path to search (absolute or relative).
-      - suffix (Union[str, List[str]]):
-          The file suffix to filter by (e.g., "fastq.gz") or a list of suffixes.
-
-    Output:
-      A sorted list of absolute file paths matching the given suffix.
-    """
-    try:
+        # Log the initial context only once per run
         if not hasattr(ctx.deps, '_logged_context'):
             log(f"Initial Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
             setattr(ctx.deps, '_logged_context', True)
@@ -1149,7 +1237,7 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                 "-o", sample_output_dir,
                 "-t", "4",  # Use 4 threads
                 "--plaintext",  # Output plaintext instead of HDF5
-                "--bootstrap-samples=10",  # Number of bootstrap samples
+                "--bootstrap-samples=10",  # Number of bootstrap samples, low at the moment to speed up testing
                 r1, r2
             ]
 
@@ -1334,11 +1422,15 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
             analysis_df[col] = [metadata_df.loc[matched_samples[s]['metadata_row'], col] for s in analysis_df.index]
 
         # Save the analysis dataframe for later use
-        analysis_df_path = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
+        analysis_df_path = "edger_analysis_samples.csv"
         analysis_df.to_csv(analysis_df_path)
         log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
-        # Register the sample mapping file
-        await register_file(ctx, "sample_mapping", analysis_df_path, "Sample mapping file for edgeR analysis")
+        # Optionally, store in a registry for later reference:
+        ctx.deps.file_registry = getattr(ctx.deps, 'file_registry', {})
+        ctx.deps.file_registry['sample_mapping'] = analysis_df_path
+        ctx.deps.sample_mapping = analysis_df
+        log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
+        # Store the sample mapping DataFrame in the runtime data
         ctx.deps.sample_mapping = analysis_df
 
         result = f"""
@@ -1360,48 +1452,18 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
         return f"Error running Kallisto quantification: {str(e)}"
 
 @rnaseq_agent.tool
-async def register_file(ctx: RunContext[RNAseqData], file_name: str, file_path: str, description: str = "") -> str:
-    """
-    Register a file in the dependency context's file registry.
-
-    Args:
-        file_name: A unique name to identify this file.
-        file_path: Absolute or relative path to the file.
-        description: Optional description of the file.
-    """
-    log_tool_header("register_file", {"file_name": file_name, "file_path": file_path})
-    abs_path = os.path.abspath(file_path)
-    if not hasattr(ctx.deps, "file_registry"):
-        ctx.deps.file_registry = {}
-    ctx.deps.file_registry[file_name] = {
-        "path": abs_path,
-        "relative_path": os.path.basename(file_path),
-        "description": description,
-        "registered_at": pd.Timestamp.now().isoformat()
-    }
-    exists = os.path.exists(abs_path)
-    result = f"File '{file_name}' registered as {abs_path}"
-    result += " (verified)" if exists else " (WARNING: file not found at registration time)"
-    log_tool_result(result)
-    return result
-
-async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[str, List[str]]) -> List[str]:
-
-def get_file_path(ctx: RunContext[RNAseqData], file_name: str, fallback_path: Optional[str] = None) -> str:
-    if hasattr(ctx.deps, 'file_registry') and file_name in ctx.deps.file_registry:
-        return ctx.deps.file_registry[file_name]["path"]
-    return fallback_path
-@rnaseq_agent.tool
-async def run_edger_analysis(ctx: RunContext[RNAseqData],
-                             sample_mapping_file: Optional[str] = None,
-                             contrast_names: Optional[List[str]] = None) -> str:
+async def run_edger_analysis(
+    ctx: RunContext[RNAseqData],
+    sample_mapping_file: str,
+    contrast_names: Optional[List[str]] = None,
+) -> str:
 
     """
     Run edgeR differential expression analysis for one or more contrasts using dynamic R code.
 
     Parameters:
       - sample_mapping_file (str):
-          Path for the sample mapping CSV, typically "<output_dir>/edger_analysis_samples.csv".
+          Path for the sample mapping CSV, typically "edger_analysis_samples.csv" in the current working directory
       - contrast_names (Optional[List[str]]):
           A list of contrast names to be analyzed; if None, all defined contrasts are used.
 
@@ -1423,14 +1485,9 @@ async def run_edger_analysis(ctx: RunContext[RNAseqData],
             contrast_names = list(ctx.deps.contrast_groups.keys())
             log(f"No specific contrasts provided. Analyzing all {len(contrast_names)} contrasts: {contrast_names}", level=LogLevel.NORMAL)
 
-        # Use the provided sample_mapping_file or retrieve it from the dependency's registry
-        # Use the provided sample_mapping_file or retrieve it from the dependency’s registry
-        sample_mapping_file = get_file_path(ctx, "sample_mapping", sample_mapping_file)
-        log(f"Using sample mapping file: {sample_mapping_file}", level=LogLevel.NORMAL)
-
-        # Verify the file exists
+        # Check that the sample mapping file exists
         if not os.path.exists(sample_mapping_file):
-            error_msg = f"Error: Sample mapping file not found at {sample_mapping_file}."
+            error_msg = "Error: Sample mapping file not found. Please run prepare_edgeR_analysis first."
             log_tool_result(error_msg)
             return error_msg
 
@@ -1446,33 +1503,15 @@ suppressMessages(library(edgeR))
 suppressMessages(library(ggplot2))
 suppressMessages(library(pheatmap))
 
-# Set working directory explicitly
-setwd("{os.path.abspath(ctx.deps.output_dir)}")
-cat("DEBUG: Working directory set to:", getwd(), "\\n")
-
-# Comprehensive file checking with informative messages for sample mapping file
-sample_files_to_check <- c(
-    "{os.path.abspath(sample_mapping_file)}",
-    "{os.path.basename(sample_mapping_file)}"
-)
-sample_file_found <- FALSE
-for (sample_file in sample_files_to_check) {{
-    if (file.exists(sample_file)) {{
-        cat("SUCCESS: Found sample mapping file at:", sample_file, "\\n")
-        sample_info <- read.csv(sample_file, row.names=1)
-        sample_file_found <- TRUE
-        break
-    }} else {{
-        cat("INFO: Sample mapping file not found at:", sample_file, "\\n")
-    }}
-}}
-if (!sample_file_found) {{
-    cat("ERROR: Could not find sample mapping file at any of these locations:\\n")
-    for (path in sample_files_to_check) {{
-        cat("  -", path, "\\n")
-    }}
-    cat("Directory contents:", paste(list.files(), collapse=", "), "\\n")
-    stop("Sample mapping file not found")
+# Check that sample mapping file exists (using its basename)
+sample_file <- "{os.path.basename(sample_mapping_file)}"
+if (file.exists(sample_file)) {{
+  cat("SUCCESS: Sample mapping file found at:", sample_file, "\\n")
+  sample_info <- read.csv(sample_file, row.names=1)
+}} else {{
+  cat("ERROR: Sample mapping file not found at:", sample_file, "\\n")
+  cat("Directory contents:", paste(list.files(), collapse=", "), "\\n")
+  stop(paste("File not found:", sample_file))
 }}
 
 # Define the grouping column
@@ -1658,6 +1697,8 @@ if __name__ == "__main__":
     10. Use the run_edger_analysis tool to run edgeR analysis for the contrasts.
 
     After each step, provide a brief summary of what was done and what will be done next. Make sure to call each tool explicitly with the correct parameter values, not variable references.
+
+    Do not simulate running the tools - ensure that the tools are actually run,m
     """
 
     # Run the agent
@@ -1691,31 +1732,5 @@ async def check_file_existence(ctx: RunContext[RNAseqData], filepath: str) -> st
             result = f"ERROR: File {os.path.basename(filepath)} not found in {dir_path}.\nDirectory contents: {contents}"
         else:
             result = f"ERROR: Directory {dir_path} does not exist."
-    log_tool_result(result)
-    return result
-@rnaseq_agent.tool
-async def verify_analysis_files(ctx: RunContext[RNAseqData]) -> str:
-    """
-    Verify that essential analysis files exist and report their locations.
-    This includes the sample mapping file and the edgeR object.
-    """
-    log_tool_header("verify_analysis_files")
-    output_dir = ctx.deps.output_dir
-    files_to_check = [
-        ("Sample mapping", os.path.join(output_dir, "edger_analysis_samples.csv")),
-        ("edgeR object", os.path.join(output_dir, "dge.rds")),
-    ]
-    if hasattr(ctx.deps, 'file_registry'):
-        for name, path in ctx.deps.file_registry.items():
-            files_to_check.append((f"Registry: {name}", path))
-
-    results = []
-    for name, path in files_to_check:
-        if os.path.exists(path):
-            results.append(f"✓ {name}: File exists at {path}")
-        else:
-            results.append(f"✗ {name}: File NOT found at {path}")
-
-    result = "\n".join(results)
     log_tool_result(result)
     return result
