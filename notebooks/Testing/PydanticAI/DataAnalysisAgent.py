@@ -719,7 +719,7 @@ async def load_metadata(ctx: RunContext[RNAseqData]) -> str:
         return error_msg
 
 @rnaseq_agent.tool
-def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
+async def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     """
     Normalize and clean an input string by removing non-ASCII characters, redundant white space, and unwanted symbols.
 
@@ -1652,6 +1652,31 @@ Base edgeR object saved as: {os.path.join(ctx.deps.output_dir, 'dge.rds')}
         log(error_msg, style="bold red")
         log_tool_result(error_msg)
         return error_msg
+
+async def check_file_existence(ctx: RunContext[RNAseqData], filepath: str) -> str:
+    """
+    Check if a file exists at the given filepath. If not, report the contents of the directory.
+
+    Inputs:
+      - ctx: RunContext[RNAseqData] (provides context and directory info)
+      - filepath (str): Absolute file path to check.
+
+    Output:
+      A string message indicating success or an error with diagnostic directory contents.
+    """
+    log_tool_header("check_file_existence", {"filepath": filepath})
+    if os.path.exists(filepath):
+        result = f"SUCCESS: File exists at {filepath}"
+    else:
+        dir_path = os.path.dirname(filepath)
+        if os.path.exists(dir_path):
+            contents = os.listdir(dir_path)
+            result = f"ERROR: File {os.path.basename(filepath)} not found in {dir_path}.\nDirectory contents: {contents}"
+        else:
+            result = f"ERROR: Directory {dir_path} does not exist."
+    log_tool_result(result)
+    return result
+
 # ----------------------------
 # Main Execution
 # ----------------------------
@@ -1710,27 +1735,3 @@ if __name__ == "__main__":
         console.print(result.data)
     except Exception as e:
         console.print(Panel(f"Error during analysis: {str(e)}", style="bold red"))
-@rnaseq_agent.tool
-async def check_file_existence(ctx: RunContext[RNAseqData], filepath: str) -> str:
-    """
-    Check if a file exists at the given filepath. If not, report the contents of the directory.
-
-    Inputs:
-      - ctx: RunContext[RNAseqData] (provides context and directory info)
-      - filepath (str): Absolute file path to check.
-
-    Output:
-      A string message indicating success or an error with diagnostic directory contents.
-    """
-    log_tool_header("check_file_existence", {"filepath": filepath})
-    if os.path.exists(filepath):
-        result = f"SUCCESS: File exists at {filepath}"
-    else:
-        dir_path = os.path.dirname(filepath)
-        if os.path.exists(dir_path):
-            contents = os.listdir(dir_path)
-            result = f"ERROR: File {os.path.basename(filepath)} not found in {dir_path}.\nDirectory contents: {contents}"
-        else:
-            result = f"ERROR: Directory {dir_path} does not exist."
-    log_tool_result(result)
-    return result
