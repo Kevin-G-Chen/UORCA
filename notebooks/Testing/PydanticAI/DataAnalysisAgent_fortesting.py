@@ -358,7 +358,7 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
         return [error_msg]
 
 @rnaseq_agent.tool
-async def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
+def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     """
     Normalize and clean an input string by removing non-ASCII characters, redundant white space, and unwanted symbols.
 
