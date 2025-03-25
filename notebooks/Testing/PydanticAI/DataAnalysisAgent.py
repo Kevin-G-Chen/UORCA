@@ -1699,31 +1699,7 @@ if __name__ == "__main__":
 
     # Initialize conversation with analysis steps
     initial_prompt = """
-    Please analyze the RNA-seq data by calling the following tools in sequence:
-
-    1. First, use the print_dependency_paths tool to see all the paths available in the context.
-
-    2. Next, use the find_files tool to locate FASTQ files. DO NOT pass "ctx.deps.fastq_dir" as a string - instead, use the actual directory value . The suffix parameter should be 'fastq.gz'.
-
-    3. Use the find_kallisto_index tool to locate the Kallisto index for human.
-
-    4. Use the run_kallisto_quantification tool to perform quantification on the identified FASTQ files.
-
-    5. Use the load_metadata tool to load the metadata file.
-
-    6. Use the identify_analysis_columns tool to analyze the metadata columns.
-
-    7. If needed, use the merge_metadata_columns tool with the columns identified in the previous step.
-
-    8. Use the design_contrasts tool to set up contrasts for differential expression analysis.
-
-    9. Use the prepare_edgeR_analysis tool to prepare for edgeR analysis.
-
-    10. Use the run_edger_analysis tool to run edgeR analysis for the contrasts.
-
-    After each step, provide a brief summary of what was done and what will be done next. Make sure to call each tool explicitly with the correct parameter values, not variable references.
-
-    Do not simulate running the tools - ensure that the tools are actually run,m
+    Please perform a Kallisto quantification, using provided functions and information to determine the location of the relevant files. You do not need to perform any additional steps.
     """
 
     # Run the agent
