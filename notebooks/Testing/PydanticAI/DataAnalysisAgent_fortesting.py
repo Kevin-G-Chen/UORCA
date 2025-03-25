@@ -1139,40 +1139,42 @@ message("Saved edgeR DGEList object to {os.path.join(ctx.deps.output_dir, 'dge.r
 suppressMessages(library(edgeR))
 suppressMessages(library(ggplot2))
 
-message("edgeR 2nd analysis")
+message("Starting contrast analysis for {contrast_name}")
 
 # Load the saved edgeR object
 dge <- readRDS("{os.path.join(ctx.deps.output_dir, 'dge.rds')}")
+message("edgeR object loaded.")
 
 # Re-create the design matrix
-design <- model.matrix(~0 + genotype.ch1, data=dge$samples)
-
-message("Design recreated")
+design <- model.matrix(~0 + group, data=dge$samples)
+colnames(design) <- levels(as.factor(dge$samples$group))
+message("Design matrix re-created.")
 
 # Fit the model using quasi-likelihood methods
 fit <- glmQLFit(dge, design)
-
-message("Model fitted")
+message("Model fitted using glmQLFit.")
 
 # Define the contrast: numerator vs denominator
 contrast_vector <- makeContrasts(contrasts = "{numerator} - {denominator}", levels=design)
-
-message("Contrast defined")
+message("Contrast vector defined.")
 
 # Perform the quasi-likelihood F-test
 qlf <- glmQLFTest(fit, contrast=contrast_vector)
-
+message("Quasi-likelihood F-test completed.")
 
 # Get full results table
 res <- topTags(qlf, n=Inf)$table
+message("Results table extracted.")
 
 # Write the results to CSV
 write.csv(as.data.frame(res), file="{results_file}")
+message("Results saved to CSV: {results_file}")
 
-# Generate an MA plot (using plotMD, which is analogous in edgeR)
+# Generate an MA plot
 png(filename="{ma_plot_file}")
 plotMD(qlf, main="MA Plot: {contrast_name}")
 dev.off()
+message("MA plot generated: {ma_plot_file}")
 
 # Save summary statistics
 sink("{summary_stats_file}")
@@ -1182,7 +1184,10 @@ cat("Significant genes (FDR < 0.05): ", sum(res$FDR < 0.05, na.rm=TRUE), "\\n")
 cat("Up-regulated genes (logFC > 0): ", sum(res$FDR < 0.05 & res$logFC > 0, na.rm=TRUE), "\\n")
 cat("Down-regulated genes (logFC < 0): ", sum(res$FDR < 0.05 & res$logFC < 0, na.rm=TRUE), "\\n")
 sink()
+message("Summary statistics saved at {summary_stats_file}")
 
+message("Completed contrast analysis for {contrast_name}.")
+quit(save="no", status=0)
 ''')
             os.chmod(contrast_r_script_path, 0o755)
             log(f"Executing R script for edgeR analysis of {contrast_name}: {contrast_r_script_path}", level=LogLevel.NORMAL)
