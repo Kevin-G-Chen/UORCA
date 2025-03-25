@@ -1045,82 +1045,168 @@ async def run_edger_analysis(
             log_tool_result(error_msg)
             return error_msg
 
-        # Write a combined R script that performs the entire edgeR analysis (base steps and all contrast tests)
-        combined_r_script_path = os.path.join(ctx.deps.output_dir, "run_edger_combined.R")
-        with open(combined_r_script_path, "w") as f:
+        # ----------------------------
+        # Create the base R script for edgeR analysis
+        # ----------------------------
+        base_r_script_path = os.path.join(ctx.deps.output_dir, "run_edger_base.R")
+        with open(base_r_script_path, "w") as f:
             f.write(f'''
-# Combined edgeR Analysis Script
+# Load required libraries
 suppressMessages(library(tximport))
 suppressMessages(library(edgeR))
-suppressMessages(library(ggplot2))
+suppressMessages(library(tidyverse))
 suppressMessages(library(pheatmap))
 
-# Load sample mapping (using basename)
+# Check that sample mapping file exists (using its basename)
 sample_file <- "{os.path.basename(sample_mapping_file)}"
 if (file.exists(sample_file)) {{
   cat("SUCCESS: Sample mapping file found at:", sample_file, "\\n")
   sample_info <- read.csv(sample_file, row.names=1)
 }} else {{
   cat("ERROR: Sample mapping file not found at:", sample_file, "\\n")
+  cat("Directory contents:", paste(list.files(), collapse=", "), "\\n")
   stop(paste("File not found:", sample_file))
 }}
 
-# Define grouping column and load abundance files
+# Define the grouping column
 group_col <- "{ctx.deps.merged_column}"
+
+# Get abundance files from sample_info
 files <- sample_info$abundance_file
 names(files) <- rownames(sample_info)
+
+# Import Kallisto data using tximport, with optional tx2gene mapping if available
 { "tx2gene <- read.csv(\"" + ctx.deps.tx2gene_path + "\", header=FALSE, sep=\"\\t\"); colnames(tx2gene) <- c(\"TXNAME\", \"GENEID\");" if ctx.deps.tx2gene_path else "# No tx2gene file specified" }
 txi <- tximport(files, type="kallisto", { "tx2gene=tx2gene" if ctx.deps.tx2gene_path else "txOut=TRUE" })
+
+# Create an edgeR DGEList using the imported counts
 dge <- DGEList(counts=txi$counts)
-dge$samples <- cbind(dge$samples, sample_info)
+dge$samples <- bind_cols(dge$samples, sample_info)
+
+message("Loaded edgeR DGEList with", nrow(dge), "genes and", ncol(dge), "samples.")
+
+# Apply filtering using filterByExpr
+#keep <- filterByExpr(dge, group=dge$samples$group)
+#dge <- dge[keep, , keep.lib.sizes=FALSE]
+# commented out for now as only a subset of the FASTQ files are used
+#message("Filtered DGEList to", nrow(dge), "genes.")
+
+# Calculate normalization factors
 dge <- calcNormFactors(dge)
+
+message("Normalized DGEList with size factors.")
+
+# Create design matrix and estimate dispersions
+design <- model.matrix(~0 + genotype.ch1, data=dge$samples)
+str(design)
+dge <- estimateDisp(dge, design)
+
+message("Estimated dispersions for DGEList.")
+
+# Save the edgeR object for downstream analysis
+saveRDS(dge, file="{os.path.join(ctx.deps.output_dir, 'dge.rds')}")
+message("Saved edgeR DGEList object to {os.path.join(ctx.deps.output_dir, 'dge.rds')}")
+''')
+        os.chmod(base_r_script_path, 0o755)
+        log(f"Executing base R script for edgeR analysis: {base_r_script_path}", level=LogLevel.NORMAL)
+        process = subprocess.run(['Rscript', base_r_script_path], capture_output=True, text=True)
+        if process.returncode != 0:
+            error_msg = f"Error running edgeR base analysis:\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
+            log_tool_result(error_msg)
+            return error_msg
+        else:
+            log_tool_result("Base edgeR analysis completed successfully.\nOutput:\n" + process.stdout)
+
+        # ----------------------------
+        # Process each contrast using dynamically generated R scripts
+        # ----------------------------
+        all_results = []
+        for contrast_name in contrast_names:
+            contrast = ctx.deps.contrast_groups[contrast_name]
+            numerator = contrast['numerator']
+            denominator = contrast['denominator']
+            contrast_dir = os.path.join(ctx.deps.output_dir, f"edger_{contrast_name}")
+            os.makedirs(contrast_dir, exist_ok=True)
+            results_file = os.path.join(contrast_dir, f"{contrast_name}_results.csv")
+            ma_plot_file = os.path.join(contrast_dir, f"{contrast_name}_MAplot.png")
+            summary_stats_file = os.path.join(contrast_dir, "summary_stats.txt")
+            contrast_r_script_path = os.path.join(ctx.deps.output_dir, f"run_edger_{contrast_name}.R")
+            with open(contrast_r_script_path, "w") as f:
+                f.write(f'''
+suppressMessages(library(edgeR))
+suppressMessages(library(ggplot2))
+
+# Load the saved edgeR object
+dge <- readRDS("{os.path.join(ctx.deps.output_dir, 'dge.rds')}")
+
+# Re-create the design matrix
 design <- model.matrix(~0 + group, data=dge$samples)
 colnames(design) <- levels(as.factor(dge$samples$group))
-dge <- estimateDisp(dge, design)
-cat("Base edgeR analysis completed.\\n")
 
-# Now process each contrast
-''')
-            # For each contrast, append contrast-specific commands in the same script.
-            for contrast_name in contrast_names:
-                contrast = ctx.deps.contrast_groups[contrast_name]
-                numerator = contrast['numerator']
-                denominator = contrast['denominator']
-                contrast_dir = os.path.join(ctx.deps.output_dir, f"edger_{contrast_name}")
-                # Make sure to create contrast_dir in R using dir.create
-                f.write(f'''
-dir.create("{contrast_dir}", showWarnings=FALSE)
-results_file <- file.path("{contrast_dir}", "{contrast_name}_results.csv")
-ma_plot_file <- file.path("{contrast_dir}", "{contrast_name}_MAplot.png")
-summary_stats_file <- file.path("{contrast_dir}", "summary_stats.txt")
+# Fit the model using quasi-likelihood methods
+fit <- glmQLFit(dge, design)
+
+# Define the contrast: numerator vs denominator
 contrast_vector <- makeContrasts(contrasts = "{numerator} - {denominator}", levels=design)
-qlf <- glmQLFTest(glmQLFit(dge, design), contrast=contrast_vector)
+
+# Perform the quasi-likelihood F-test
+qlf <- glmQLFTest(fit, contrast=contrast_vector)
+
+# Get full results table
 res <- topTags(qlf, n=Inf)$table
-write.csv(as.data.frame(res), file=results_file)
-png(filename=ma_plot_file)
-plotMD(qlf, main=paste("MA Plot:", "{contrast_name}"))
+
+# Write the results to CSV
+write.csv(as.data.frame(res), file="{results_file}")
+
+# Generate an MA plot (using plotMD, which is analogous in edgeR)
+png(filename="{ma_plot_file}")
+plotMD(qlf, main="MA Plot: {contrast_name}")
 dev.off()
-sink(summary_stats_file)
+
+# Save summary statistics
+sink("{summary_stats_file}")
 cat("Contrast: {contrast_name}\\n")
 cat("Total genes tested: ", nrow(res), "\\n")
 cat("Significant genes (FDR < 0.05): ", sum(res$FDR < 0.05, na.rm=TRUE), "\\n")
 cat("Up-regulated genes (logFC > 0): ", sum(res$FDR < 0.05 & res$logFC > 0, na.rm=TRUE), "\\n")
 cat("Down-regulated genes (logFC < 0): ", sum(res$FDR < 0.05 & res$logFC < 0, na.rm=TRUE), "\\n")
 sink()
-cat("Completed contrast: {contrast_name}\\n\\n")
+
+quit(save="no", status=0)
 ''')
-            f.write("cat('All contrasts completed.\\n')")
-        os.chmod(combined_r_script_path, 0o755)
-        log(f"Executing combined R script for edgeR analysis: {combined_r_script_path}", level=LogLevel.NORMAL)
-        process = subprocess.run(['Rscript', combined_r_script_path], capture_output=True, text=True)
-        if process.returncode != 0:
-            error_msg = f"Error running combined edgeR analysis:\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
-            log_tool_result(error_msg)
-            return error_msg
-        else:
-            summary = process.stdout
-            log_tool_result("Combined edgeR analysis completed successfully.\nOutput:\n" + summary)
-            return summary
+            os.chmod(contrast_r_script_path, 0o755)
+            log(f"Executing R script for edgeR analysis of {contrast_name}: {contrast_r_script_path}", level=LogLevel.NORMAL)
+            process = subprocess.run(['Rscript', contrast_r_script_path], capture_output=True, text=True)
+            if process.returncode != 0:
+                error_msg = f"Error running edgeR analysis for {contrast_name}:\n{process.stderr}"
+                log_tool_result(error_msg)
+                all_results.append(error_msg)
+            else:
+                if os.path.exists(summary_stats_file):
+                    with open(summary_stats_file, 'r') as f:
+                        summary_stats = f.read()
+                else:
+                    summary_stats = "No summary statistics available."
+                result = f"""
+----- edgeR analysis for contrast: {contrast_name} ({numerator} vs {denominator}) -----
+
+Results file: {results_file}
+MA plot: {ma_plot_file}
+
+{summary_stats}
+"""
+                all_results.append(result)
+
+        combined_results = "\n\n" + "="*80 + "\n\n".join(all_results) + "\n\n" + "="*80
+        overall_summary = f"""
+edgeR analysis completed for {len(contrast_names)} contrasts:
+{', '.join(contrast_names)}
+
+Base edgeR object saved as: {os.path.join(ctx.deps.output_dir, 'dge.rds')}
+"""
+        final_result = overall_summary + combined_results
+        log_tool_result(final_result)
+        return final_result
 
     except Exception as e:
         error_msg = f"Error running edgeR analysis: {str(e)}"
@@ -1153,17 +1239,14 @@ if __name__ == "__main__":
                    './analysis_output/GSE262710/SRX24093548/abundance.tsv']
     )
 
-    # Ensure the output directory exists and change directory to it.
-    os.makedirs(test_data2.output_dir, exist_ok=True)
-    os.chdir(test_data2.output_dir)
+    # Initialize conversation with analysis steps
     initial_prompt = """
     Use the provided tools to perform an RNAseq analysis. This should encompass:
         1. Kallisto quantification, after identifying appropriate files and indices. - NOTE that this is already done, and you can refer to the provided abundance files for the location of the quantification files.
         2. Preparation for the edgeR differential expression analysis, including sample mapping and metadata analysis
         3. Running edgeR analysis for differential expression, including contrasts and results.
 
-
-        Please note that, upon returning an error while running the DEG analysis, you do not need to attempt to resolve the issue yourself, feel free to indicate that the analysis cannot be completed.
+    If you encounter an error while executing any step of the edgeR analysis, please refer to the error message and try to resolve the issue before proceeding - however, if you receive a persistent error, you do not need to proceed, instead indicate the reason why you are unable to proceed.
     """
 
     # Run the agent
