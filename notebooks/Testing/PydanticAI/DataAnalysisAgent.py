@@ -710,6 +710,11 @@ async def load_metadata(ctx: RunContext[RNAseqData]) -> str:
         if CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
             result += f"\n\nPreview of metadata:\n{metadata_df.head().to_string()}"
 
+        import sys
+        stdout_text = sys.stdout.getvalue() if hasattr(sys.stdout, "getvalue") else "No stdout captured."
+        stderr_text = sys.stderr.getvalue() if hasattr(sys.stderr, "getvalue") else "No stderr captured."
+        print("STDOUT:\n" + stdout_text)
+        print("STDERR:\n" + stderr_text)
         log_tool_result(result)
         return result
     except Exception as e:
