@@ -1153,7 +1153,9 @@ if __name__ == "__main__":
                    './analysis_output/GSE262710/SRX24093548/abundance.tsv']
     )
 
-    # Initialize conversation with analysis steps
+    # Ensure the output directory exists and change directory to it.
+    os.makedirs(test_data2.output_dir, exist_ok=True)
+    os.chdir(test_data2.output_dir)
     initial_prompt = """
     Use the provided tools to perform an RNAseq analysis. This should encompass:
         1. Kallisto quantification, after identifying appropriate files and indices. - NOTE that this is already done, and you can refer to the provided abundance files for the location of the quantification files.
