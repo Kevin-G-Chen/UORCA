@@ -1422,7 +1422,7 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
             analysis_df[col] = [metadata_df.loc[matched_samples[s]['metadata_row'], col] for s in analysis_df.index]
 
         # Save the analysis dataframe for later use
-        analysis_df_path = "edger_analysis_samples.csv"
+        analysis_df_path = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
         analysis_df.to_csv(analysis_df_path)
         log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
         # Optionally, store in a registry for later reference:
