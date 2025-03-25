@@ -1017,7 +1017,7 @@ async def run_edger_analysis(
 
     Parameters:
       - sample_mapping_file (str):
-          Path for the sample mapping CSV, typically "edger_analysis_samples.csv" in the current working directory
+          Path for the sample mapping CSV
       - contrast_names (Optional[List[str]]):
           A list of contrast names to be analyzed; if None, all defined contrasts are used.
 
@@ -1083,15 +1083,13 @@ txi <- tximport(files, type="kallisto", { "tx2gene=tx2gene" if ctx.deps.tx2gene_
 dge <- DGEList(counts=txi$counts)
 dge$samples <- bind_cols(dge$samples, sample_info)
 
-str(dge$samples)
-
 message("Loaded edgeR DGEList with", nrow(dge), "genes and", ncol(dge), "samples.")
 
 # Apply filtering using filterByExpr
-keep <- filterByExpr(dge, group=dge$samples$group)
-dge <- dge[keep, , keep.lib.sizes=FALSE]
-
-message("Filtered DGEList to", nrow(dge), "genes.")
+#keep <- filterByExpr(dge, group=dge$samples$group)
+#dge <- dge[keep, , keep.lib.sizes=FALSE]
+# commented out for now as only a subset of the FASTQ files are used
+#message("Filtered DGEList to", nrow(dge), "genes.")
 
 # Calculate normalization factors
 dge <- calcNormFactors(dge)
@@ -1099,8 +1097,8 @@ dge <- calcNormFactors(dge)
 message("Normalized DGEList with size factors.")
 
 # Create design matrix and estimate dispersions
-design <- model.matrix(~0 + {ctx.deps.merged_column}, data=dge$samples)
-colnames(design) <- levels(as.factor(dge$samples$group))
+design <- model.matrix(~0 + genotype.ch1, data=dge$samples)
+str(design)
 dge <- estimateDisp(dge, design)
 
 message("Estimated dispersions for DGEList.")
@@ -1247,6 +1245,9 @@ if __name__ == "__main__":
         1. Kallisto quantification, after identifying appropriate files and indices. - NOTE that this is already done, and you can refer to the provided abundance files for the location of the quantification files.
         2. Preparation for the edgeR differential expression analysis, including sample mapping and metadata analysis
         3. Running edgeR analysis for differential expression, including contrasts and results.
+
+
+        Please note that, upon returning an error while running the DEG analysis, you do not need to attempt to resolve the issue yourself, feel free to indicate that the analysis cannot be completed.
     """
 
     # Run the agent
