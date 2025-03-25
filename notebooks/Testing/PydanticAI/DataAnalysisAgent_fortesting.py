@@ -1110,12 +1110,15 @@ message("Saved edgeR DGEList object to {os.path.join(ctx.deps.output_dir, 'dge.r
         os.chmod(base_r_script_path, 0o755)
         log(f"Executing base R script for edgeR analysis: {base_r_script_path}", level=LogLevel.NORMAL)
         process = subprocess.run(['Rscript', base_r_script_path], capture_output=True, text=True)
+        base_r_stdout = process.stdout
+        base_r_stderr = process.stderr
         if process.returncode != 0:
-            error_msg = f"Error running edgeR base analysis:\nSTDOUT:\n{process.stdout}\nSTDERR:\n{process.stderr}"
+            error_msg = f"Error running edgeR base analysis:\nSTDOUT:\n{base_r_stdout}\nSTDERR:\n{base_r_stderr}"
             log_tool_result(error_msg)
             return error_msg
         else:
-            log_tool_result("Base edgeR analysis completed successfully.\nOutput:\n" + process.stdout)
+            base_msg = f"Base edgeR analysis completed successfully.\nSTDOUT:\n{base_r_stdout}\nSTDERR:\n{base_r_stderr}"
+            log_tool_result(base_msg)
 
         # ----------------------------
         # Process each contrast using dynamically generated R scripts
@@ -1177,8 +1180,10 @@ quit(save="no", status=0)
             os.chmod(contrast_r_script_path, 0o755)
             log(f"Executing R script for edgeR analysis of {contrast_name}: {contrast_r_script_path}", level=LogLevel.NORMAL)
             process = subprocess.run(['Rscript', contrast_r_script_path], capture_output=True, text=True)
+            contrast_stdout = process.stdout
+            contrast_stderr = process.stderr
             if process.returncode != 0:
-                error_msg = f"Error running edgeR analysis for {contrast_name}:\n{process.stderr}"
+                error_msg = f"Error running edgeR analysis for {contrast_name}:\nSTDOUT:\n{contrast_stdout}\nSTDERR:\n{contrast_stderr}"
                 log_tool_result(error_msg)
                 all_results.append(error_msg)
             else:
@@ -1193,6 +1198,12 @@ quit(save="no", status=0)
 Results file: {results_file}
 MA plot: {ma_plot_file}
 
+STDOUT:
+{contrast_stdout}
+
+STDERR:
+{contrast_stderr}
+
 {summary_stats}
 """
                 all_results.append(result)
@@ -1203,6 +1214,12 @@ edgeR analysis completed for {len(contrast_names)} contrasts:
 {', '.join(contrast_names)}
 
 Base edgeR object saved as: {os.path.join(ctx.deps.output_dir, 'dge.rds')}
+
+Base Script STDOUT:
+{base_r_stdout}
+
+Base Script STDERR:
+{base_r_stderr}
 """
         final_result = overall_summary + combined_results
         log_tool_result(final_result)
