@@ -102,7 +102,7 @@ class RNAseqData:
 # Adding temporary rough information for the agent until I develop a proper way of implementing documentation
 
 rnaseq_agent = Agent(
-    'openai:o3-mini', # Change to more powerful model
+    'openai:gpt-4o-mini', # Change to more powerful model
     deps_type=RNAseqData,
     system_prompt="""
     You are an expert RNAseq data analyst. Your task is to analyze RNAseq data using a series of bioinformatics tools.
@@ -1699,7 +1699,10 @@ if __name__ == "__main__":
 
     # Initialize conversation with analysis steps
     initial_prompt = """
-    Please perform a Kallisto quantification, using provided functions and information to determine the location of the relevant files. You do not need to perform any additional steps.
+    Use the provided tools to perform an RNAseq analysis. This should encompass:
+        1. Kallisto quantification, after identifying appropriate files and indices.
+        2. Preparation for the edgeR differential expression analysis, including sample mapping and metadata analysis
+        3. Running edgeR analysis for differential expression, including contrasts and results.
     """
 
     # Run the agent
