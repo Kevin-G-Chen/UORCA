@@ -1139,21 +1139,29 @@ message("Saved edgeR DGEList object to {os.path.join(ctx.deps.output_dir, 'dge.r
 suppressMessages(library(edgeR))
 suppressMessages(library(ggplot2))
 
+message("edgeR 2nd analysis")
+
 # Load the saved edgeR object
 dge <- readRDS("{os.path.join(ctx.deps.output_dir, 'dge.rds')}")
 
 # Re-create the design matrix
-design <- model.matrix(~0 + group, data=dge$samples)
-colnames(design) <- levels(as.factor(dge$samples$group))
+design <- model.matrix(~0 + genotype.ch1, data=dge$samples)
+
+message("Design recreated")
 
 # Fit the model using quasi-likelihood methods
 fit <- glmQLFit(dge, design)
 
+message("Model fitted")
+
 # Define the contrast: numerator vs denominator
 contrast_vector <- makeContrasts(contrasts = "{numerator} - {denominator}", levels=design)
 
+message("Contrast defined")
+
 # Perform the quasi-likelihood F-test
 qlf <- glmQLFTest(fit, contrast=contrast_vector)
+
 
 # Get full results table
 res <- topTags(qlf, n=Inf)$table
@@ -1175,7 +1183,6 @@ cat("Up-regulated genes (logFC > 0): ", sum(res$FDR < 0.05 & res$logFC > 0, na.r
 cat("Down-regulated genes (logFC < 0): ", sum(res$FDR < 0.05 & res$logFC < 0, na.rm=TRUE), "\\n")
 sink()
 
-quit(save="no", status=0)
 ''')
             os.chmod(contrast_r_script_path, 0o755)
             log(f"Executing R script for edgeR analysis of {contrast_name}: {contrast_r_script_path}", level=LogLevel.NORMAL)
