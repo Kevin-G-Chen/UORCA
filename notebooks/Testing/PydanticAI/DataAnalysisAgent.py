@@ -83,6 +83,7 @@ class RNAseqData:
     """Container for RNAseq analysis data and paths."""
     # Input data
     fastq_dir: str
+    fastq_files: List[str] = None
     metadata_path: str
     kallisto_index_dir: str
     organism: str = "human"  # default to human
@@ -691,13 +692,13 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
     except Exception as e:
         return f"Error finding Kallisto index: {str(e)}"
 
-@rnaseq_agent.tool_plain
+@rnaseq_agent.tool
 def compute_fastq_stats(ctx: RunContext[RNAseqData], fastq_file: str) -> dict:
     """
     Compute average read length and standard deviation from a FASTQ file.
     Executes an awk command to compute the count of each read length,
     then calculates the weighted average and standard deviation.
-    
+
     Returns a dictionary with keys "avg" and "sd".
     """
     # Build the awk command – note: ensure proper quoting for your shell
@@ -708,7 +709,7 @@ def compute_fastq_stats(ctx: RunContext[RNAseqData], fastq_file: str) -> dict:
     process = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     if process.returncode != 0:
         raise RuntimeError(f"Error computing read lengths: {process.stderr}")
-    
+
     # Parse output into a dictionary: {read_length: count, ...}
     length_counts = {}
     for line in process.stdout.strip().splitlines():
@@ -725,11 +726,11 @@ def compute_fastq_stats(ctx: RunContext[RNAseqData], fastq_file: str) -> dict:
     total_reads = sum(length_counts.values())
     if total_reads == 0:
         raise ValueError("No reads found in FASTQ file")
-    
+
     # Weighted average (fragment length)
     weighted_sum = sum(l * cnt for l, cnt in length_counts.items())
     avg = weighted_sum / total_reads
-    
+
     # Weighted standard deviation
     variance = sum(cnt * (l - avg) ** 2 for l, cnt in length_counts.items()) / total_reads
     sd = variance ** 0.5
@@ -868,7 +869,7 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                         results.append(f"Successfully processed {sample_name}")
                     else:
                         results.append(f"Error processing {sample_name}: {process.stderr}")
-    
+
                 # Collect abundance files from single-end runs
                 abundance_files = []
                 for f in single_end_files:
@@ -876,7 +877,7 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                     abundance_file = os.path.join(ctx.deps.output_dir, sample_name, "abundance.tsv")
                     if os.path.exists(abundance_file):
                         abundance_files.append(abundance_file)
-    
+
                 ctx.deps.abundance_files = abundance_files
                 return f"""
 Single-end Kallisto quantification completed for {len(results)} samples.
