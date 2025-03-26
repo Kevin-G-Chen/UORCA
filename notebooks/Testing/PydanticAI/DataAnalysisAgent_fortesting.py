@@ -10,6 +10,7 @@ import re
 import subprocess
 import pandas as pd
 import numpy as np
+import json
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datetime import date
@@ -18,11 +19,12 @@ from rich.panel import Panel
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Union, Tuple, Any, Literal
 from unidecode import unidecode
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 import matplotlib.pyplot as plt
 import seaborn as sns
 import gseapy as gp
 import nest_asyncio
+from openai import OpenAI
 nest_asyncio.apply()
 console = Console()
 from pydantic_ai import Agent, RunContext
@@ -96,6 +98,14 @@ class RNAseqData:
     contrast_groups: Dict[str, Dict[str, str]] = None
     sample_mapping: Optional[pd.DataFrame] = None
 
+# Define Pydantic class for the structured output
+client = OpenAI()
+
+# Define Pydantic class for the structured output
+class RelevantColumns(BaseModel):
+    model_config = ConfigDict(extra = "forbid")
+    columns: List[str] = Field(description="Column, or columns, that are best suited for grouping variables in the metadata table.")
+schema = RelevantColumns.model_json_schema()
 # ----------------------------
 # Create an RNAseq analysis agent
 # ----------------------------
@@ -391,249 +401,94 @@ def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     return s
 
 @rnaseq_agent.tool
-async def load_metadata(ctx: RunContext[RNAseqData]) -> str:
+async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
     """
-    Load, validate, and store metadata from the file specified in ctx.deps.metadata_path into the RNAseqData context for later use in the analysis.
+    Load metadata from the file specified in ctx.deps.metadata_path, remove columns where all values are identical,
+    clean column names using clean_string, and identify candidate grouping columns for differential expression analysis.
 
-    This tool automatically uses the metadata_path from the dependency context - you don't need to provide a path parameter.
+    If multiple candidate columns are found (based on common biological keywords), they are merged into a new column
+    named "merged_analysis_group". If only one candidate is identified, it is used directly.
 
-    Inputs:
-      - ctx: RunContext[RNAseqData]
-          Contains the RNAseqData dependency where the loaded metadata DataFrame will be stored (in metadata_df).
-
-    Process:
-      1. Determines file format by examining the file extension (.csv, .tsv, .txt) and reads the file accordingly.
-      2. Loads the metadata into a pandas DataFrame.
-      3. Stores the DataFrame in ctx.deps.metadata_df for downstream analyses.
-      4. Computes a list of "useful columns" (columns with more than one unique value) to help filter out trivial data.
-      5. Returns a detailed summary string with the number of samples and columns, and lists the useful columns and a sample
-         of the dataset.
-
-    Output:
-      A string message detailing:
-         • Successful metadata loading.
-         • DataFrame dimensions (number of samples and columns).
-         • A list of columns with variability.
-         • A preview (first few rows) of the metadata.
-
-    Purpose in pipeline:
-      Loading metadata is critical for linking sample IDs to experimental groups and merging with quantification results for
-      downstream differential expression and pathway analyses.
+    The processed metadata and the selected grouping column are stored in ctx.deps.metadata_df and ctx.deps.merged_column,
+    respectively.
     """
     try:
-        log_tool_header("load_metadata", {"metadata_path": ctx.deps.metadata_path})
+        log_tool_header("process_metadata", {"metadata_path": ctx.deps.metadata_path})
 
         # Load metadata based on file extension
         if ctx.deps.metadata_path.endswith('.csv'):
-            metadata_df = pd.read_csv(ctx.deps.metadata_path)
+            df = pd.read_csv(ctx.deps.metadata_path)
         elif ctx.deps.metadata_path.endswith('.tsv') or ctx.deps.metadata_path.endswith('.txt'):
-            metadata_df = pd.read_csv(ctx.deps.metadata_path, sep='\t')
+            df = pd.read_csv(ctx.deps.metadata_path, sep='\t')
         else:
-            metadata_df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
+            df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
 
-        # Store metadata and compute useful columns
-        ctx.deps.metadata_df = metadata_df
-        useful_cols = metadata_df.loc[:, metadata_df.nunique() > 1].columns.tolist()
+        # Remove columns where all values are the same
+        df = df.loc[:, df.nunique() > 1]
 
-        result = f"Metadata loaded: {metadata_df.shape[0]} samples, {metadata_df.shape[1]} columns. Useful columns: {', '.join(useful_cols)}."
+        # Clean column names using the clean_string tool function
+        new_columns = {col: clean_string(ctx, col) for col in df.columns}
+        df.rename(columns=new_columns, inplace=True)
 
-        # Add a preview in verbose mode
-        if CURRENT_LOG_LEVEL >= LogLevel.VERBOSE:
-            result += f"\n\nPreview of metadata:\n{metadata_df.head().to_string()}"
+        # Store cleaned metadata in the context
+        ctx.deps.metadata_df = df
 
-        import sys
-        stdout_text = sys.stdout.getvalue() if hasattr(sys.stdout, "getvalue") else "No stdout captured."
-        stderr_text = sys.stderr.getvalue() if hasattr(sys.stderr, "getvalue") else "No stderr captured."
-        print("STDOUT:\n" + stdout_text)
-        print("STDERR:\n" + stderr_text)
-        log_tool_result(result)
-        return result
+        # Identify candidate grouping columns passing metadata via LLM
+
+        # Prepare inputs for LLM prompt
+
+        preview = ctx.deps.metadata_df.head(10).to_csv(index=False)
+        columns = list(ctx.deps.metadata_df.columns)
+
+        # Prepare LLM prompt
+
+        prompt = f"""
+        You are an expert in RNAseq metadata analysis. Given the following metadata table, determine the column, or columns, that are most suitable for grouping variables in the context of differential expression analysis.
+
+        Please note that you should focus only on groups that contain biologically interested information. For example, columns like 'sample_id' or 'replicate' are not typically used as grouping variables. Furthermore, "differentiation_experiment," while good for quality control, does not contribute any biological findings, and should not be used as a grouping variable. In contrast, columns such as "genotype" "celltype" and the like are often used as grouping variables.
+
+        Do not select redundant columns.
+
+        Metadata columns: {columns}
+        Metadata preview: {preview}
+        """
+
+        response = client.responses.create(
+            model = "gpt-4o-mini",
+            input = prompt,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "analysis_columns",
+                    "schema": schema,
+                    "strict": True
+                }
+            }
+        )
+
+        candidate_cols = json.loads(response.output_text)['columns']
+
+        # Merge candidates if more than one is found; otherwise, use the single candidate
+        if len(candidate_cols) > 1:
+            merged_col = "merged_analysis_group"
+            df[merged_col] = df[candidate_cols].apply(lambda row: '_'.join([str(val) for val in row.values]), axis=1)
+            ctx.deps.merged_column = merged_col
+            result_msg = f"Merged candidate columns ({', '.join(candidate_cols)}) into '{merged_col}'."
+        else:
+            ctx.deps.merged_column = candidate_cols[0]
+            result_msg = f"Selected candidate column '{candidate_cols[0]}' as the grouping column."
+
+        # Update the metadata in the context
+        ctx.deps.metadata_df = df
+
+        summary = f"Metadata processed: {df.shape[0]} samples, {df.shape[1]} columns.\n{result_msg}"
+        log_tool_result(summary)
+        return summary
     except Exception as e:
-        error_msg = f"Error loading metadata: {str(e)}"
+        error_msg = f"Error processing metadata: {str(e)}"
         log(error_msg, style="bold red")
         log_tool_result(error_msg)
         return error_msg
-
-# ----------------------------
-# Metadata Analysis Tools
-# ----------------------------
-@rnaseq_agent.tool
-async def identify_analysis_columns(ctx: RunContext[RNAseqData]) -> str:
-    """
-    Analyze the metadata DataFrame to determine which columns should be used for grouping in the differential expression analysis.
-
-    Inputs:
-      - ctx: RunContext[RNAseqData]
-          Must contain a loaded metadata DataFrame (ctx.deps.metadata_df) which provides experiment details.
-
-    Process:
-      1. Checks that metadata is loaded; if not, issues an error.
-      2. Identifies variable columns (i.e. columns with more than one unique value).
-      3. Evaluates each variable column to classify it as a potential biological factor or a technical factor
-         using predefined keyword lists.
-      4. Determines whether multiple biological factors are present, suggesting a merge of columns, or if one clear factor exists.
-      5. Sets the ctx.deps.merged_column variable based on either merging the columns or selecting the most appropriate single column.
-      6. Returns a detailed report that includes detected biological and technical factors, the variables considered,
-         the recommendation, and whether merging is needed.
-
-    Output:
-      A detailed multiline string that outlines:
-         • The list of variable columns.
-         • The identified biological and technical factors.
-         • The recommendation on merging and the final column decision.
-         • An explanation of the grouping strategy.
-
-    Purpose in pipeline:
-      Correctly identifying and consolidating experimental group labels from metadata is essential before designing contrasts
-      for downstream differential expression analysis.
-    """
-    try:
-        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-        if hasattr(ctx, "message_history"):
-            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-        if ctx.deps.metadata_df is None:
-            return "Error: Metadata not loaded. Please run load_metadata first."
-
-        # Get columns with variability
-        metadata_df = ctx.deps.metadata_df
-        variable_cols = metadata_df.loc[:, metadata_df.nunique() > 1].columns.tolist()
-
-        # Analyze potential biological factors
-        biological_factors = []
-        technical_factors = []
-
-        # Common keywords for biological factors
-        bio_keywords = ['treatment', 'condition', 'genotype', 'disease', 'cell', 'tissue',
-                         'time', 'dose', 'age', 'sex', 'gender', 'strain', 'group']
-
-        # Common keywords for technical factors
-        tech_keywords = ['batch', 'run', 'lane', 'library', 'seq', 'date', 'id', 'rep']
-
-        for col in variable_cols:
-            col_lower = col.lower()
-            is_bio = any(keyword in col_lower for keyword in bio_keywords)
-            is_tech = any(keyword in col_lower for keyword in tech_keywords)
-
-            if is_bio:
-                biological_factors.append(col)
-            elif is_tech:
-                technical_factors.append(col)
-
-        # Determine if columns should be merged
-        merge_needed = len(biological_factors) > 1
-        if merge_needed:
-            recommendation = f"Multiple biological factors detected: {', '.join(biological_factors)}. Consider merging these columns for analysis."
-            cols_to_merge = biological_factors
-        else:
-            if len(biological_factors) == 1:
-                recommendation = f"One clear biological factor detected: {biological_factors[0]}. This can be used directly."
-                cols_to_merge = [biological_factors[0]]
-            else:
-                # If no obvious biological factors, suggest the columns with the fewest unique values
-                n_unique = {col: metadata_df[col].nunique() for col in variable_cols}
-                sorted_cols = sorted(n_unique.items(), key=lambda x: x[1])
-                cols_to_merge = [sorted_cols[0][0]]
-                if len(sorted_cols) > 1 and sorted_cols[1][1] < 10:  # Only suggest merging if second column has few unique values
-                    cols_to_merge.append(sorted_cols[1][0])
-                    merge_needed = True
-                    recommendation = f"No clear biological factors detected. Suggesting to merge columns with fewest unique values: {', '.join(cols_to_merge)}."
-                else:
-                    recommendation = f"No clear biological factors detected. Suggesting to use the column with fewest unique values: {cols_to_merge[0]}."
-
-        # Store the recommendation in the context
-        if merge_needed:
-            ctx.deps.merged_column = "merged_analysis_group"
-        else:
-            ctx.deps.merged_column = cols_to_merge[0]
-
-        return f"""
-Analysis of metadata columns:
-- Biological factors: {', '.join(biological_factors) if biological_factors else 'None clearly identified'}
-- Technical factors: {', '.join(technical_factors) if technical_factors else 'None clearly identified'}
-- Variable columns: {', '.join(variable_cols)}
-
-Recommendation: {recommendation}
-Columns to use: {', '.join(cols_to_merge)}
-Merge needed: {merge_needed}
-        """
-    except Exception as e:
-        return f"Error analyzing metadata columns: {str(e)}"
-
-@rnaseq_agent.tool
-async def merge_metadata_columns(ctx: RunContext[RNAseqData], columns: List[str], new_column_name: str = "merged_analysis_group") -> str:
-    """
-    Merge one or more metadata columns into a single new column for downstream analysis.
-
-    Inputs:
-      - ctx: RunContext[RNAseqData]
-          Provides access to the metadata DataFrame (ctx.deps.metadata_df) that will be modified.
-      - columns (List[str]):
-          A list of metadata column names to be merged. The function checks that each specified column exists.
-      - new_column_name (str, default "merged_analysis_group"):
-          The name for the new merged column that will be created in the metadata DataFrame.
-
-    Process:
-      1. Validates that metadata has been loaded and that specified columns exist.
-      2. If only one column is provided, simply renames and cleans it; if multiple columns are provided, concatenates their
-         cleaned (using clean_string) values with underscores as separators.
-      3. Updates the metadata DataFrame and sets the ctx.deps.merged_column attribute.
-      4. Computes a list of unique values in the newly created column.
-      5. Returns a detailed message describing:
-             • What columns were merged (or renamed) and to what new column.
-             • The number of unique groups found.
-             • A summary of the counts per group.
-
-    Output:
-      A multiline string message detailing the results of the column merge, including the unique group values and their counts.
-
-    Purpose in pipeline:
-      Merging columns is often necessary when multiple metadata fields contribute to the definition of experimental groups;
-      this unified grouping is then used for designing contrasts for differential expression analysis.
-    """
-    try:
-        if ctx.deps.metadata_df is None:
-            return "Error: Metadata not loaded. Please run load_metadata first."
-
-        console.log(f"[bold blue]Context.deps:[/] {ctx.deps}")
-        if hasattr(ctx, "message_history"):
-            console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-        metadata_df = ctx.deps.metadata_df
-
-        # Check that all columns exist
-        missing_cols = [col for col in columns if col not in metadata_df.columns]
-        if missing_cols:
-            return f"Error: Columns not found in metadata: {', '.join(missing_cols)}"
-
-        if len(columns) == 1:
-            # Just rename the column if only one provided
-            metadata_df[new_column_name] = metadata_df[columns[0]].apply(lambda x: clean_string(ctx, x))
-            result_message = f"Renamed and cleaned column {columns[0]} to {new_column_name}."
-        else:
-            # Create the merged column by concatenating values with underscores
-            metadata_df[new_column_name] = metadata_df[columns].apply(
-                lambda row: '_'.join([clean_string(ctx, val) for val in row.values.astype(str)]),
-                axis=1
-            )
-            result_message = f"Merged columns {', '.join(columns)} into new column {new_column_name}."
-
-        # Update the metadata
-        ctx.deps.metadata_df = metadata_df
-        ctx.deps.merged_column = new_column_name
-
-        # Get unique values in the merged column
-        unique_values = metadata_df[new_column_name].unique().tolist()
-
-        return f"""
-{result_message}
-
-The merged column '{new_column_name}' contains {len(unique_values)} unique values:
-{', '.join(unique_values)}
-
-Sample counts per group:
-{metadata_df[new_column_name].value_counts().to_string()}
-        """
-    except Exception as e:
-        return f"Error merging metadata columns: {str(e)}"
 
 @rnaseq_agent.tool
 async def design_contrasts(ctx: RunContext[RNAseqData]) -> str:
@@ -1006,241 +861,153 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
         return f"Error running Kallisto quantification: {str(e)}"
 
 @rnaseq_agent.tool
-async def run_edger_analysis(
-    ctx: RunContext[RNAseqData],
-    sample_mapping_file: str,
-    contrast_names: Optional[List[str]] = None,
-) -> str:
-
+async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
     """
-    Run edgeR differential expression analysis for one or more contrasts using dynamic R code.
+    Minimal tool to run an edgeR/limma analysis using a single R script.
 
-    Parameters:
-      - sample_mapping_file (str):
-          Path for the sample mapping CSV
-      - contrast_names (Optional[List[str]]):
-          A list of contrast names to be analyzed; if None, all defined contrasts are used.
+    This tool performs the following steps:
+      1. Loads required libraries (using pacman) and reads the metadata CSV from ctx.deps.metadata_path.
+      2. Expects the metadata CSV to include an 'abundance_file' column with Kallisto output paths.
+      3. Imports quantification data via tximport. If a tx2gene mapping file is provided in ctx.deps.tx2gene_path,
+         it is used; otherwise, the script runs without it.
+      4. Creates a DGEList and attaches the metadata.
+      5. Normalizes the DGEList using calcNormFactors.
+      6. Constructs a design matrix using the grouping column specified in ctx.deps.merged_column.
+      7. Performs a voom transformation and fits a linear model with limma.
+      8. If exactly two groups are present, a contrast is computed (group2 - group1); if more than two groups,
+         top tables for each coefficient are generated.
+      9. Saves differential expression results (CSV files) and the normalized DGEList (RDS file).
 
-    This tool creates a base R script that builds an edgeR DGEList from tximport data,
-    applies dynamic filtering via filterByExpr (using the merged group column), and estimates dispersions.
-    It then writes a separate R script for each contrast (using the provided numerator and denominator).
+    Logging messages are printed to STDOUT/STDERR during the execution of the R script.
+
+    Note: This is a baseline analysis template and does not include additional filtering or plotting steps.
     """
     try:
-        log_tool_header("run_edgeR_analysis", {"contrast_names": contrast_names, "sample_mapping_file": sample_mapping_file})
+        log_tool_header("run_edger_limma_analysis")
 
-        # Validate that contrast groups exist
-        if not ctx.deps.contrast_groups:
-            error_msg = "Error: No contrast groups defined. Please run design_contrasts first."
-            log_tool_result(error_msg)
-            return error_msg
+        # Ensure the output directory exists
+        os.makedirs(ctx.deps.output_dir, exist_ok=True)
+        r_script_path = os.path.join(ctx.deps.output_dir, "edger_limma_analysis.R")
 
-        # If no specific contrasts provided, use all defined contrasts
-        if contrast_names is None:
-            contrast_names = list(ctx.deps.contrast_groups.keys())
-            log(f"No specific contrasts provided. Analyzing all {len(contrast_names)} contrasts: {contrast_names}", level=LogLevel.NORMAL)
+        # Determine the tx2gene file argument; if not provided, pass "NA"
+        tx2gene_arg = ctx.deps.tx2gene_path if ctx.deps.tx2gene_path and os.path.exists(ctx.deps.tx2gene_path) else "NA"
 
-        # Check that the sample mapping file exists
-        if not os.path.exists(sample_mapping_file):
-            error_msg = "Error: Sample mapping file not found. Please run prepare_edgeR_analysis first."
-            log_tool_result(error_msg)
-            return error_msg
+        # Write the R script
+        with open(r_script_path, "w") as f:
+            f.write('''
+library(pacman)
+p_load(tidyverse, edgeR, limma, tximport)
 
-        # ----------------------------
-        # Create the base R script for edgeR analysis
-        # ----------------------------
-        base_r_script_path = os.path.join(ctx.deps.output_dir, "run_edger_base.R")
-        with open(base_r_script_path, "w") as f:
-            f.write(f'''
-# Load required libraries
-suppressMessages(library(tximport))
-suppressMessages(library(edgeR))
-suppressMessages(library(tidyverse))
-suppressMessages(library(pheatmap))
+cat("=== R Script: edgeR/limma Analysis Start ===\n")
 
-# Check that sample mapping file exists (using its basename)
-sample_file <- "{os.path.basename(sample_mapping_file)}"
-if (file.exists(sample_file)) {{
-  cat("SUCCESS: Sample mapping file found at:", sample_file, "\\n")
-  sample_info <- read.csv(sample_file, row.names=1)
-}} else {{
-  cat("ERROR: Sample mapping file not found at:", sample_file, "\\n")
-  cat("Directory contents:", paste(list.files(), collapse=", "), "\\n")
-  stop(paste("File not found:", sample_file))
-}}
+args <- commandArgs(trailingOnly = TRUE)
+metadata_file <- args[1]
+merged_group <- args[2]
+output_dir <- args[3]
+tx2gene_file <- args[4]
 
-# Define the grouping column
-group_col <- "{ctx.deps.merged_column}"
+cat("Loading metadata from:", metadata_file, "\n")
+metadata <- read_csv(metadata_file)
+str(metadata)
+if(nrow(metadata) == 0) {
+  stop("Metadata is empty!")
+}
 
-# Get abundance files from sample_info
-files <- sample_info$abundance_file
-names(files) <- rownames(sample_info)
+if(!"abundance_file" %in% colnames(metadata)) {
+  stop("Metadata must contain an 'abundance_file' column!")
+}
 
-# Import Kallisto data using tximport, with optional tx2gene mapping if available
-{ "tx2gene <- read.csv(\"" + ctx.deps.tx2gene_path + "\", header=FALSE, sep=\"\\t\"); colnames(tx2gene) <- c(\"TXNAME\", \"GENEID\");" if ctx.deps.tx2gene_path else "# No tx2gene file specified" }
-txi <- tximport(files, type="kallisto", { "tx2gene=tx2gene" if ctx.deps.tx2gene_path else "txOut=TRUE" })
+# Load tx2gene mapping if provided
+if(tx2gene_file != "NA" && file.exists(tx2gene_file)){
+  cat("Loading tx2gene mapping from:", tx2gene_file, "\n")
+  tx2gene <- read_tsv(tx2gene_file, col_names = FALSE) %>%
+  dplyr::select(1, 3) %>%
+  setNames(c("TXNAME", "GENEID")) %>%
+  dplyr::filter(!is.na(GENEID) & GENEID != "")
+  str(tx2gene)
+  use_tx2gene <- TRUE
+} else {
+  cat("No valid tx2gene file provided. Proceeding without tx2gene mapping.\n")
+  use_tx2gene <- FALSE
+}
 
-# Create an edgeR DGEList using the imported counts
-dge <- DGEList(counts=txi$counts)
-dge$samples <- bind_cols(dge$samples, sample_info)
+cat("Importing Kallisto quantification data...\n")
+if(use_tx2gene){
+  kallisto <- tximport(metadata$abundance_file, type = "kallisto",
+                       tx2gene = tx2gene, countsFromAbundance = "lengthScaledTPM",
+                       ignoreAfterBar = TRUE)
+} else {
+  kallisto <- tximport(metadata$abundance_file, type = "kallisto",
+                       txOut = TRUE, ignoreAfterBar = TRUE)
+}
 
-message("Loaded edgeR DGEList with", nrow(dge), "genes and", ncol(dge), "samples.")
+cat("Creating DGEList...\n")
+DGE <- DGEList(counts = kallisto$counts)
+DGE$samples <- bind_cols(DGE$samples, metadata)
 
-# Apply filtering using filterByExpr
-#keep <- filterByExpr(dge, group=dge$samples$group)
-#dge <- dge[keep, , keep.lib.sizes=FALSE]
-# commented out for now as only a subset of the FASTQ files are used
-#message("Filtered DGEList to", nrow(dge), "genes.")
+cat("Normalizing DGEList...\n")
+DGE.norm <- calcNormFactors(DGE)
 
-# Calculate normalization factors
-dge <- calcNormFactors(dge)
+cat("Creating design matrix using grouping column:", merged_group, "\n")
+design <- model.matrix(as.formula(paste("~0 +", merged_group)), data = DGE.norm$samples)
+colnames(design) <- sub(merged_group, "", colnames(design))
+cat("Design matrix:\n")
+print(design)
 
-message("Normalized DGEList with size factors.")
+cat("Performing voom transformation...\n")
+v <- voom(DGE.norm, design, plot = FALSE)
 
-# Create design matrix and estimate dispersions
-design <- model.matrix(~0 + genotype.ch1, data=dge$samples)
-str(design)
-dge <- estimateDisp(dge, design)
+cat("Fitting linear model...\n")
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
 
-message("Estimated dispersions for DGEList.")
+if(ncol(design) == 2){
+  cat("Exactly two groups detected. Calculating contrast (group2 - group1)...\n")
+  contrast_name <- paste(colnames(design)[2], "-", colnames(design)[1])
+  contrast <- makeContrasts(diff = contrast_name, levels = design)
+  cat("Contrast matrix:")
+  print(contrast)
+  fit2 <- contrasts.fit(fit, contrast)
+  fit2 <- eBayes(fit2)
+  cat("Top differential expression results for contrast:\n")
+  top_results <- topTable(fit2, number = Inf)
+  print(head(top_results))
+  write_csv(top_results, file = file.path(output_dir, "DEG_results.csv"))
+} else {
+  cat("Multiple groups detected. Generating top results for each coefficient...\n")
+  for(i in 1:ncol(design)){
+    coef_name <- colnames(design)[i]
+    cat("Top results for", coef_name, ":\n")
+    top_results <- topTable(fit, coef = i, number = Inf)
+    print(head(top_results))
+    write_csv(top_results, file = file.path(output_dir, paste0("DEG_results_", coef_name, ".csv")))
+  }
+}
 
-# Save the edgeR object for downstream analysis
-saveRDS(dge, file="{os.path.join(ctx.deps.output_dir, 'dge.rds')}")
-message("Saved edgeR DGEList object to {os.path.join(ctx.deps.output_dir, 'dge.rds')}")
-''')
-        os.chmod(base_r_script_path, 0o755)
-        log(f"Executing base R script for edgeR analysis: {base_r_script_path}", level=LogLevel.NORMAL)
-        process = subprocess.run(['Rscript', base_r_script_path], capture_output=True, text=True)
-        base_r_stdout = process.stdout
-        base_r_stderr = process.stderr
-        if process.returncode != 0:
-            error_msg = f"Error running edgeR base analysis:\nSTDOUT:\n{base_r_stdout}\nSTDERR:\n{base_r_stderr}"
-            log_tool_result(error_msg)
-            return error_msg
-        else:
-            base_msg = f"Base edgeR analysis completed successfully.\nSTDOUT:\n{base_r_stdout}\nSTDERR:\n{base_r_stderr}"
-            log_tool_result(base_msg)
+cat("Saving normalized DGEList object...\n")
+saveRDS(DGE.norm, file = file.path(output_dir, "DGE_norm.RDS"))
 
-        # ----------------------------
-        # Process each contrast using dynamically generated R scripts
-        # ----------------------------
-        all_results = []
-        for contrast_name in contrast_names:
-            contrast = ctx.deps.contrast_groups[contrast_name]
-            numerator = contrast['numerator']
-            denominator = contrast['denominator']
-            contrast_dir = os.path.join(ctx.deps.output_dir, f"edger_{contrast_name}")
-            os.makedirs(contrast_dir, exist_ok=True)
-            results_file = os.path.join(contrast_dir, f"{contrast_name}_results.csv")
-            ma_plot_file = os.path.join(contrast_dir, f"{contrast_name}_MAplot.png")
-            summary_stats_file = os.path.join(contrast_dir, "summary_stats.txt")
-            contrast_r_script_path = os.path.join(ctx.deps.output_dir, f"run_edger_{contrast_name}.R")
-            with open(contrast_r_script_path, "w") as f:
-                f.write(f'''
-suppressMessages(library(edgeR))
-suppressMessages(library(ggplot2))
+cat("=== R Script: edgeR/limma Analysis Completed ===\n")
+            ''')
+        os.chmod(r_script_path, 0o755)
+        log(f"Created R script at {r_script_path}", level=LogLevel.NORMAL)
 
-message("Starting contrast analysis for {contrast_name}")
+        # Execute the R script. Pass the metadata path, merged column, output directory, and tx2gene argument.
+        cmd = ['Rscript', r_script_path, ctx.deps.sample_mapping, ctx.deps.merged_column, ctx.deps.output_dir, tx2gene_arg]
+        print("Running R script for edgeR/limma analysis:", ' '.join(cmd))
+        process = subprocess.run(cmd, capture_output=True, text=True)
+        stdout = process.stdout
+        stderr = process.stderr
 
-# Load the saved edgeR object
-dge <- readRDS("{os.path.join(ctx.deps.output_dir, 'dge.rds')}")
-message("edgeR object loaded.")
+        # Log the captured outputs for traceability
+        log_tool_result(f"STDOUT:\n{stdout}")
+        log_tool_result(f"STDERR:\n{stderr}")
 
-# Re-create the design matrix
-design <- model.matrix(~0 + group, data=dge$samples)
-colnames(design) <- levels(as.factor(dge$samples$group))
-message("Design matrix re-created.")
-
-# Fit the model using quasi-likelihood methods
-fit <- glmQLFit(dge, design)
-message("Model fitted using glmQLFit.")
-
-# Define the contrast: numerator vs denominator
-contrast_vector <- makeContrasts(contrasts = "{numerator} - {denominator}", levels=design)
-message("Contrast vector defined.")
-
-# Perform the quasi-likelihood F-test
-qlf <- glmQLFTest(fit, contrast=contrast_vector)
-message("Quasi-likelihood F-test completed.")
-
-# Get full results table
-res <- topTags(qlf, n=Inf)$table
-message("Results table extracted.")
-
-# Write the results to CSV
-write.csv(as.data.frame(res), file="{results_file}")
-message("Results saved to CSV: {results_file}")
-
-# Generate an MA plot
-png(filename="{ma_plot_file}")
-plotMD(qlf, main="MA Plot: {contrast_name}")
-dev.off()
-message("MA plot generated: {ma_plot_file}")
-
-# Save summary statistics
-sink("{summary_stats_file}")
-cat("Contrast: {contrast_name}\\n")
-cat("Total genes tested: ", nrow(res), "\\n")
-cat("Significant genes (FDR < 0.05): ", sum(res$FDR < 0.05, na.rm=TRUE), "\\n")
-cat("Up-regulated genes (logFC > 0): ", sum(res$FDR < 0.05 & res$logFC > 0, na.rm=TRUE), "\\n")
-cat("Down-regulated genes (logFC < 0): ", sum(res$FDR < 0.05 & res$logFC < 0, na.rm=TRUE), "\\n")
-sink()
-message("Summary statistics saved at {summary_stats_file}")
-
-message("Completed contrast analysis for {contrast_name}.")
-quit(save="no", status=0)
-''')
-            os.chmod(contrast_r_script_path, 0o755)
-            log(f"Executing R script for edgeR analysis of {contrast_name}: {contrast_r_script_path}", level=LogLevel.NORMAL)
-            process = subprocess.run(['Rscript', contrast_r_script_path], capture_output=True, text=True)
-            contrast_stdout = process.stdout
-            contrast_stderr = process.stderr
-            if process.returncode != 0:
-                error_msg = f"Error running edgeR analysis for {contrast_name}:\nSTDOUT:\n{contrast_stdout}\nSTDERR:\n{contrast_stderr}"
-                log_tool_result(error_msg)
-                all_results.append(error_msg)
-            else:
-                if os.path.exists(summary_stats_file):
-                    with open(summary_stats_file, 'r') as f:
-                        summary_stats = f.read()
-                else:
-                    summary_stats = "No summary statistics available."
-                result = f"""
------ edgeR analysis for contrast: {contrast_name} ({numerator} vs {denominator}) -----
-
-Results file: {results_file}
-MA plot: {ma_plot_file}
-
-STDOUT:
-{contrast_stdout}
-
-STDERR:
-{contrast_stderr}
-
-{summary_stats}
-"""
-                all_results.append(result)
-
-        combined_results = "\n\n" + "="*80 + "\n\n".join(all_results) + "\n\n" + "="*80
-        overall_summary = f"""
-edgeR analysis completed for {len(contrast_names)} contrasts:
-{', '.join(contrast_names)}
-
-Base edgeR object saved as: {os.path.join(ctx.deps.output_dir, 'dge.rds')}
-
-Base Script STDOUT:
-{base_r_stdout}
-
-Base Script STDERR:
-{base_r_stderr}
-"""
-        final_result = overall_summary + combined_results
-        log_tool_result(final_result)
-        return final_result
+        return f"edgeR/limma analysis completed with return code: {process.returncode}"
 
     except Exception as e:
-        error_msg = f"Error running edgeR analysis: {str(e)}"
+        error_msg = f"Error in run_edger_limma_analysis: {str(e)}"
         log(error_msg, style="bold red")
-        log_tool_result(error_msg)
         return error_msg
 
 # ----------------------------
@@ -1265,17 +1032,13 @@ if __name__ == "__main__":
                    './analysis_output/GSE262710/SRX24093542/abundance.tsv', './analysis_output/GSE262710/SRX24093543/abundance.tsv',
                    './analysis_output/GSE262710/SRX24093544/abundance.tsv', './analysis_output/GSE262710/SRX24093545/abundance.tsv',
                    './analysis_output/GSE262710/SRX24093546/abundance.tsv', './analysis_output/GSE262710/SRX24093547/abundance.tsv',
-                   './analysis_output/GSE262710/SRX24093548/abundance.tsv']
+                   './analysis_output/GSE262710/SRX24093548/abundance.tsv'],
+        tx2gene_path="../../../data/kallisto_indices/human/t2g.txt",
     )
 
     # Initialize conversation with analysis steps
     initial_prompt = """
-    Use the provided tools to perform an RNAseq analysis. This should encompass:
-        1. Kallisto quantification, after identifying appropriate files and indices. - NOTE that this is already done, and you can refer to the provided abundance files for the location of the quantification files.
-        2. Preparation for the edgeR differential expression analysis, including sample mapping and metadata analysis
-        3. Running edgeR analysis for differential expression, including contrasts and results.
-
-    If you encounter an error while executing any step of the edgeR analysis, please refer to the error message and try to resolve the issue before proceeding - however, if you receive a persistent error, you do not need to proceed, instead indicate the reason why you are unable to proceed.
+    Use the provided tools to run an edgeR analysis.
     """
 
     # Run the agent
