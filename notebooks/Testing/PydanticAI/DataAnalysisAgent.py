@@ -83,7 +83,6 @@ class RNAseqData:
     """Container for RNAseq analysis data and paths."""
     # Input data
     fastq_dir: str
-    fastq_files: List[str] = None
     metadata_path: str
     kallisto_index_dir: str
     organism: str = "human"  # default to human
@@ -96,20 +95,6 @@ class RNAseqData:
     merged_column: Optional[str] = None
     contrast_groups: Dict[str, Dict[str, str]] = None
     sample_mapping: Optional[pd.DataFrame] = None
-
-    # Optional fields for single-end analysis
-    is_single_end: bool = False
-    fragment_length: Optional[float] = None  # Required when is_single_end is True
-    sd: Optional[float] = None               # Required when is_single_end is True
-
-    def __post_init__(self):
-        # If fastq_files is None, automatically populate it from fastq_dir
-        if self.fastq_files is None:
-            if os.path.isdir(self.fastq_dir):
-                self.fastq_files = sorted(glob.glob(os.path.join(self.fastq_dir, '**', '*.fastq.gz'), recursive=True))
-            else:
-                self.fastq_files = []
-        console.log(f"[bold green]FASTQ files found in {self.fastq_dir}:[/] {self.fastq_files}")
 
 # ----------------------------
 # Create an RNAseq analysis agent
@@ -131,43 +116,6 @@ rnaseq_agent = Agent(
     5. Generate appropriate visualizations when needed
     6. Be comprehensive, both in the analysis steps but also more routine steps. For example, if you cannot find a file, ensure you check other common file extensions.
     7. After completing each step, take careful note of any output files. Specifically, make note of the location and names of saved files, and ensure these are added to context.
-
-##### ADDITIONAL INFORMATION
-
-You will be using Kallisto for quantification, edgeR for differential expression analysis, and GSEApy for pathway enrichment analysis.
-
-##### INFORMATION ABOUT KALLISTO
-
-This is the information you know about Kallisto quantification:
-    kallisto 0.51.1
-    Computes equivalence classes for reads and quantifies abundances
-
-    Usage: kallisto quant [arguments] FASTQ-files
-
-    Required arguments:
-    -i, --index=STRING            Filename for the kallisto index to be used for
-                                  quantification
-    -o, --output-dir=STRING       Directory to write output to
-
-    Optional arguments:
-    -b, --bootstrap-samples=INT   Number of bootstrap samples (default: 0)
-        --seed=INT                Seed for the bootstrap sampling (default: 42)
-        --plaintext               Output plaintext instead of HDF5
-        --single                  Quantify single-end reads
-        --single-overhang         Include reads where unobserved rest of fragment is
-                                  predicted to lie outside a transcript
-        --fr-stranded             Strand specific reads, first read forward
-        --rf-stranded             Strand specific reads, first read reverse
-    -l, --fragment-length=DOUBLE  Estimated average fragment length
-    -s, --sd=DOUBLE               Estimated standard deviation of fragment length
-                                  (default: -l, -s values are estimated from paired
-                                   end data, but are required when using --single)
-    -p, --priors                  Priors for the EM algorithm, either as raw counts or as
-                                  probabilities. Pseudocounts are added to raw reads to
-                                  prevent zero valued priors. Supplied in the same order
-                                  as the transcripts in the transcriptome
-    -t, --threads=INT             Number of threads to use (default: 1)
-        --verbose                 Print out progress information every 1M proccessed reads
 
 
     """
@@ -632,7 +580,6 @@ async def print_dependency_paths(ctx: RunContext[RNAseqData]) -> str:
     result = f"""
     Dependency paths:
     - fastq_dir: {ctx.deps.fastq_dir}
-    - fastq_files: {ctx.deps.fastq_files}
     - metadata_path: {ctx.deps.metadata_path}
     - kallisto_index_dir: {ctx.deps.kallisto_index_dir}
     - organism: {ctx.deps.organism}
@@ -701,51 +648,6 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
 
     except Exception as e:
         return f"Error finding Kallisto index: {str(e)}"
-
-@rnaseq_agent.tool
-def compute_fastq_stats(ctx: RunContext[RNAseqData], fastq_file: str) -> dict:
-    """
-    Compute average read length and standard deviation from a FASTQ file.
-    Executes an awk command to compute the count of each read length,
-    then calculates the weighted average and standard deviation.
-
-    Returns a dictionary with keys "avg" and "sd".
-    """
-    # Build the awk command – note: ensure proper quoting for your shell
-    cmd = (
-        "awk 'NR%4==2 {lengths[length($0)]++} END {for (l in lengths) {print l, lengths[l]}}' "
-        f"{fastq_file}"
-    )
-    process = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    if process.returncode != 0:
-        raise RuntimeError(f"Error computing read lengths: {process.stderr}")
-
-    # Parse output into a dictionary: {read_length: count, ...}
-    length_counts = {}
-    for line in process.stdout.strip().splitlines():
-        parts = line.strip().split()
-        if len(parts) == 2:
-            try:
-                length = float(parts[0])
-                count = float(parts[1])
-                length_counts[length] = count
-            except ValueError:
-                continue
-
-    # Compute weighted average and standard deviation
-    total_reads = sum(length_counts.values())
-    if total_reads == 0:
-        raise ValueError("No reads found in FASTQ file")
-
-    # Weighted average (fragment length)
-    weighted_sum = sum(l * cnt for l, cnt in length_counts.items())
-    avg = weighted_sum / total_reads
-
-    # Weighted standard deviation
-    variance = sum(cnt * (l - avg) ** 2 for l, cnt in length_counts.items()) / total_reads
-    sd = variance ** 0.5
-
-    return {"avg": avg, "sd": sd}
 
 @rnaseq_agent.tool
 async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
@@ -840,65 +742,12 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
 
         console.log(f"[bold yellow]Progress:[/] Identified {len(paired_files)} paired FASTQ file groups.")
         if not paired_files:
-            # Determine if the FASTQ files are single-end.
-            single_end_files = [f for f in fastq_files if not (r1_pattern.match(f) or r2_pattern.match(f))]
-            if single_end_files:
-                # Process each single-end FASTQ file independently
-                console.log(f"[bold yellow]Single-end mode:[/] Found {len(single_end_files)} FASTQ file(s) for single-end analysis.")
-                results = []
-                for f in single_end_files:
-                    sample_name = os.path.splitext(os.path.basename(f))[0]
-                    sample_output_dir = os.path.join(ctx.deps.output_dir, sample_name)
-                    os.makedirs(sample_output_dir, exist_ok=True)
-
-                    # Compute fragment length statistics for each file
-                    console.log(f"[bold yellow]Computing fragment length statistics from: {f}")
-                    try:
-                        stats = compute_fastq_stats(ctx, f)
-                    except Exception as e:
-                        return f"Error computing fragment length stats for {f}: {str(e)}"
-                    console.log(f"[bold yellow]Computed fragment length: {stats['avg']:.2f}, SD: {stats['sd']:.2f}")
-
-                    cmd = [
-                        "kallisto", "quant",
-                        "-i", index_path,
-                        "-o", sample_output_dir,
-                        "-t", "4",  # use 4 threads
-                        "--plaintext",
-                        "--single",
-                        "--fragment-length", str(stats["avg"]),
-                        "--sd", str(stats["sd"]),
-                        f
-                    ]
-
-                    console.log(f"[bold yellow]Running single-end Kallisto quantification for sample: {sample_name}")
-                    process = subprocess.run(cmd, capture_output=True, text=True)
-
-                    console.log(f"[bold yellow]Completed Kallisto run for sample: {sample_name} (return code: {process.returncode})")
-                    if process.returncode == 0:
-                        results.append(f"Successfully processed {sample_name}")
-                    else:
-                        results.append(f"Error processing {sample_name}: {process.stderr}")
-
-                # Collect abundance files from single-end runs
-                abundance_files = []
-                for f in single_end_files:
-                    sample_name = os.path.splitext(os.path.basename(f))[0]
-                    abundance_file = os.path.join(ctx.deps.output_dir, sample_name, "abundance.tsv")
-                    if os.path.exists(abundance_file):
-                        abundance_files.append(abundance_file)
-
-                ctx.deps.abundance_files = abundance_files
-                return f"""
-Single-end Kallisto quantification completed for {len(results)} samples.
-
-Results:
-{chr(10).join(results)}
-
-Found {len(abundance_files)} abundance files for downstream analysis.
-                """
+            # If no pairs found, check if files are single-end
+            single_end = all(not r1_pattern.match(f) and not r2_pattern.match(f) for f in fastq_files)
+            if single_end:
+                return "Error: Single-end reads detected. Kallisto requires paired-end reads or additional parameters for single-end analysis."
             else:
-                return "Error: Could not identify any FASTQ files matching expected patterns."
+                return "Error: Could not identify paired FASTQ files"
 
         # Run Kallisto for each pair
         results = []
@@ -1290,13 +1139,6 @@ if __name__ == "__main__":
     parser.add_argument("--organism", type=str, default="human", help="Organism name")
     parser.add_argument("--output_dir", type=str, default="./analysis_output/GSE262710",
                         help="Directory to save analysis output")
-    parser.add_argument("--single_end", action="store_true",
-                        help="Set flag to indicate single-end reads.")
-    parser.add_argument("--fragment_length", type=float, default=None,
-                        help="Fragment length for single-end reads; if not provided, it will be computed from FASTQ file.")
-    parser.add_argument("--sd", type=float, default=None,
-                        help="Standard deviation for fragment length (single-end); if not provided, it will be computed from FASTQ file.")
-
     args = parser.parse_args()
 
     # Create an instance using command-line parameters (renamed to analysis_data)
@@ -1305,10 +1147,7 @@ if __name__ == "__main__":
         metadata_path=args.metadata_path,
         kallisto_index_dir=args.kallisto_index_dir,
         organism=args.organism,
-        output_dir=args.output_dir,
-        is_single_end=args.single_end,
-        fragment_length=args.fragment_length,
-        sd=args.sd
+        output_dir=args.output_dir
     )
 
     # Initialize conversation with analysis steps
