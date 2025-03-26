@@ -691,6 +691,51 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
     except Exception as e:
         return f"Error finding Kallisto index: {str(e)}"
 
+@rnaseq_agent.tool_plain
+def compute_fastq_stats(ctx: RunContext[RNAseqData], fastq_file: str) -> dict:
+    """
+    Compute average read length and standard deviation from a FASTQ file.
+    Executes an awk command to compute the count of each read length,
+    then calculates the weighted average and standard deviation.
+    
+    Returns a dictionary with keys "avg" and "sd".
+    """
+    # Build the awk command – note: ensure proper quoting for your shell
+    cmd = (
+        "awk 'NR%4==2 {lengths[length($0)]++} END {for (l in lengths) {print l, lengths[l]}}' "
+        f"{fastq_file}"
+    )
+    process = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    if process.returncode != 0:
+        raise RuntimeError(f"Error computing read lengths: {process.stderr}")
+    
+    # Parse output into a dictionary: {read_length: count, ...}
+    length_counts = {}
+    for line in process.stdout.strip().splitlines():
+        parts = line.strip().split()
+        if len(parts) == 2:
+            try:
+                length = float(parts[0])
+                count = float(parts[1])
+                length_counts[length] = count
+            except ValueError:
+                continue
+
+    # Compute weighted average and standard deviation
+    total_reads = sum(length_counts.values())
+    if total_reads == 0:
+        raise ValueError("No reads found in FASTQ file")
+    
+    # Weighted average (fragment length)
+    weighted_sum = sum(l * cnt for l, cnt in length_counts.items())
+    avg = weighted_sum / total_reads
+    
+    # Weighted standard deviation
+    variance = sum(cnt * (l - avg) ** 2 for l, cnt in length_counts.items()) / total_reads
+    sd = variance ** 0.5
+
+    return {"avg": avg, "sd": sd}
+
 @rnaseq_agent.tool
 async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -792,9 +837,19 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                     return ("Error: Single-end reads detected but RNAseqData.is_single_end is not set to True. "
                             "Please set is_single_end=True to enable single-end processing.")
                 if ctx.deps.fragment_length is None or ctx.deps.sd is None:
-                    return ("Error: For single-end analysis the fragment_length and sd parameters must be provided "
-                            "in the RNAseqData dependency.")
-                
+                    # If not provided, attempt to compute from one of the FASTQ files.
+                    # Here we use the first single-end file as representative.
+                    representative_fastq = single_end_files[0]
+                    console.log(f"[bold yellow]Computing fragment length statistics from: {representative_fastq}")
+                    try:
+                        stats = compute_fastq_stats(ctx, representative_fastq)
+                    except Exception as e:
+                        return f"Error computing fragment length stats: {str(e)}"
+                    # Update dependency (and log the values)
+                    ctx.deps.fragment_length = stats["avg"]
+                    ctx.deps.sd = stats["sd"]
+                    console.log(f"[bold yellow]Computed fragment length: {ctx.deps.fragment_length:.2f}, SD: {ctx.deps.sd:.2f}")
+
                 # Process each single-end FASTQ file independently
                 console.log(f"[bold yellow]Single-end mode:[/] Found {len(single_end_files)} FASTQ file(s) for single-end analysis.")
                 results = []
@@ -1237,9 +1292,9 @@ if __name__ == "__main__":
     parser.add_argument("--single_end", action="store_true",
                         help="Set flag to indicate single-end reads.")
     parser.add_argument("--fragment_length", type=float, default=None,
-                        help="Fragment length for single-end reads")
+                        help="Fragment length for single-end reads; if not provided, it will be computed from FASTQ file.")
     parser.add_argument("--sd", type=float, default=None,
-                        help="Standard deviation for fragment length (single-end)")
+                        help="Standard deviation for fragment length (single-end); if not provided, it will be computed from FASTQ file.")
 
     args = parser.parse_args()
 
