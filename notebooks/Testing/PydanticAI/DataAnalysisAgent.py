@@ -832,24 +832,6 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
             # Determine if the FASTQ files are single-end.
             single_end_files = [f for f in fastq_files if not (r1_pattern.match(f) or r2_pattern.match(f))]
             if single_end_files:
-                # Check that dependency indicates single-end and that required parameters are provided.
-                if not ctx.deps.is_single_end:
-                    return ("Error: Single-end reads detected but RNAseqData.is_single_end is not set to True. "
-                            "Please set is_single_end=True to enable single-end processing.")
-                if ctx.deps.fragment_length is None or ctx.deps.sd is None:
-                    # If not provided, attempt to compute from one of the FASTQ files.
-                    # Here we use the first single-end file as representative.
-                    representative_fastq = single_end_files[0]
-                    console.log(f"[bold yellow]Computing fragment length statistics from: {representative_fastq}")
-                    try:
-                        stats = compute_fastq_stats(ctx, representative_fastq)
-                    except Exception as e:
-                        return f"Error computing fragment length stats: {str(e)}"
-                    # Update dependency (and log the values)
-                    ctx.deps.fragment_length = stats["avg"]
-                    ctx.deps.sd = stats["sd"]
-                    console.log(f"[bold yellow]Computed fragment length: {ctx.deps.fragment_length:.2f}, SD: {ctx.deps.sd:.2f}")
-
                 # Process each single-end FASTQ file independently
                 console.log(f"[bold yellow]Single-end mode:[/] Found {len(single_end_files)} FASTQ file(s) for single-end analysis.")
                 results = []
@@ -857,7 +839,15 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                     sample_name = os.path.splitext(os.path.basename(f))[0]
                     sample_output_dir = os.path.join(ctx.deps.output_dir, sample_name)
                     os.makedirs(sample_output_dir, exist_ok=True)
-    
+
+                    # Compute fragment length statistics for each file
+                    console.log(f"[bold yellow]Computing fragment length statistics from: {f}")
+                    try:
+                        stats = compute_fastq_stats(ctx, f)
+                    except Exception as e:
+                        return f"Error computing fragment length stats for {f}: {str(e)}"
+                    console.log(f"[bold yellow]Computed fragment length: {stats['avg']:.2f}, SD: {stats['sd']:.2f}")
+
                     cmd = [
                         "kallisto", "quant",
                         "-i", index_path,
@@ -865,14 +855,14 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                         "-t", "4",  # use 4 threads
                         "--plaintext",
                         "--single",
-                        "--fragment-length", str(ctx.deps.fragment_length),
-                        "--sd", str(ctx.deps.sd),
+                        "--fragment-length", str(stats["avg"]),
+                        "--sd", str(stats["sd"]),
                         f
                     ]
-    
+
                     console.log(f"[bold yellow]Running single-end Kallisto quantification for sample: {sample_name}")
                     process = subprocess.run(cmd, capture_output=True, text=True)
-    
+
                     console.log(f"[bold yellow]Completed Kallisto run for sample: {sample_name} (return code: {process.returncode})")
                     if process.returncode == 0:
                         results.append(f"Successfully processed {sample_name}")
