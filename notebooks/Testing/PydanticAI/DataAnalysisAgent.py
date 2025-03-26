@@ -102,6 +102,15 @@ class RNAseqData:
     fragment_length: Optional[float] = None  # Required when is_single_end is True
     sd: Optional[float] = None               # Required when is_single_end is True
 
+    def __post_init__(self):
+        # If fastq_files is None, automatically populate it from fastq_dir
+        if self.fastq_files is None:
+            if os.path.isdir(self.fastq_dir):
+                self.fastq_files = sorted(glob.glob(os.path.join(self.fastq_dir, '**', '*.fastq.gz'), recursive=True))
+            else:
+                self.fastq_files = []
+        console.log(f"[bold green]FASTQ files found in {self.fastq_dir}:[/] {self.fastq_files}")
+
 # ----------------------------
 # Create an RNAseq analysis agent
 # ----------------------------
@@ -623,6 +632,7 @@ async def print_dependency_paths(ctx: RunContext[RNAseqData]) -> str:
     result = f"""
     Dependency paths:
     - fastq_dir: {ctx.deps.fastq_dir}
+    - fastq_files: {ctx.deps.fastq_files}
     - metadata_path: {ctx.deps.metadata_path}
     - kallisto_index_dir: {ctx.deps.kallisto_index_dir}
     - organism: {ctx.deps.organism}
