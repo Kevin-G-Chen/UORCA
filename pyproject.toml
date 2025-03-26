@@ -8,6 +8,7 @@ dependencies = [
     "bio>=1.7.1",
     "data-analysis",
     "lightrag>=0.0.0a2",
+    "logfire>=3.9.0",
     "tiktoken>=0.9.0",
 ]
 
