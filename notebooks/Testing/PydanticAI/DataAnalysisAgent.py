@@ -427,15 +427,40 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
             df[col] = df[col].apply(lambda x: clean_string(ctx, x) if pd.notna(x) else x)
         ctx.deps.metadata_df = df
 
-        # Identify candidate grouping columns using common biological keywords
-        bio_keywords = ['treatment', 'condition', 'genotype', 'disease', 'cell', 'tissue',
-                        'time', 'dose', 'age', 'sex', 'gender', 'strain', 'group']
-        candidate_cols = [col for col in df.columns if any(kw in col.lower() for kw in bio_keywords)]
+        # Identify candidate grouping columns passing metadata via LLM
 
-        # If no candidate is found, select the column with the fewest unique values
-        if not candidate_cols:
-            n_unique = {col: df[col].nunique() for col in df.columns}
-            candidate_cols = [min(n_unique, key=n_unique.get)]
+        # Prepare inputs for LLM prompt
+
+        preview = ctx.deps.metadata_df.to_csv(index=False)
+        columns = list(ctx.deps.metadata_df.columns)
+
+        # Prepare LLM prompt
+
+        prompt = f"""
+        You are an expert in RNAseq metadata analysis. Given the following metadata table, determine the column, or columns, that are most suitable for grouping variables in the context of differential expression analysis.
+
+        Please note that you should focus only on groups that contain biologically interested information. For example, columns like 'sample_id' or 'replicate' are not typically used as grouping variables. Furthermore, "differentiation_experiment," while good for quality control, does not contribute any biological findings, and should not be used as a grouping variable. In contrast, columns such as "genotype" "celltype" and the like are often used as grouping variables.
+
+        Do not select redundant columns. For example, if one column contains values such as "WT" and another contains "Wild Type," you should only select one of them, as these columns are functionally equivalent.
+
+        Metadata columns: {columns}
+        Metadata preview: {preview}
+        """
+
+        response = client.responses.create(
+            model = "gpt-4o-mini",
+            input = prompt,
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "analysis_columns",
+                    "schema": schema,
+                    "strict": True
+                }
+            }
+        )
+
+        candidate_cols = json.loads(response.output_text)['columns']
 
         # Merge candidates if more than one is found; otherwise, use the single candidate
         if len(candidate_cols) > 1:
