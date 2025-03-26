@@ -96,6 +96,11 @@ class RNAseqData:
     contrast_groups: Dict[str, Dict[str, str]] = None
     sample_mapping: Optional[pd.DataFrame] = None
 
+    # Optional fields for single-end analysis
+    is_single_end: bool = False
+    fragment_length: Optional[float] = None  # Required when is_single_end is True
+    sd: Optional[float] = None               # Required when is_single_end is True
+
 # ----------------------------
 # Create an RNAseq analysis agent
 # ----------------------------
@@ -779,12 +784,65 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
 
         console.log(f"[bold yellow]Progress:[/] Identified {len(paired_files)} paired FASTQ file groups.")
         if not paired_files:
-            # If no pairs found, check if files are single-end
-            single_end = all(not r1_pattern.match(f) and not r2_pattern.match(f) for f in fastq_files)
-            if single_end:
-                return "Error: Single-end reads detected. Kallisto requires paired-end reads or additional parameters for single-end analysis."
+            # Determine if the FASTQ files are single-end.
+            single_end_files = [f for f in fastq_files if not (r1_pattern.match(f) or r2_pattern.match(f))]
+            if single_end_files:
+                # Check that dependency indicates single-end and that required parameters are provided.
+                if not ctx.deps.is_single_end:
+                    return ("Error: Single-end reads detected but RNAseqData.is_single_end is not set to True. "
+                            "Please set is_single_end=True to enable single-end processing.")
+                if ctx.deps.fragment_length is None or ctx.deps.sd is None:
+                    return ("Error: For single-end analysis the fragment_length and sd parameters must be provided "
+                            "in the RNAseqData dependency.")
+                
+                # Process each single-end FASTQ file independently
+                console.log(f"[bold yellow]Single-end mode:[/] Found {len(single_end_files)} FASTQ file(s) for single-end analysis.")
+                results = []
+                for f in single_end_files:
+                    sample_name = os.path.splitext(os.path.basename(f))[0]
+                    sample_output_dir = os.path.join(ctx.deps.output_dir, sample_name)
+                    os.makedirs(sample_output_dir, exist_ok=True)
+    
+                    cmd = [
+                        "kallisto", "quant",
+                        "-i", index_path,
+                        "-o", sample_output_dir,
+                        "-t", "4",  # use 4 threads
+                        "--plaintext",
+                        "--single",
+                        "--fragment-length", str(ctx.deps.fragment_length),
+                        "--sd", str(ctx.deps.sd),
+                        f
+                    ]
+    
+                    console.log(f"[bold yellow]Running single-end Kallisto quantification for sample: {sample_name}")
+                    process = subprocess.run(cmd, capture_output=True, text=True)
+    
+                    console.log(f"[bold yellow]Completed Kallisto run for sample: {sample_name} (return code: {process.returncode})")
+                    if process.returncode == 0:
+                        results.append(f"Successfully processed {sample_name}")
+                    else:
+                        results.append(f"Error processing {sample_name}: {process.stderr}")
+    
+                # Collect abundance files from single-end runs
+                abundance_files = []
+                for f in single_end_files:
+                    sample_name = os.path.splitext(os.path.basename(f))[0]
+                    abundance_file = os.path.join(ctx.deps.output_dir, sample_name, "abundance.tsv")
+                    if os.path.exists(abundance_file):
+                        abundance_files.append(abundance_file)
+    
+                ctx.deps.abundance_files = abundance_files
+                return f"""
+Single-end Kallisto quantification completed for {len(results)} samples.
+
+Results:
+{chr(10).join(results)}
+
+Found {len(abundance_files)} abundance files for downstream analysis.
+                """
             else:
-                return "Error: Could not identify paired FASTQ files"
+                return "Error: Could not identify any FASTQ files matching expected patterns."
 
         # Run Kallisto for each pair
         results = []
@@ -1176,6 +1234,13 @@ if __name__ == "__main__":
     parser.add_argument("--organism", type=str, default="human", help="Organism name")
     parser.add_argument("--output_dir", type=str, default="./analysis_output/GSE262710",
                         help="Directory to save analysis output")
+    parser.add_argument("--single_end", action="store_true",
+                        help="Set flag to indicate single-end reads.")
+    parser.add_argument("--fragment_length", type=float, default=None,
+                        help="Fragment length for single-end reads")
+    parser.add_argument("--sd", type=float, default=None,
+                        help="Standard deviation for fragment length (single-end)")
+
     args = parser.parse_args()
 
     # Create an instance using command-line parameters (renamed to analysis_data)
@@ -1184,7 +1249,10 @@ if __name__ == "__main__":
         metadata_path=args.metadata_path,
         kallisto_index_dir=args.kallisto_index_dir,
         organism=args.organism,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        is_single_end=args.single_end,
+        fragment_length=args.fragment_length,
+        sd=args.sd
     )
 
     # Initialize conversation with analysis steps
