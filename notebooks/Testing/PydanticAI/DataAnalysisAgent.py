@@ -1148,11 +1148,6 @@ if __name__ == "__main__":
         kallisto_index_dir=args.kallisto_index_dir,
         organism=args.organism,
         output_dir=args.output_dir
-        fastq_dir="./TestRNAseqData_SETBP1/GSE262710/fastq",
-        metadata_path="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
-        kallisto_index_dir="../../../data/kallisto_indices",
-        organism="human",
-        output_dir="./analysis_output/GSE262710"
     )
 
     # Initialize conversation with analysis steps
