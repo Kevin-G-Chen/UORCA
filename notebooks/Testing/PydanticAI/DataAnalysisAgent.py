@@ -3,6 +3,7 @@
 # Imports
 # ----------------------------
 
+import argparse
 import os
 import glob
 import re
@@ -1127,15 +1128,26 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
 # Main Execution
 # ----------------------------
 if __name__ == "__main__":
-    # Create data instance for GSE262710
-    test_data = RNAseqData(
-        fastq_dir="./notebooks/Testing/PydanticAI/TestRNAseqData_SETBP1/GSE262710/fastq",
-        metadata_path="./notebooks/Testing/PydanticAI/TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
-        kallisto_index_dir="./data/kallisto_indices",
-        organism="human",
-        output_dir="./notebooks/Testing/PydanticAI/analysis_output/GSE262710"
-    )
-    test_data2 = RNAseqData( # Temporary data instance for testing
+    # Parse command-line arguments for the RNAseq analysis data
+    parser = argparse.ArgumentParser(description="RNAseq analysis pipeline parameters")
+    parser.add_argument("--fastq_dir", type=str, default="./TestRNAseqData_SETBP1/GSE262710/fastq",
+                        help="Directory where FASTQ files are stored")
+    parser.add_argument("--metadata_path", type=str, default="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
+                        help="Path to the metadata CSV file")
+    parser.add_argument("--kallisto_index_dir", type=str, default="../../../data/kallisto_indices",
+                        help="Directory where Kallisto index files are stored")
+    parser.add_argument("--organism", type=str, default="human", help="Organism name")
+    parser.add_argument("--output_dir", type=str, default="./analysis_output/GSE262710",
+                        help="Directory to save analysis output")
+    args = parser.parse_args()
+
+    # Create an instance using command-line parameters (renamed to analysis_data)
+    analysis_data = RNAseqData(
+        fastq_dir=args.fastq_dir,
+        metadata_path=args.metadata_path,
+        kallisto_index_dir=args.kallisto_index_dir,
+        organism=args.organism,
+        output_dir=args.output_dir
         fastq_dir="./TestRNAseqData_SETBP1/GSE262710/fastq",
         metadata_path="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
         kallisto_index_dir="../../../data/kallisto_indices",
@@ -1155,7 +1167,7 @@ if __name__ == "__main__":
     # Run the agent
     try:
         # Run the agent synchronously
-        result = rnaseq_agent.run_sync(initial_prompt, deps=test_data2)
+        result = rnaseq_agent.run_sync(initial_prompt, deps=analysis_data)
         console.print(Panel("Analysis completed successfully!", style="bold green"))
         console.print("\n[bold yellow]Agent response:[/bold yellow]")
         console.print(result.data)
