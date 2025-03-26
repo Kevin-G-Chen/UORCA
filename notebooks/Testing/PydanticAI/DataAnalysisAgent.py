@@ -422,7 +422,9 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
         new_columns = {col: clean_string(ctx, col) for col in df.columns}
         df.rename(columns=new_columns, inplace=True)
 
-        # Store cleaned metadata in the context
+        # Clean all cell values in the dataframe using clean_string
+        for col in df.columns:
+            df[col] = df[col].apply(lambda x: clean_string(ctx, x) if pd.notna(x) else x)
         ctx.deps.metadata_df = df
 
         # Identify candidate grouping columns using common biological keywords
