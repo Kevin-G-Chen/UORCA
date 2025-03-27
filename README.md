@@ -112,3 +112,25 @@ The workflow will comprise a single master agent, which takes in some input (lik
 Current progress is focussed on the DataAnalysisAgent
 
 ### Dataset analysis agent
+
+The **DataAnalysisAgent** is a central component of the UORCA workflow, implemented using PydanticAI to drive an agentic, modular RNAseq analysis pipeline. Its design leverages dependency injection (through the `RNAseqData` model) to encapsulate paths, metadata, and runtime parameters, ensuring that each analytical step is executed consistently and reproducibly.
+
+Key features include:
+
+- **Modular Tool Architecture:**  
+  The agent is structured as a series of asynchronous tools (decorated with `@rnaseq_agent.tool`), each responsible for a specific task. These tools include:
+  - **File Discovery & Management:** Tools like `list_fastq_files` and `find_files` recursively locate required FASTQ files.
+  - **Data Cleaning & Metadata Processing:** Functions such as `clean_string` and `process_metadata` load, clean, and normalize metadata to ensure consistent grouping and merging of sample data.
+  - **Contrast Design:** The `design_contrasts` tool automates experimental contrast creation based on merged metadata columns.
+  - **Quantification & Differential Expression:**  
+    - `run_kallisto_quantification` executes Kallisto for RNAseq abundance estimation.  
+    - `prepare_edgeR_analysis` and `run_edger_limma_analysis` handle downstream differential expression analyses using established tools like edgeR and limma.
+  - **Gene Set Enrichment Analysis (GSEA):** Through the `run_gsea_analysis` tool, the agent also performs pathway enrichment analyses, integrating results into the overall workflow.
+  
+- **Integrated Logging and Error Handling:**  
+  Each tool logs its progress and any encountered errors using standardized log functions (e.g., `log_tool_header` and `log_tool_result`). This ensures full traceability of the workflow execution and facilitates troubleshooting.
+
+- **Extensibility & Future Enhancements:**  
+  The structure is designed to easily accommodate additional analytical steps or modifications. Future updates may include enhanced data visualization, integration with external databases, or additional omics data considerations.
+
+Overall, the DataAnalysisAgent exemplifies a modern, agent-driven approach to complex RNAseq analyses, ensuring that as new datasets are identified, they can be seamlessly processed and integrated into the UORCA framework.
