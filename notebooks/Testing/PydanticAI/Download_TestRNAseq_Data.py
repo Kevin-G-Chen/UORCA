@@ -41,17 +41,10 @@ logger = logging.getLogger(__name__)
 # Constants
 # List of GEO accessions to download
 GEO_ACCESSIONS = [
-#    "GSE262710",
-#    "GSE180185",
-    "GSE212252",
-    "GSE171266",
-    "GSE171263",
-    "GSE150810",
-    "GSE86333",
-    "GSE42146"
+    "GSE70503"
 ]
-DEFAULT_GEO_ACCESSION = "GSE213001"  # Default for single accession mode
-DEFAULT_OUTPUT_DIR = "../../data/RNAseq_SETBP1_test"
+
+DEFAULT_OUTPUT_DIR = "./data/RNAseq_Benchmark"
 DEFAULT_NUM_SPOTS = 10000  # Small number of spots to keep downloads manageable
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 # NCBI API constants
@@ -716,8 +709,8 @@ def process_all_datasets(output_dir, num_spots, limit=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Download test RNA-seq data for DataAnalysisAgent")
-    parser.add_argument("-g", "--geo-accession", default=DEFAULT_GEO_ACCESSION,
-                        help=f"GEO accession number (default: {DEFAULT_GEO_ACCESSION})")
+    parser.add_argument("-g", "--geo-accession", default=None,
+                        help=f"GEO accession number")
     parser.add_argument("-o", "--output-dir", default=DEFAULT_OUTPUT_DIR,
                         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})")
     parser.add_argument("-n", "--num-spots", type=int, default=DEFAULT_NUM_SPOTS,
