@@ -1,0 +1,1 @@
+Similar rationale as sample SRR29101291. Using human index for Homo sapiens, paired-end FASTQs, bootstrap samples for robustness, no indication of strand-specificity, and using reported averages for fragment length.
