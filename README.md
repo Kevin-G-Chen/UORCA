@@ -91,8 +91,15 @@ At time of writing this segement of the README, I am working on developing an au
 
 ## Navigating this repository
 
-- [Notebooks](notebooks) contains the Jupyter notebooks in which I am developing the code. These are structured into smaller "sub-modules," indicated by the numbers. I will include READMEs in each directory to indicate what each file contains.
-- [Data](data) will contain the results from my code. I will try to standardize the naming convention to match my code sub-modules at some point.
+The repository is now structured into several distinct sections:
+
+- **notebooks/**: Contains historical Jupyter notebooks used for exploratory work and prototyping.
+- **archive/**: Holds previous versions and benchmarking scripts (e.g. data extraction and analysis benchmarks).
+- **main/**: Contains the core application code including web routes, services, and model definitions.
+- **script_development/**: This is the primary folder for current development. All new analysis modules, agent workflows, and integration of PydanticAI (as seen in DataAnalysisAgent.py) are actively being developed here.
+- **Other folders**: Such as SingleDatasetAnalysis and experiments provide additional supporting scripts or prototypes.
+
+Overall, while multiple directories contain useful legacy or auxiliary code, the **script_development/** directory is where the active workflow work is being done.
 
 ## Pipeline to developing the UORCA
 
