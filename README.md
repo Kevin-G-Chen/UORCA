@@ -95,65 +95,20 @@ The repository is now structured into several distinct sections:
 
 - **notebooks/**: Contains historical Jupyter notebooks used for exploratory work and prototyping.
 - **archive/**: Holds previous versions and benchmarking scripts (e.g. data extraction and analysis benchmarks).
-- **main/**: Contains the core application code including web routes, services, and model definitions.
+- **main/**: Will contain the core application code including web routes, services, and model definitions.
 - **script_development/**: This is the primary folder for current development. All new analysis modules, agent workflows, and integration of PydanticAI (as seen in DataAnalysisAgent.py) are actively being developed here.
 - **Other folders**: Such as SingleDatasetAnalysis and experiments provide additional supporting scripts or prototypes.
 
 Overall, while multiple directories contain useful legacy or auxiliary code, the **script_development/** directory is where the active workflow work is being done.
 
-## Pipeline to developing the UORCA
+## Intended workflow
 
-(Work in progress)
+The workflow will comprise a single master agent, which takes in some input (likely a research query - to be decided), and will delegate tasks to sub-agents. The four proposed sub-agents are as follows:
+- Dataset identification agent: responsible for identifying relevant datasets
+- Data extraction agent: responsible for extracting relevant data from these datasets
+- Data analysis agent: responsible for performing the analysis
+- Reporting agent: responsible for generating a report based on the analysis
 
-The UORCA pipeline is evolving rapidly. Currently, the workflow leverages the power of PydanticAI to drive an agentic design where
-analysis modules are encapsulated as “tools” (see **script_development/DataAnalysisAgent.py** for an in-depth example). This design
-enables:
+Current progress is focussed on the DataAnalysisAgent
 
-- Automated dataset identification using LLM-driven query generation.
-- Modular data extraction, processing, and quantification steps.
-- Integration of various omics data analyses into a unified framework.
-
-### Major pipeline stages include:
-
-1. **Dataset Identification:** Using LLMs to refine and generate search queries that identify relevant public datasets.
-2. **Data Extraction:** Automated retrieval and processing of raw data (note that several extraction scripts exist in the **archive/** and **SingleDatasetAnalysis/** directories).
-3. **Quantification and Analysis:** Automated quantification (via tools like Kallisto) and preprocessing that underpin the downstream DEG analyses.
-4. **Agent-Driven Integration:** Utilizing PydanticAI (as demonstrated in **DataAnalysisAgent.py**) to design workflows that automatically integrate analysis outputs and contextualize insights.
-
-This modular approach not only streamlines development but also paves the way for real-time updates and automated error correction in the analysis pipelines.
-
-Currently, the pipeline is as follows:
-1. Given a research query, use an LLM to extract keywords and identify related terms.
-2. Use NCBI API to query NCBI GEO for the above keywords and related terms, identifying candidate datasets
-3. Extract the title and summary associated with these datasets
-4. Use an LLM to score candidate datasets, using the title and summary, based on their relevance to the research query
-
-### Data extraction
-
-This section currently operates as follows:
-1. Download raw FASTQ files using a bash script. This entails linking the GEO datasets to sample IDs, and the SRA Run IDs linked to each sample.
-2. I only download a subset of each FASTQ files for space reasons. Note that the FASTQ files are not hosted on this repository.
-
-### Data processing - quantification
-
-At the moment, the pipeline operates as follows:
-1. Automating the Kallisto quantification, including generation of the code/identification of appropriate indices.
-2. I currently focus only on human samples, however I do intend to integrate other species in - mainly those where a [pre-built index](https://github.com/pachterlab/kallisto-transcriptome-indices) is already provided.
-3. After execution of the code, checking mechanisms (evaluations) are employed to check whether the quantification proceeded as expected, and if the code represents a valid method of quantification (e.g. were any warning messages biologically relevant? Were there error messages? Were parameters correctly used?)
-4. Depending on the evaluation, the generated code is corrected.
-
-(Note - I will probably rework this into developing a code "template" and having the LLM fill in the blanks)
-
-### Using quantification data
-
-1. Template scripts are created for:
-   a. Creating the DGEList object, including filtering and normalisation with visual outputs, as well as metadata cleaning. I do hope to add PCA plots to this as well.
-   b. Seeing output of cleaned metadata
-   c. Generation of contrast/design matrix, and execution of DEG analysis
-2. I call an LLM to determine appropriate inputs for script a and c.
-
-I am also beginning to implement more logging and token output information - I have so far only integrated these into the first DEG analysis script, but I plan on adding this to the remaining scripts as well.
-
-### Building the corpus
-
-Work to begin soon. The general idea is to a) Conduct an analysis, b) Extract findings from the analysis, and c) Repeat for further datasets, however use findings (b) to contextualise these results further. This is how we can begin to see trends in datasets - do we see the same DEGs across multiple datasets? Do we notice that DEGs are only apparent in XYZ conditions?
+### Dataset analysis agent
