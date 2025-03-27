@@ -1,1 +1,0 @@
-Selected to maintain continuity and rigor, employing the same index, output structure, and parameter settings as previous entries to facilitate comparability. This set also reflects adequate sequencing methodologies with paired-end reads.
