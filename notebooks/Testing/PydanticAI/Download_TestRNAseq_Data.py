@@ -412,9 +412,10 @@ def download_fastq(sra_id, output_dir, num_spots):
     with tempfile.TemporaryDirectory() as temp_dir:
         # Step 1: Prefetch the SRA file
         try:
-            logger.info(f"Prefetching {sra_id}...")
+            cmd_prefetch = ["prefetch", "-o", f"{temp_dir}/{sra_id}.sra", sra_id]
+            logger.info(f"Executing command: {' '.join(cmd_prefetch)}")
             process = subprocess.run(
-                ["prefetch", "-o", f"{temp_dir}/{sra_id}.sra", sra_id],
+                cmd_prefetch,
                 check=True,
                 text=True,
                 stdout=subprocess.PIPE,
@@ -433,15 +434,16 @@ def download_fastq(sra_id, output_dir, num_spots):
 
         # Step 2: Extract FASTQ using fastq-dump with -X to limit spots
         try:
-            logger.info(f"Extracting FASTQ for {sra_id} (max {num_spots} spots)...")
+            cmd_fastq = [
+                "fastq-dump",
+                "--split-files",
+                "--outdir", fastq_dir,
+                "-X", str(num_spots),
+                f"{temp_dir}/{sra_id}.sra"
+            ]
+            logger.info(f"Executing command: {' '.join(cmd_fastq)}")
             process = subprocess.run(
-                [
-                    "fastq-dump",
-                    "--split-files",
-                    "--outdir", fastq_dir,
-                    "-X", str(num_spots),  # Limit number of spots
-                    f"{temp_dir}/{sra_id}.sra"
-                ],
+                cmd_fastq,
                 check=True,
                 text=True,
                 stdout=subprocess.PIPE,
