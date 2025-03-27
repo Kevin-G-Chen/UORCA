@@ -44,9 +44,9 @@ DEFAULT_OUTPUT_DIR = "./data/RNAseq_Benchmark"
 DEFAULT_NUM_SPOTS = 10000  # Number of spots to download per sample
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# NCBI API constants (not used for metadata in this version)
-NCBI_EMAIL = "kevin.chen@telethonkids.org.au"  # Set your email or use environment variable
-NCBI_API_KEY = "d632f339861672624dc7fb31b2641099f107"  # Optional API key for higher rate limits
+# NCBI API constants (taken from environment variables)
+NCBI_EMAIL = os.environ.get("NCBI_EMAIL")
+NCBI_API_KEY = os.environ.get("NCBI_API_KEY")
 
 # Configure Entrez for potential API calls (if needed elsewhere)
 Entrez.email = NCBI_EMAIL
