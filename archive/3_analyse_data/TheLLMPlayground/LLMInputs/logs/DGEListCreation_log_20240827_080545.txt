@@ -1,0 +1,101 @@
+Generated tokens: 449
+Prompt tokens: 12394
+Total tokens: 12843
+==================================================
+
+Attempt 1
+Command executed:
+Rscript ./ManualRNASeqAnalysis/RNASeq_DGEObjectCreate.r --directory /home/myuser/work/data/kallisto_output/ --t2g /home/myuser/work/data/kallisto_indices/human/t2g.txt --metadata /home/myuser/work/notebooks/Testing/GSE268034/GSE268034_series_matrix_metadata.csv --clean_columns '{"genotype:ch1":"genotype_clean","treatment:ch1":"treatment_clean"}' --group genotype_clean --output ./TheLLMPlayground/LLMInputs --geo_sra_mapping /home/myuser/work/notebooks/2_extract_data/results.txt --merge_columns '{"genotype_treatment":"genotype_clean+treatment_clean"}'
+STDOUT:
+[2024-08-27 08:05:52] Step 1: Loading GEO-SRA mapping data...
+[2024-08-27 08:05:53] GEO-SRA mapping data loaded.
+[2024-08-27 08:05:53] Step 2: Loading metadata...
+[2024-08-27 08:05:53] Original metadata column names:
+ [1] "title"                   "geo_accession"          
+ [3] "status"                  "submission_date"        
+ [5] "last_update_date"        "type"                   
+ [7] "channel_count"           "source_name_ch1"        
+ [9] "organism_ch1"            "characteristics_ch1"    
+[11] "characteristics_ch1.1"   "characteristics_ch1.2"  
+[13] "characteristics_ch1.3"   "treatment_protocol_ch1" 
+[15] "growth_protocol_ch1"     "molecule_ch1"           
+[17] "extract_protocol_ch1"    "extract_protocol_ch1.1" 
+[19] "taxid_ch1"               "data_processing"        
+[21] "data_processing.1"       "data_processing.2"      
+[23] "platform_id"             "contact_name"           
+[25] "contact_email"           "contact_phone"          
+[27] "contact_institute"       "contact_address"        
+[29] "contact_city"            "contact_state"          
+[31] "contact_zip/postal_code" "contact_country"        
+[33] "data_row_count"          "instrument_model"       
+[35] "library_selection"       "library_source"         
+[37] "library_strategy"        "relation"               
+[39] "relation.1"              "supplementary_file_1"   
+[41] "cell line:ch1"           "cell type:ch1"          
+[43] "genotype:ch1"            "treatment:ch1"          
+[2024-08-27 08:05:53] Cleaned metadata column names:
+ [1] "title"                   "geo_accession"          
+ [3] "status"                  "submission_date"        
+ [5] "last_update_date"        "type"                   
+ [7] "channel_count"           "source_name_ch1"        
+ [9] "organism_ch1"            "characteristics_ch1"    
+[11] "characteristics_ch1_1"   "characteristics_ch1_2"  
+[13] "characteristics_ch1_3"   "treatment_protocol_ch1" 
+[15] "growth_protocol_ch1"     "molecule_ch1"           
+[17] "extract_protocol_ch1"    "extract_protocol_ch1_1" 
+[19] "taxid_ch1"               "data_processing"        
+[21] "data_processing_1"       "data_processing_2"      
+[23] "platform_id"             "contact_name"           
+[25] "contact_email"           "contact_phone"          
+[27] "contact_institute"       "contact_address"        
+[29] "contact_city"            "contact_state"          
+[31] "contact_zip_postal_code" "contact_country"        
+[33] "data_row_count"          "instrument_model"       
+[35] "library_selection"       "library_source"         
+[37] "library_strategy"        "relation"               
+[39] "relation_1"              "supplementary_file_1"   
+[41] "cell_line_ch1"           "cell_type_ch1"          
+[43] "genotype_ch1"            "treatment_ch1"          
+[2024-08-27 08:05:53] Step 3: Cleaning specified columns...
+
+STDERR:
+Rows: 12 Columns: 3
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: "\t"
+chr (3): sample_ID, experiment, SRA_ID
+
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+Rows: 12 Columns: 44
+── Column specification ────────────────────────────────────────────────────────
+Delimiter: ","
+chr (41): title, geo_accession, status, submission_date, last_update_date, t...
+dbl  (3): channel_count, taxid_ch1, data_row_count
+
+ℹ Use `spec()` to retrieve the full column specification for this data.
+ℹ Specify the column types or set `show_col_types = FALSE` to quiet this message.
+Error in `mutate()`:
+ℹ In argument: `genotype_clean = str_replace_all(`genotype:ch1`,
+  "[^a-zA-Z0-9_]", "")`.
+Caused by error in `vctrs::vec_size_common()`:
+! object 'genotype:ch1' not found
+Backtrace:
+     ▆
+  1. ├─meta %>% ...
+  2. ├─dplyr::mutate(...)
+  3. ├─dplyr:::mutate.data.frame(...)
+  4. │ └─dplyr:::mutate_cols(.data, dplyr_quosures(...), by)
+  5. │   ├─base::withCallingHandlers(...)
+  6. │   └─dplyr:::mutate_col(dots[[i]], data, mask, new_columns)
+  7. │     └─mask$eval_all_mutate(quo)
+  8. │       └─dplyr (local) eval()
+  9. ├─stringr::str_replace_all(`genotype:ch1`, "[^a-zA-Z0-9_]", "")
+ 10. │ └─stringr:::check_lengths(string, pattern, replacement)
+ 11. │   └─vctrs::vec_size_common(...)
+ 12. └─base::.handleSimpleError(...)
+ 13.   └─dplyr (local) h(simpleError(msg, call))
+ 14.     └─rlang::abort(message, class = error_class, parent = parent, call = error_call)
+Execution halted
+
+==================================================
+
