@@ -105,19 +105,22 @@ Overall, while multiple directories contain useful legacy or auxiliary code, the
 
 (Work in progress)
 
-### Dataset identification
+The UORCA pipeline is evolving rapidly. Currently, the workflow leverages the power of PydanticAI to drive an agentic design where
+analysis modules are encapsulated as “tools” (see **script_development/DataAnalysisAgent.py** for an in-depth example). This design
+enables:
 
-A variety of different data sources will be considered, with some candidates being:
-- ArrayExpress - functional genomics data.
-- SRA (sequence read archive) - genomic information.
-- ProteomeXchange/proteome central - proteomic data
-- Metabolomics workbench - metabolomics data.
-- dbGap - genotypes and phenotypes.
-- Text - PubMed/biorXiv
+- Automated dataset identification using LLM-driven query generation.
+- Modular data extraction, processing, and quantification steps.
+- Integration of various omics data analyses into a unified framework.
 
-The above is not exhaustive, but gives an idea of where I am currently looking.
+### Major pipeline stages include:
 
-__My focus for the time being has been with NCBI GEO__, that is utilizing transcriptomic data.
+1. **Dataset Identification:** Using LLMs to refine and generate search queries that identify relevant public datasets.
+2. **Data Extraction:** Automated retrieval and processing of raw data (note that several extraction scripts exist in the **archive/** and **SingleDatasetAnalysis/** directories).
+3. **Quantification and Analysis:** Automated quantification (via tools like Kallisto) and preprocessing that underpin the downstream DEG analyses.
+4. **Agent-Driven Integration:** Utilizing PydanticAI (as demonstrated in **DataAnalysisAgent.py**) to design workflows that automatically integrate analysis outputs and contextualize insights.
+
+This modular approach not only streamlines development but also paves the way for real-time updates and automated error correction in the analysis pipelines.
 
 Currently, the pipeline is as follows:
 1. Given a research query, use an LLM to extract keywords and identify related terms.
