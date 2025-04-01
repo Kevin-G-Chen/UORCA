@@ -6,13 +6,11 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "bio>=1.7.1",
-    "data-analysis",
     "logfire>=3.9.0",
+    "matplotlib>=3.10.1",
+    "pydantic-ai>=0.0.48",
     "tiktoken>=0.9.0",
 ]
 
 [tool.uv.workspace]
 members = ["lib/memory", "lib/data_identification", "lib/data_extraction", "lib/data_analysis"]
-
-[tool.uv.sources]
-data-analysis = { workspace = true }

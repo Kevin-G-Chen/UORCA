@@ -3,6 +3,8 @@
 # Imports
 # ----------------------------
 
+import logfire
+from pydantic_ai import Agent, RunContext
 import argparse
 import os
 import glob
@@ -10,8 +12,6 @@ import re
 import subprocess
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
 from datetime import date
 from rich.console import Console
 from rich.panel import Panel
@@ -19,14 +19,9 @@ from dataclasses import dataclass
 from typing import List, Dict, Optional, Union, Tuple, Any, Literal
 from unidecode import unidecode
 from pydantic import BaseModel, Field
-import matplotlib.pyplot as plt
-import seaborn as sns
-import gseapy as gp
 import nest_asyncio
 nest_asyncio.apply()
 console = Console()
-from pydantic_ai import Agent, RunContext
-import logfire
 logfire.configure(token=os.environ.get("LOGFIRE_KEY"))
 logfire.instrument_openai()
 
@@ -38,8 +33,10 @@ class LogLevel:
     VERBOSE = 2   # Detailed information including context for each call
     DEBUG = 3     # Maximum information for debugging
 
+
 # Set the current log level (change this to adjust verbosity)
 CURRENT_LOG_LEVEL = LogLevel.NORMAL
+
 
 def log(message, level=LogLevel.NORMAL, style=""):
     """Log a message if the current log level is equal to or greater than the specified level"""
@@ -48,6 +45,7 @@ def log(message, level=LogLevel.NORMAL, style=""):
             console.print(message, style=style)
         else:
             console.print(message)
+
 
 def log_tool_header(tool_name, params=None):
     """Print a clear header when a tool is called"""
@@ -64,6 +62,7 @@ def log_tool_header(tool_name, params=None):
 
         console.print("├" + "─" * 100 + "┤")
 
+
 def log_tool_result(result):
     """Print a clearly formatted tool result"""
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
@@ -78,6 +77,8 @@ def log_tool_result(result):
 # ----------------------------
 # Define the dependency type
 # ----------------------------
+
+
 @dataclass
 class RNAseqData:
     """Container for RNAseq analysis data and paths."""
@@ -102,8 +103,9 @@ class RNAseqData:
 
 # Adding temporary rough information for the agent until I develop a proper way of implementing documentation
 
+
 rnaseq_agent = Agent(
-    'openai:gpt-4o-mini', # Change to more powerful model
+    'openai:gpt-4o-mini',  # Change to more powerful model
     deps_type=RNAseqData,
     system_prompt="""
     You are an expert RNAseq data analyst. Your task is to analyze RNAseq data using a series of bioinformatics tools.
@@ -121,104 +123,112 @@ rnaseq_agent = Agent(
     """
 )
 
+
 @rnaseq_agent.tool
 async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> str:
-     """
-     Run Gene Set Enrichment Analysis (GSEA) on the normalized expression data for a specified contrast.
+    """
+    Run Gene Set Enrichment Analysis (GSEA) on the normalized expression data for a specified contrast.
 
-     Inputs:
-       - ctx: RunContext[RNAseqData]
-           The execution context containing an RNAseqData dependency instance. This object carries paths and runtime
-           attributes such as:
-             • fastq_dir: Directory for FASTQ files.
-             • metadata_path: Path to the metadata CSV.
-             • kallisto_index_dir: Directory where Kallisto index files are stored.
-             • output_dir: Directory for saving output files.
-             • Other optional or runtime-populated attributes (e.g. metadata_df, abundance_files, merged_column, contrast_groups).
-       - contrast_name (str):
-           A string identifier for the contrast, which is used to look up the specific experimental conditions
-           (numerator and denominator) within the contrast_groups attribute.
+    Inputs:
+      - ctx: RunContext[RNAseqData]
+          The execution context containing an RNAseqData dependency instance. This object carries paths and runtime
+          attributes such as:
+            • fastq_dir: Directory for FASTQ files.
+            • metadata_path: Path to the metadata CSV.
+            • kallisto_index_dir: Directory where Kallisto index files are stored.
+            • output_dir: Directory for saving output files.
+            • Other optional or runtime-populated attributes (e.g. metadata_df, abundance_files, merged_column, contrast_groups).
+      - contrast_name (str):
+          A string identifier for the contrast, which is used to look up the specific experimental conditions
+          (numerator and denominator) within the contrast_groups attribute.
 
-     Process:
-       1. Logs key information from the dependency context.
-       2. Checks for the existence of a normalized counts CSV file (generated from edgeR analysis).
-       3. Loads expression data from the file.
-       4. Retrieves the contrast details (numerator and denominator groups) from ctx.deps.contrast_groups.
-       5. Constructs a class vector for samples by comparing sample names in the expression data with entries in the
-          metadata (using the merged_column).
-       6. Calls the gseapy.gsea function with the expression data, contrast, and additional parameters.
-       7. Generates plots (e.g. a top‐5 pathways plot) and saves them to the designated output directory.
-       8. Constructs and returns a detailed summary string describing the performed analysis, including the number of
-          pathways analyzed and the significant pathways identified.
-     Output:
-       Returns a multiline string summary that includes:
-          • The contrast name.
-          • Total number of pathways analyzed.
-          • Number of significantly enriched pathways (e.g. FDR q-val < 0.25).
-          • A brief display (via head) of the top enriched pathways.
-          • A list of output directories and file names generated by the analysis.
+    Process:
+      1. Logs key information from the dependency context.
+      2. Checks for the existence of a normalized counts CSV file (generated from edgeR analysis).
+      3. Loads expression data from the file.
+      4. Retrieves the contrast details (numerator and denominator groups) from ctx.deps.contrast_groups.
+      5. Constructs a class vector for samples by comparing sample names in the expression data with entries in the
+         metadata (using the merged_column).
+      6. Calls the gseapy.gsea function with the expression data, contrast, and additional parameters.
+      7. Generates plots (e.g. a top‐5 pathways plot) and saves them to the designated output directory.
+      8. Constructs and returns a detailed summary string describing the performed analysis, including the number of
+         pathways analyzed and the significant pathways identified.
+    Output:
+      Returns a multiline string summary that includes:
+         • The contrast name.
+         • Total number of pathways analyzed.
+         • Number of significantly enriched pathways (e.g. FDR q-val < 0.25).
+         • A brief display (via head) of the top enriched pathways.
+         • A list of output directories and file names generated by the analysis.
 
-     Purpose in pipeline:
-       This tool is used in the later stages of the RNAseq analysis workflow to perform pathway enrichment analysis
-       after differential expression has been quantified.
-     """
-     try:
-         console.log(f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
-         if hasattr(ctx, "message_history"):
-             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
-         console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
-         console.log(f"[bold cyan]Fastq Directory:[/] {ctx.deps.fastq_dir}")
-         if hasattr(ctx, "message_history"):
-             console.log(f"[bold magenta]Message History:[/] {ctx.message_history}")
+    Purpose in pipeline:
+      This tool is used in the later stages of the RNAseq analysis workflow to perform pathway enrichment analysis
+      after differential expression has been quantified.
+    """
+    try:
+        console.log(
+            f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
+        if hasattr(ctx, "message_history"):
+            console.log(
+                f"[bold magenta]Message History:[/] {ctx.message_history}")
+        console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
+        console.log(f"[bold cyan]Fastq Directory:[/] {ctx.deps.fastq_dir}")
+        if hasattr(ctx, "message_history"):
+            console.log(
+                f"[bold magenta]Message History:[/] {ctx.message_history}")
 
-         # Check if we have normalized expression data
-         norm_counts_file = os.path.join(ctx.deps.output_dir, "edgeR_normalized_counts.csv")
-         if not os.path.exists(norm_counts_file):
-             msg = "Error: Normalized counts file not found. Please run edgeR analysis first."
-             console.log(f"[bold red]Tool Error:[/] {msg}")
-             return msg
+        # Check if we have normalized expression data
+        norm_counts_file = os.path.join(
+            ctx.deps.output_dir, "edgeR_normalized_counts.csv")
+        if not os.path.exists(norm_counts_file):
+            msg = "Error: Normalized counts file not found. Please run edgeR analysis first."
+            console.log(f"[bold red]Tool Error:[/] {msg}")
+            return msg
 
-         console.log(f"[bold yellow]Progress:[/] Loaded expression data with shape: {expr_data.shape}")
-         # Load normalized counts
-         expr_data = pd.read_csv(norm_counts_file, index_col=0)
+        console.log(
+            f"[bold yellow]Progress:[/] Loaded expression data with shape: {expr_data.shape}")
+        # Load normalized counts
+        expr_data = pd.read_csv(norm_counts_file, index_col=0)
 
-         # Get contrast details
-         contrast = ctx.deps.contrast_groups[contrast_name]
-         group_a = contrast['numerator']
-         group_b = contrast['denominator']
+        # Get contrast details
+        contrast = ctx.deps.contrast_groups[contrast_name]
+        group_a = contrast['numerator']
+        group_b = contrast['denominator']
 
-         # Create class vector
-         class_vector = []
-         for sample in expr_data.columns:
-             if sample in ctx.deps.metadata_df[ctx.deps.metadata_df[ctx.deps.merged_column] == group_a].index:
-                 class_vector.append(group_a)
-             else:
-                 class_vector.append(group_b)
+        # Create class vector
+        class_vector = []
+        for sample in expr_data.columns:
+            if sample in ctx.deps.metadata_df[ctx.deps.metadata_df[ctx.deps.merged_column] == group_a].index:
+                class_vector.append(group_a)
+            else:
+                class_vector.append(group_b)
 
-         # Run GSEA
-         gs_res = gp.gsea(
-             data=expr_data,
-             gene_sets='MSigDB_Hallmark_2020',
-             cls=class_vector,
-             permutation_type='phenotype',
-             permutation_num=1000,
-             outdir=os.path.join(ctx.deps.output_dir, f"gsea_{contrast_name}"),
-             method='signal_to_noise',
-             threads=4
-         )
+        # Run GSEA
+        gs_res = gp.gsea(
+            data=expr_data,
+            gene_sets='MSigDB_Hallmark_2020',
+            cls=class_vector,
+            permutation_type='phenotype',
+            permutation_num=1000,
+            outdir=os.path.join(ctx.deps.output_dir, f"gsea_{contrast_name}"),
+            method='signal_to_noise',
+            threads=4
+        )
 
-         # Generate plots
-         terms = gs_res.res2d.Term
-         gs_res.plot(
-             terms=terms[:5],
-             show_ranking=True,
-             ofname=os.path.join(ctx.deps.output_dir, f"gsea_{contrast_name}_top5.png")
-         )
+        # Generate plots
+        terms = gs_res.res2d.Term
+        gs_res.plot(
+            terms=terms[:5],
+            show_ranking=True,
+            ofname=os.path.join(ctx.deps.output_dir,
+                                f"gsea_{contrast_name}_top5.png")
+        )
 
-         console.log(f"[bold yellow]Progress:[/] Generated GSEA plots in directory: {os.path.join(ctx.deps.output_dir, f'gsea_{contrast_name}')}")
-         # Summarize results
-         sig_pathways = gs_res.res2d[gs_res.res2d['FDR q-val'] < 0.25]
-         msg = f"""
+        console.log(
+            f"[bold yellow]Progress:[/] Generated GSEA plots in directory: {os.path.join(ctx.deps.output_dir, f'gsea_{contrast_name}')}")
+        # Summarize results
+        sig_pathways = gs_res.res2d[gs_res.res2d['FDR q-val'] < 0.25]
+        msg = f"""
  GSEA Analysis completed for contrast: {contrast_name}
 
  Summary:
@@ -231,21 +241,24 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
  - GSEA results: gsea_{contrast_name}/
  - Top pathways plot: gsea_{contrast_name}_top5.png
  """
-         console.log(f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
-         return msg
+        console.log(
+            f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
+        return msg
 
-     except Exception as e:
-         error_msg = f"Error running GSEA analysis: {str(e)}"
-         console.log(f"[bold red]Tool Exception:[/] {error_msg}")
-         return error_msg
+    except Exception as e:
+        error_msg = f"Error running GSEA analysis: {str(e)}"
+        console.log(f"[bold red]Tool Exception:[/] {error_msg}")
+        return error_msg
 
-     finally:
-         # This finally block will always run, ensuring that any open figures are closed.
-         plt.close('all')
+    finally:
+        # This finally block will always run, ensuring that any open figures are closed.
+        plt.close('all')
 
 # ----------------------------
 # Utility Functions
 # ----------------------------
+
+
 @rnaseq_agent.tool
 async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -279,6 +292,7 @@ async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
     log_tool_result(result)
     return result
 
+
 @rnaseq_agent.tool
 async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[str, List[str]]) -> List[str]:
     """
@@ -310,16 +324,20 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
     try:
         # Log the initial context only once per run
         if not hasattr(ctx.deps, '_logged_context'):
-            log(f"Initial Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
+            log(f"Initial Context.deps details:\n{vars(ctx.deps)}",
+                level=LogLevel.VERBOSE, style="bold blue")
             setattr(ctx.deps, '_logged_context', True)
 
         # Log tool call with parameters
-        log_tool_header("find_files", {"directory": directory, "suffix": suffix})
+        log_tool_header(
+            "find_files", {"directory": directory, "suffix": suffix})
 
         # Log context details only in verbose mode
-        log(f"Context.deps details:\n{vars(ctx.deps)}", level=LogLevel.VERBOSE, style="bold blue")
+        log(f"Context.deps details:\n{vars(ctx.deps)}",
+            level=LogLevel.VERBOSE, style="bold blue")
         if hasattr(ctx, "message_history"):
-            log(f"Message History: {ctx.message_history}", level=LogLevel.DEBUG, style="bold magenta")
+            log(f"Message History: {ctx.message_history}",
+                level=LogLevel.DEBUG, style="bold magenta")
 
         # Execute the actual file search
         matched_files = []
@@ -356,6 +374,8 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
         log(error_msg, style="bold red")
         log_tool_result(error_msg)
         return [error_msg]
+
+
 @rnaseq_agent.tool
 def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     """
@@ -383,7 +403,8 @@ def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     """
     if pd.isna(s):
         return "NA"  # Handle missing values
-    s = str(s).strip()  # Convert to string and remove leading/trailing whitespaces
+    # Convert to string and remove leading/trailing whitespaces
+    s = str(s).strip()
     s = unidecode(s)  # Normalize special characters to ASCII
     s = s.replace(" ", "_")  # Replace spaces with underscores
     s = re.sub(r'[^\w]', '', s)  # Remove non-word characters
@@ -392,6 +413,8 @@ def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
 # ----------------------------
 # Metadata Analysis Tools
 # ----------------------------
+
+
 @rnaseq_agent.tool
 async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -405,7 +428,8 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
     respectively.
     """
     try:
-        log_tool_header("process_metadata", {"metadata_path": ctx.deps.metadata_path})
+        log_tool_header("process_metadata", {
+                        "metadata_path": ctx.deps.metadata_path})
 
         # Load metadata based on file extension
         if ctx.deps.metadata_path.endswith('.csv'):
@@ -424,7 +448,8 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
 
         # Clean all cell values in the dataframe using clean_string
         for col in df.columns:
-            df[col] = df[col].apply(lambda x: clean_string(ctx, x) if pd.notna(x) else x)
+            df[col] = df[col].apply(
+                lambda x: clean_string(ctx, x) if pd.notna(x) else x)
         ctx.deps.metadata_df = df
 
         # Identify candidate grouping columns passing metadata via LLM
@@ -448,8 +473,8 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
         """
 
         response = client.responses.create(
-            model = "gpt-4o-mini",
-            input = prompt,
+            model="gpt-4o-mini",
+            input=prompt,
             text={
                 "format": {
                     "type": "json_schema",
@@ -465,7 +490,8 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
         # Merge candidates if more than one is found; otherwise, use the single candidate
         if len(candidate_cols) > 1:
             merged_col = "merged_analysis_group"
-            df[merged_col] = df[candidate_cols].apply(lambda row: '_'.join([str(val) for val in row.values]), axis=1)
+            df[merged_col] = df[candidate_cols].apply(
+                lambda row: '_'.join([str(val) for val in row.values]), axis=1)
             ctx.deps.merged_column = merged_col
             result_msg = f"Merged candidate columns ({', '.join(candidate_cols)}) into '{merged_col}'."
         else:
@@ -483,6 +509,7 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
         log(error_msg, style="bold red")
         log_tool_result(error_msg)
         return error_msg
+
 
 @rnaseq_agent.tool
 async def design_contrasts(ctx: RunContext[RNAseqData]) -> str:
@@ -544,7 +571,7 @@ async def design_contrasts(ctx: RunContext[RNAseqData]) -> str:
             # For multiple groups, compare each to a reference
             # Try to identify a control/reference group
             potential_controls = [g for g in groups if any(kw in g.lower() for kw in
-                                 ['control', 'ctrl', 'reference', 'ref', 'normal', 'wt', 'wild', 'mock', 'dmso', 'pbs', 'untreated'])]
+                                                           ['control', 'ctrl', 'reference', 'ref', 'normal', 'wt', 'wild', 'mock', 'dmso', 'pbs', 'untreated'])]
 
             if potential_controls:
                 # Use the identified control
@@ -600,6 +627,7 @@ Contrasts:
     except Exception as e:
         return f"Error designing contrasts: {str(e)}"
 
+
 @rnaseq_agent.tool
 async def print_dependency_paths(ctx: RunContext[RNAseqData]) -> str:
     """Print out all paths and settings in the dependency object."""
@@ -619,6 +647,8 @@ async def print_dependency_paths(ctx: RunContext[RNAseqData]) -> str:
 # ----------------------------
 # Kallisto Quantification Tools
 # ----------------------------
+
+
 @rnaseq_agent.tool
 async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -646,7 +676,8 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
       quantification step uses the appropriate reference for the organism under study.
     """
     try:
-        console.log(f"[bold blue]Finding Kallisto index for organism:[/] {ctx.deps.organism}")
+        console.log(
+            f"[bold blue]Finding Kallisto index for organism:[/] {ctx.deps.organism}")
         organism = ctx.deps.organism.lower()
         index_dir = ctx.deps.kallisto_index_dir
 
@@ -657,14 +688,16 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
             return f"Error: No Kallisto index files found in {index_dir}"
 
         # Try to find an index matching the organism
-        matching_indices = [idx for idx in index_files if organism in os.path.basename(os.path.dirname(idx)).lower()]
+        matching_indices = [idx for idx in index_files if organism in os.path.basename(
+            os.path.dirname(idx)).lower()]
 
         if matching_indices:
             index_path = matching_indices[0]
             # Also find the transcript-to-gene mapping file if available
             tx2gene_files = await find_files(ctx, os.path.dirname(index_path), '.txt')
             if tx2gene_files:
-                t2g_files = [f for f in tx2gene_files if any(x in os.path.basename(f).lower() for x in ['t2g', 'tx2gene'])]
+                t2g_files = [f for f in tx2gene_files if any(
+                    x in os.path.basename(f).lower() for x in ['t2g', 'tx2gene'])]
                 if t2g_files:
                     ctx.deps.tx2gene_path = t2g_files[0]
 
@@ -675,6 +708,7 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
 
     except Exception as e:
         return f"Error finding Kallisto index: {str(e)}"
+
 
 @rnaseq_agent.tool
 async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
@@ -713,8 +747,10 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
       transcript abundance estimates, which are later used for differential expression analysis.
     """
     try:
-        console.log(f"[bold cyan]Fastq Directory from context:[/] {ctx.deps.fastq_dir}")
-        console.log(f"[bold blue]Full context.deps details:[/]\n{vars(ctx.deps)}")
+        console.log(
+            f"[bold cyan]Fastq Directory from context:[/] {ctx.deps.fastq_dir}")
+        console.log(
+            f"[bold blue]Full context.deps details:[/]\n{vars(ctx.deps)}")
 
         # Find paired FASTQ files using the fastq_dir from the dependency
         fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
@@ -761,16 +797,20 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
         # Match R1 with R2 files
         for r1_file in r1_files:
             # Convert R1 to R2 in the filename
-            expected_r2 = r1_file.replace('_R1', '_R2').replace('_1.fastq', '_2.fastq')
+            expected_r2 = r1_file.replace(
+                '_R1', '_R2').replace('_1.fastq', '_2.fastq')
             if expected_r2 in r2_files:
                 # Extract sample name from filename
-                sample_name = os.path.basename(r1_file).split('_R1')[0].split('_1.fastq')[0]
+                sample_name = os.path.basename(r1_file).split('_R1')[
+                    0].split('_1.fastq')[0]
                 paired_files[sample_name] = (r1_file, expected_r2)
 
-        console.log(f"[bold yellow]Progress:[/] Identified {len(paired_files)} paired FASTQ file groups.")
+        console.log(
+            f"[bold yellow]Progress:[/] Identified {len(paired_files)} paired FASTQ file groups.")
         if not paired_files:
             # If no pairs found, check if files are single-end
-            single_end = all(not r1_pattern.match(f) and not r2_pattern.match(f) for f in fastq_files)
+            single_end = all(not r1_pattern.match(
+                f) and not r2_pattern.match(f) for f in fastq_files)
             if single_end:
                 return "Error: Single-end reads detected. Kallisto requires paired-end reads or additional parameters for single-end analysis."
             else:
@@ -789,23 +829,28 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                 "-o", sample_output_dir,
                 "-t", "4",  # Use 4 threads
                 "--plaintext",  # Output plaintext instead of HDF5
-                "--bootstrap-samples=10",  # Number of bootstrap samples, low at the moment to speed up testing
+                # Number of bootstrap samples, low at the moment to speed up testing
+                "--bootstrap-samples=10",
                 r1, r2
             ]
 
-            console.log(f"[bold yellow]Progress:[/] Running Kallisto quantification for sample: {sample_name}")
+            console.log(
+                f"[bold yellow]Progress:[/] Running Kallisto quantification for sample: {sample_name}")
             process = subprocess.run(cmd, capture_output=True, text=True)
 
-            console.log(f"[bold yellow]Progress:[/] Completed Kallisto run for sample: {sample_name} (return code: {process.returncode})")
+            console.log(
+                f"[bold yellow]Progress:[/] Completed Kallisto run for sample: {sample_name} (return code: {process.returncode})")
             if process.returncode == 0:
                 results.append(f"Successfully processed {sample_name}")
             else:
-                results.append(f"Error processing {sample_name}: {process.stderr}")
+                results.append(
+                    f"Error processing {sample_name}: {process.stderr}")
 
         # Collect paths to abundance files
         abundance_files = []
         for sample_name in paired_files.keys():
-            abundance_file = os.path.join(output_dir, sample_name, "abundance.tsv")
+            abundance_file = os.path.join(
+                output_dir, sample_name, "abundance.tsv")
             if os.path.exists(abundance_file):
                 abundance_files.append(abundance_file)
 
@@ -826,6 +871,8 @@ Found {len(abundance_files)} abundance files for downstream analysis.
 # ----------------------------
 # Differential Expression Analysis Tools
 # ----------------------------
+
+
 @rnaseq_agent.tool
 async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -885,8 +932,10 @@ async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
         os.makedirs(ctx.deps.output_dir, exist_ok=True)
 
         # Get sample names from abundance file paths
-        sample_names = [os.path.basename(os.path.dirname(f)) for f in ctx.deps.abundance_files]
-        log(f"Extracted {len(sample_names)} sample names from abundance files", level=LogLevel.VERBOSE)
+        sample_names = [os.path.basename(os.path.dirname(f))
+                        for f in ctx.deps.abundance_files]
+        log(f"Extracted {len(sample_names)} sample names from abundance files",
+            level=LogLevel.VERBOSE)
 
         # Create a mapping between abundance files and metadata
         # First, try to match based on exact sample names
@@ -899,7 +948,8 @@ async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
             # 1. Exact match in any column
             exact_matches = []
             for col in metadata_df.columns:
-                matches = metadata_df[metadata_df[col].astype(str) == sample_name].index.tolist()
+                matches = metadata_df[metadata_df[col].astype(
+                    str) == sample_name].index.tolist()
                 exact_matches.extend(matches)
 
             if exact_matches:
@@ -912,7 +962,8 @@ async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
                 substring_matches = []
                 for col in metadata_df.columns:
                     # Check if the sample name is contained in any column value
-                    matches = metadata_df[metadata_df[col].astype(str).str.contains(sample_name, case=False, na=False)].index.tolist()
+                    matches = metadata_df[metadata_df[col].astype(str).str.contains(
+                        sample_name, case=False, na=False)].index.tolist()
                     substring_matches.extend(matches)
 
                 if substring_matches:
@@ -967,21 +1018,26 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
         analysis_df = pd.DataFrame(index=list(matched_samples.keys()))
 
         # Add the file paths
-        analysis_df['abundance_file'] = [matched_samples[s]['abundance_file'] for s in analysis_df.index]
+        analysis_df['abundance_file'] = [matched_samples[s]
+                                         ['abundance_file'] for s in analysis_df.index]
 
         # Add the metadata
         for col in metadata_df.columns:
-            analysis_df[col] = [metadata_df.loc[matched_samples[s]['metadata_row'], col] for s in analysis_df.index]
+            analysis_df[col] = [metadata_df.loc[matched_samples[s]
+                                                ['metadata_row'], col] for s in analysis_df.index]
 
         # Save the analysis dataframe for later use
-        analysis_df_path = os.path.join(ctx.deps.output_dir, "edger_analysis_samples.csv")
+        analysis_df_path = os.path.join(
+            ctx.deps.output_dir, "edger_analysis_samples.csv")
         analysis_df.to_csv(analysis_df_path)
-        log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
+        log(f"Saved sample mapping to {analysis_df_path}",
+            level=LogLevel.NORMAL)
         # Optionally, store in a registry for later reference:
         ctx.deps.file_registry = getattr(ctx.deps, 'file_registry', {})
         ctx.deps.file_registry['sample_mapping'] = analysis_df_path
         ctx.deps.sample_mapping = analysis_df_path
-        log(f"Saved sample mapping to {analysis_df_path}", level=LogLevel.NORMAL)
+        log(f"Saved sample mapping to {analysis_df_path}",
+            level=LogLevel.NORMAL)
 
         result = f"""
 Successfully prepared data for DESeq2 analysis with {len(analysis_df)} samples. The sample mapping file can be found at {analysis_df_path}.
@@ -1000,6 +1056,7 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
         return result
     except Exception as e:
         return f"Error running Kallisto quantification: {str(e)}"
+
 
 @rnaseq_agent.tool
 async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
@@ -1028,10 +1085,12 @@ async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
 
         # Ensure the output directory exists
         os.makedirs(ctx.deps.output_dir, exist_ok=True)
-        r_script_path = os.path.join(ctx.deps.output_dir, "edger_limma_analysis.R")
+        r_script_path = os.path.join(
+            ctx.deps.output_dir, "edger_limma_analysis.R")
 
         # Determine the tx2gene file argument; if not provided, pass "NA"
-        tx2gene_arg = ctx.deps.tx2gene_path if ctx.deps.tx2gene_path and os.path.exists(ctx.deps.tx2gene_path) else "NA"
+        tx2gene_arg = ctx.deps.tx2gene_path if ctx.deps.tx2gene_path and os.path.exists(
+            ctx.deps.tx2gene_path) else "NA"
 
         # Write the R script
         with open(r_script_path, "w") as f:
@@ -1134,7 +1193,8 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
         log(f"Created R script at {r_script_path}", level=LogLevel.NORMAL)
 
         # Execute the R script. Pass the metadata path, merged column, output directory, and tx2gene argument.
-        cmd = ['Rscript', r_script_path, ctx.deps.sample_mapping, ctx.deps.merged_column, ctx.deps.output_dir, tx2gene_arg]
+        cmd = ['Rscript', r_script_path, ctx.deps.sample_mapping,
+               ctx.deps.merged_column, ctx.deps.output_dir, tx2gene_arg]
         print("Running R script for edgeR/limma analysis:", ' '.join(cmd))
         process = subprocess.run(cmd, capture_output=True, text=True)
         stdout = process.stdout
@@ -1156,14 +1216,16 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
 # ----------------------------
 if __name__ == "__main__":
     # Parse command-line arguments for the RNAseq analysis data
-    parser = argparse.ArgumentParser(description="RNAseq analysis pipeline parameters")
+    parser = argparse.ArgumentParser(
+        description="RNAseq analysis pipeline parameters")
     parser.add_argument("--fastq_dir", type=str, default="./TestRNAseqData_SETBP1/GSE262710/fastq",
                         help="Directory where FASTQ files are stored")
     parser.add_argument("--metadata_path", type=str, default="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
                         help="Path to the metadata CSV file")
     parser.add_argument("--kallisto_index_dir", type=str, default="../../../data/kallisto_indices",
                         help="Directory where Kallisto index files are stored")
-    parser.add_argument("--organism", type=str, default="human", help="Organism name")
+    parser.add_argument("--organism", type=str,
+                        default="human", help="Organism name")
     parser.add_argument("--output_dir", type=str, default="./analysis_output/GSE262710",
                         help="Directory to save analysis output")
     args = parser.parse_args()
@@ -1190,8 +1252,10 @@ if __name__ == "__main__":
     try:
         # Run the agent synchronously
         result = rnaseq_agent.run_sync(initial_prompt, deps=analysis_data)
-        console.print(Panel("Analysis completed successfully!", style="bold green"))
+        console.print(
+            Panel("Analysis completed successfully!", style="bold green"))
         console.print("\n[bold yellow]Agent response:[/bold yellow]")
         console.print(result.data)
     except Exception as e:
-        console.print(Panel(f"Error during analysis: {str(e)}", style="bold red"))
+        console.print(
+            Panel(f"Error during analysis: {str(e)}", style="bold red"))
