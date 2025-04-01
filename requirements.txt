@@ -1,0 +1,5 @@
+bio>=1.7.1
+logfire>=3.9.0
+matplotlib>=3.10.1
+pydantic-ai>=0.0.48
+tiktoken>=0.9.0
