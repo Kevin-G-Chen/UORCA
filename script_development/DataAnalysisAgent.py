@@ -1,3 +1,4 @@
+
 # Create a global console instance
 # console = Console()
 # Imports
@@ -12,18 +13,23 @@ import re
 import subprocess
 import pandas as pd
 import numpy as np
+import json
+from dotenv import load_dotenv
+import matplotlib.pyplot as plt
 from datetime import date
 from rich.console import Console
 from rich.panel import Panel
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Union, Tuple, Any, Literal
 from unidecode import unidecode
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
+import matplotlib.pyplot as plt
 import nest_asyncio
+from openai import OpenAI
 nest_asyncio.apply()
 console = Console()
-logfire.configure(token=os.environ.get("LOGFIRE_KEY"))
-logfire.instrument_openai()
+# logfire.configure(token=os.environ.get("LOGFIRE_KEY"))
+# logfire.instrument_openai()
 
 
 # Configure logging levels
@@ -88,6 +94,7 @@ class RNAseqData:
     kallisto_index_dir: str
     organism: str = "human"  # default to human
     output_dir: str = "output"
+    kallisto_index_path: Optional[str] = None
     tx2gene_path: Optional[str] = None
 
     # Runtime data that gets populated during analysis
@@ -97,12 +104,30 @@ class RNAseqData:
     contrast_groups: Dict[str, Dict[str, str]] = None
     sample_mapping: Optional[pd.DataFrame] = None
 
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Get the API key
+openai_api_key = os.getenv("OPENAI_API_KEY")
+# Define Pydantic class for the structured output
+client = OpenAI()
+
+# Define Pydantic class for the structured output
+
+
+class RelevantColumns(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    columns: List[str] = Field(
+        description="Column, or columns, that are best suited for grouping variables in the metadata table.")
+
+
+schema = RelevantColumns.model_json_schema()
 # ----------------------------
 # Create an RNAseq analysis agent
 # ----------------------------
 
 # Adding temporary rough information for the agent until I develop a proper way of implementing documentation
-
 
 rnaseq_agent = Agent(
     'openai:gpt-4o-mini',  # Change to more powerful model
@@ -410,10 +435,6 @@ def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     s = re.sub(r'[^\w]', '', s)  # Remove non-word characters
     return s
 
-# ----------------------------
-# Metadata Analysis Tools
-# ----------------------------
-
 
 @rnaseq_agent.tool
 async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
@@ -450,6 +471,8 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
         for col in df.columns:
             df[col] = df[col].apply(
                 lambda x: clean_string(ctx, x) if pd.notna(x) else x)
+
+        # Store cleaned metadata in the context
         ctx.deps.metadata_df = df
 
         # Identify candidate grouping columns passing metadata via LLM
@@ -709,7 +732,6 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
     except Exception as e:
         return f"Error finding Kallisto index: {str(e)}"
 
-
 @rnaseq_agent.tool
 async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -827,15 +849,13 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                 "kallisto", "quant",
                 "-i", index_path,
                 "-o", sample_output_dir,
-                "-t", "4",  # Use 4 threads
+                "-t", "24",  # Use 4 threads
                 "--plaintext",  # Output plaintext instead of HDF5
-                # Number of bootstrap samples, low at the moment to speed up testing
-                "--bootstrap-samples=10",
                 r1, r2
             ]
 
             console.log(
-                f"[bold yellow]Progress:[/] Running Kallisto quantification for sample: {sample_name}")
+                f"[bold yellow]Progress:[/] Running Kallisto quantification for sample: {sample_name} via command: {cmd}")
             process = subprocess.run(cmd, capture_output=True, text=True)
 
             console.log(
@@ -1095,8 +1115,15 @@ async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
         # Write the R script
         with open(r_script_path, "w") as f:
             f.write('''
+user_lib <- Sys.getenv("R_LIBS_USER", unset="~/R/library")
+if (!dir.exists(user_lib)) {
+    dir.create(user_lib, recursive = TRUE)
+}
+.libPaths(c(user_lib, .libPaths()))
+
 library(pacman)
-p_load(tidyverse, edgeR, limma, tximport)
+# Load only the required packages (removing tidyverse)
+p_load(edgeR, limma, tximport)
 
 cat("=== R Script: edgeR/limma Analysis Start ===\n")
 
@@ -1107,7 +1134,7 @@ output_dir <- args[3]
 tx2gene_file <- args[4]
 
 cat("Loading metadata from:", metadata_file, "\n")
-metadata <- read_csv(metadata_file)
+metadata <- read.csv(metadata_file, stringsAsFactors = FALSE)
 str(metadata)
 if(nrow(metadata) == 0) {
   stop("Metadata is empty!")
@@ -1120,10 +1147,13 @@ if(!"abundance_file" %in% colnames(metadata)) {
 # Load tx2gene mapping if provided
 if(tx2gene_file != "NA" && file.exists(tx2gene_file)){
   cat("Loading tx2gene mapping from:", tx2gene_file, "\n")
-  tx2gene <- read_tsv(tx2gene_file, col_names = FALSE) %>%
-  dplyr::select(1, 3) %>%
-  setNames(c("TXNAME", "GENEID")) %>%
-  dplyr::filter(!is.na(GENEID) & GENEID != "")
+  tx2gene <- read.delim(tx2gene_file, header = FALSE, stringsAsFactors = FALSE)
+  # Select columns 1 and 3 (like dplyr::select(1,3))
+  tx2gene <- tx2gene[, c(1, 3)]
+  # Rename columns (like setNames)
+  names(tx2gene) <- c("TXNAME", "GENEID")
+  # Filter rows where GENEID is not NA and not empty (like dplyr::filter)
+  tx2gene <- tx2gene[!is.na(tx2gene$GENEID) & tx2gene$GENEID != "", ]
   str(tx2gene)
   use_tx2gene <- TRUE
 } else {
@@ -1143,7 +1173,8 @@ if(use_tx2gene){
 
 cat("Creating DGEList...\n")
 DGE <- DGEList(counts = kallisto$counts)
-DGE$samples <- bind_cols(DGE$samples, metadata)
+# Combine DGE$samples with metadata (bind_cols replaced with cbind)
+DGE$samples <- cbind(DGE$samples, metadata)
 
 cat("Normalizing DGEList...\n")
 DGE.norm <- calcNormFactors(DGE)
@@ -1172,7 +1203,7 @@ if(ncol(design) == 2){
   cat("Top differential expression results for contrast:\n")
   top_results <- topTable(fit2, number = Inf)
   print(head(top_results))
-  write_csv(top_results, file = file.path(output_dir, "DEG_results.csv"))
+  write.csv(top_results, file = file.path(output_dir, "DEG_results.csv"), row.names = FALSE)
 } else {
   cat("Multiple groups detected. Generating top results for each coefficient...\n")
   for(i in 1:ncol(design)){
@@ -1180,7 +1211,7 @@ if(ncol(design) == 2){
     cat("Top results for", coef_name, ":\n")
     top_results <- topTable(fit, coef = i, number = Inf)
     print(head(top_results))
-    write_csv(top_results, file = file.path(output_dir, paste0("DEG_results_", coef_name, ".csv")))
+    write.csv(top_results, file = file.path(output_dir, paste0("DEG_results_", coef_name, ".csv")), row.names = FALSE)
   }
 }
 
@@ -1217,7 +1248,7 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
 if __name__ == "__main__":
     # Parse command-line arguments for the RNAseq analysis data
     parser = argparse.ArgumentParser(
-        description="RNAseq analysis pipeline parameters")
+        description="RNAseq analysis pipeline parameters for testing")
     parser.add_argument("--fastq_dir", type=str, default="./TestRNAseqData_SETBP1/GSE262710/fastq",
                         help="Directory where FASTQ files are stored")
     parser.add_argument("--metadata_path", type=str, default="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
@@ -1230,19 +1261,20 @@ if __name__ == "__main__":
                         help="Directory to save analysis output")
     args = parser.parse_args()
 
-    # Create an instance using command-line parameters (renamed to analysis_data)
+    # Create an RNAseqData instance (renamed to analysis_data)
     analysis_data = RNAseqData(
         fastq_dir=args.fastq_dir,
         metadata_path=args.metadata_path,
         kallisto_index_dir=args.kallisto_index_dir,
         organism=args.organism,
         output_dir=args.output_dir
+
     )
 
-    # Initialize conversation with analysis steps
+    # Initialize conversation with analysis steps (using your testing prompt)
     initial_prompt = """
     Use the provided tools to perform an RNAseq analysis. This should encompass:
-        1. Kallisto quantification, after identifying appropriate files and indices.
+        1. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate.
         2. Preparation for the edgeR differential expression analysis, including sample mapping and metadata analysis
         3. Running edgeR analysis for differential expression, including contrasts and results.
         4. Do not perform GSEA analyses
@@ -1250,7 +1282,7 @@ if __name__ == "__main__":
 
     # Run the agent
     try:
-        # Run the agent synchronously
+        # Run the agent synchronously using the new dependency instance
         result = rnaseq_agent.run_sync(initial_prompt, deps=analysis_data)
         console.print(
             Panel("Analysis completed successfully!", style="bold green"))
