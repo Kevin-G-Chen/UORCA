@@ -161,7 +161,6 @@ rnaseq_agent = Agent(
     system_prompt=system_prompt
 )
 
-# Please fix this tool, such that it can be used to run GSEA analysis, and is compatible with naming conventions/file finding etc, from other parts of the pipeline AI!
 
 
 @rnaseq_agent.tool
@@ -256,40 +255,34 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
             verbose=True
         )
 
-        # Save the complete GSEA results to CSV.
-        all_out = os.path.join(
-            this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
+        # Save complete GSEA results CSV and filter significant gene sets
+        all_out = os.path.join(this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
         pre_res.res2d.to_csv(all_out)
-        console.log(f"[bold green]Saved complete GSEA results to:{all_out}")
+        console.log(f"[bold green]Saved complete GSEA results to: {all_out}")
 
-        # If the expected column is present, filter for significance.
         if "FDR q-val" in pre_res.res2d.columns:
             sig = pre_res.res2d[pre_res.res2d["FDR q-val"] < 0.05]
-            sig_out = os.path.join(
-                this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
+            sig_out = os.path.join(this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
             sig.to_csv(sig_out)
-            console.log(
-                f"[bold green]Saved significant GSEA results to:{sig_out}")
+            console.log(f"[bold green]Saved significant GSEA results to: {sig_out}")
             sig_msg = f"{sig.shape[0]} significant gene sets found"
         else:
             sig_msg = "No FDR q-val column found; significant results not extracted"
 
         # Generate plots for the top 5 pathways (if available)
         if not pre_res.res2d.empty:
-            # Sort by FDR and select top 5 pathways
-            top_terms = pre_res.res2d.sort_values(
-                "FDR q-val").head(5).index.tolist()
+            top_terms = pre_res.res2d.sort_values("FDR q-val").head(5).index.tolist()
             for term in top_terms:
-                plot_out = os.path.join(
-                    this_gsea_out_dir, f"gsea_{contrast_name}_{term}.png")
-                # This call uses the ranking information from pre_res; adjust parameters if necessary
-                gp.gseaplot(pre_res.ranking,
-                            pre_res.res2d.loc[term], term, ofname=plot_out)
-                console.log(
-                    f"[bold green]Generated GSEA plot for pathway {term} at: {plot_out}")
+                plot_out = os.path.join(this_gsea_out_dir, f"gsea_{contrast_name}_{term}.png")
+                gp.gseaplot(pre_res.ranking, pre_res.res2d.loc[term], term, ofname=plot_out)
+                console.log(f"[bold green]Generated GSEA plot for pathway {term} at: {plot_out}")
+
+        msg = f"""GSEA preranked analysis completed for contrast: {contrast_name}
 Total gene sets tested: {pre_res.res2d.shape[0]}
 {sig_msg}
 Complete results saved to: {all_out}
+GSEA plots saved to directory: {this_gsea_out_dir}
+"""
         console.log(
             f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
         return msg
@@ -1270,7 +1263,6 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
         log_tool_result(f"STDOUT:\n{stdout}")
         log_tool_result(f"STDERR:\n{stderr}")
 
-        # Add the DEG CSV path to the dependency object - fix this for me, to ensure it is compatible with the rest of the pipeline AI!
         import glob  # if not already imported at the top of the function/file
         deg_files = glob.glob(os.path.join(ctx.deps.output_dir, "DEG_results*.csv"))
         if deg_files:
