@@ -205,6 +205,7 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
       This tool is used in the later stages of the RNAseq analysis workflow to perform pathway enrichment analysis
       after differential expression has been quantified.
     """
+    import gseapy as gp
     try:
         console.log(
             f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
@@ -273,7 +274,15 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
         else:
             sig_msg = "No FDR q-val column found; significant results not extracted"
 
-        msg = f"""GSEA preranked analysis completed for contrast: {contrast_name}
+        # Generate plots for the top 5 pathways (if available)
+        if not pre_res.res2d.empty:
+            # Sort by FDR and select top 5 pathways
+            top_terms = pre_res.res2d.sort_values("FDR q-val").head(5).index.tolist()
+            for term in top_terms:
+                plot_out = os.path.join(this_gsea_out_dir, f"gsea_{contrast_name}_{term}.png")
+                # This call uses the ranking information from pre_res; adjust parameters if necessary
+                gp.gseaplot(pre_res.ranking, pre_res.res2d.loc[term], term, ofname=plot_out)
+                console.log(f"[bold green]Generated GSEA plot for pathway {term} at: {plot_out}")
 Total gene sets tested: {pre_res.res2d.shape[0]}
 {sig_msg}
 Complete results saved to: {all_out}
@@ -282,35 +291,6 @@ Complete results saved to: {all_out}
             f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
         return msg
 
-        # Generate plots
-        terms = gs_res.res2d.Term
-        gs_res.plot(
-            terms=terms[:5],
-            show_ranking=True,
-            ofname=os.path.join(ctx.deps.output_dir,
-                                f"gsea_{contrast_name}_top5.png")
-        )
-
-        console.log(
-            f"[bold yellow]Progress:[/] Generated GSEA plots in directory: {os.path.join(ctx.deps.output_dir, f'gsea_{contrast_name}')}")
-        # Summarize results
-        sig_pathways = gs_res.res2d[gs_res.res2d['FDR q-val'] < 0.25]
-        msg = f"""
- GSEA Analysis completed for contrast: {contrast_name}
-
- Summary:
- - Total pathways analyzed: {len(gs_res.res2d)}
- - Significant pathways (FDR < 0.25): {len(sig_pathways)}
- - Top enriched pathways:
- {sig_pathways[['Term', 'NES', 'FDR q-val']].head().to_string()}
-
- Generated files:
- - GSEA results: gsea_{contrast_name}/
- - Top pathways plot: gsea_{contrast_name}_top5.png
- """
-        console.log(
-            f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
-        return msg
 
     except Exception as e:
         error_msg = f"Error running GSEA analysis: {str(e)}"
@@ -1288,8 +1268,12 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
         log_tool_result(f"STDERR:\n{stderr}")
 
         # Add the DEG CSV path to the dependency object - fix this for me, to ensure it is compatible with the rest of the pipeline AI!
-        ctx.deps.deg_results_path = os.path.join(
-            ctx.deps.output_dir, "DEG_results.csv")
+        import glob  # if not already imported at the top of the function/file
+        deg_files = glob.glob(os.path.join(ctx.deps.output_dir, "DEG_results*.csv"))
+        if deg_files:
+            ctx.deps.deg_results_path = deg_files[0] if len(deg_files) == 1 else deg_files
+        else:
+            ctx.deps.deg_results_path = None
 
         return f"edgeR/limma analysis completed with return code: {process.returncode}"
 
