@@ -129,23 +129,51 @@ schema = RelevantColumns.model_json_schema()
 
 # Adding temporary rough information for the agent until I develop a proper way of implementing documentation
 
-rnaseq_agent = Agent(
-    'openai:gpt-4o-mini',  # Change to more powerful model
-    deps_type=RNAseqData,
-    system_prompt="""
+# Read system prompt from file
+system_prompt_path = "../script_development/prompt_development/data_analysis_agent_systemprompt.txt"
+try:
+    with open(system_prompt_path, 'r') as f:
+        system_prompt = f.read()
+
+    # Print the first and last few lines for verification
+    lines = system_prompt.split('\n')
+    print(f"\n--- SYSTEM PROMPT FILE LOADED ---")
+    print("First 3 lines:")
+    for line in lines[:3]:
+        print(f"> {line}")
+
+    print("...")
+
+    print("Last 3 lines:")
+    for line in lines[-3:]:
+        print(f"> {line}")
+    print(f"--- END OF PREVIEW ({len(lines)} total lines) ---\n")
+
+# If the file is not found, use a fallback system prompt
+
+except Exception as e:
+    print(f"Failed to read system prompt file: {str(e)}")
+    system_prompt = """
+    # RNA-seq Data Analysis Expert
+
     You are an expert RNAseq data analyst. Your task is to analyze RNAseq data using a series of bioinformatics tools.
 
-    Follow these general principles throughout your analysis:
+    ## General Analysis Principles
+
     1. Work systematically through the RNA-seq analysis workflow
     2. Validate inputs at each step
     3. Provide clear explanations of what's happening
     4. Handle errors gracefully
     5. Generate appropriate visualizations when needed
-    6. Be comprehensive, both in the analysis steps but also more routine steps. For example, if you cannot find a file, ensure you check other common file extensions.
-    7. After completing each step, take careful note of any output files. Specifically, make note of the location and names of saved files, and ensure these are added to context.
-
-
+    6. Be comprehensive in your analysis
+    7. Track output files carefully
     """
+    print("Using fallback system prompt instead.")
+
+rnaseq_agent = Agent(
+    'openai:gpt-4o',  # Change to more powerful model
+    deps_type=RNAseqData,
+    system_prompt=system_prompt
 )
 
 
@@ -496,7 +524,7 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
         """
 
         response = client.responses.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             input=prompt,
             text={
                 "format": {
@@ -732,6 +760,7 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
     except Exception as e:
         return f"Error finding Kallisto index: {str(e)}"
 
+
 @rnaseq_agent.tool
 async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
     """
@@ -847,6 +876,7 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
             # Build Kallisto command
             cmd = [
                 "kallisto", "quant",
+                "--rf-stranded",  # Temporary hardcode until I implement determination of strandedness
                 "-i", index_path,
                 "-o", sample_output_dir,
                 "-t", "24",  # Use 4 threads
@@ -1192,6 +1222,7 @@ cat("Fitting linear model...\n")
 fit <- lmFit(v, design)
 fit <- eBayes(fit)
 
+
 if(ncol(design) == 2){
   cat("Exactly two groups detected. Calculating contrast (group2 - group1)...\n")
   contrast_name <- paste(colnames(design)[2], "-", colnames(design)[1])
@@ -1203,13 +1234,20 @@ if(ncol(design) == 2){
   cat("Top differential expression results for contrast:\n")
   top_results <- topTable(fit2, number = Inf)
   print(head(top_results))
+  top_results$Gene <- rownames(top_results)
+  top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
+  print(head(top_results))
   write.csv(top_results, file = file.path(output_dir, "DEG_results.csv"), row.names = FALSE)
+
 } else {
   cat("Multiple groups detected. Generating top results for each coefficient...\n")
   for(i in 1:ncol(design)){
     coef_name <- colnames(design)[i]
     cat("Top results for", coef_name, ":\n")
     top_results <- topTable(fit, coef = i, number = Inf)
+
+    top_results$Gene <- rownames(top_results)
+    top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
     print(head(top_results))
     write.csv(top_results, file = file.path(output_dir, paste0("DEG_results_", coef_name, ".csv")), row.names = FALSE)
   }
