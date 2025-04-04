@@ -1,6 +1,4 @@
 
-# Create a global console instance
-# console = Console()
 # Imports
 # ----------------------------
 
