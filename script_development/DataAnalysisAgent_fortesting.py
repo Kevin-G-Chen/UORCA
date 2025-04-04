@@ -54,31 +54,15 @@ def log(message, level=LogLevel.NORMAL, style=""):
 
 
 def log_tool_header(tool_name, params=None):
-    """Print a clear header when a tool is called"""
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
-        console.print("╭" + "─" * 100 + "╮")
-        header = f"│ TOOL: {tool_name}"
-        header += " " * (100 - len(header) - 1) + "│"
-        console.print(header, style="bold blue")
-
-        if params and CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
-            param_str = "│ Parameters: " + str(params)
-            param_str += " " * (100 - len(param_str) - 1) + "│"
-            console.print(param_str)
-
-        console.print("├" + "─" * 100 + "┤")
+        console.print(f"TOOL: {tool_name}", style="bold blue")
+        if params:
+            console.print(f"Parameters: {params}")
 
 
 def log_tool_result(result):
-    """Print a clearly formatted tool result"""
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
-        result_lines = str(result).strip().split('\n')
-        for line in result_lines:
-            line_str = "│ " + line
-            line_str += " " * (100 - len(line_str) - 1) + "│"
-            console.print(line_str)
-        console.print("╰" + "─" * 100 + "╯")
-        console.print("")  # Add extra line for separation
+        console.print(result)
 
 # ----------------------------
 # Define the dependency type
@@ -1298,6 +1282,25 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="./analysis_output/GSE262710",
                         help="Directory to save analysis output")
     args = parser.parse_args()
+
+    # Ensure the output directory exists
+    os.makedirs(args.output_dir, exist_ok=True)
+    log_file_path = os.path.join(args.output_dir, "log.txt")
+    log_file = open(log_file_path, "a")
+
+    # Define a Tee class to duplicate output to both STDOUT and the log file
+    class Tee:
+        def __init__(self, *streams):
+            self.streams = streams
+        def write(self, data):
+            for s in self.streams:
+                s.write(data)
+        def flush(self):
+            for s in self.streams:
+                s.flush()
+
+    import sys
+    sys.stdout = Tee(sys.stdout, log_file)
 
     # Create an RNAseqData instance (renamed to analysis_data)
     analysis_data = RNAseqData(
