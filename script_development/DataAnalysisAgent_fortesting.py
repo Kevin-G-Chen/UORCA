@@ -1318,7 +1318,7 @@ if __name__ == "__main__":
         1. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate.
         2. Preparation for the edgeR differential expression analysis, including sample mapping and metadata analysis
         3. Running edgeR analysis for differential expression, including contrasts and results.
-        4. Do not perform GSEA analyses
+        4. After performing the edgeR analysis, use these results to perform a GSEA.
     """
 
     # Run the agent
