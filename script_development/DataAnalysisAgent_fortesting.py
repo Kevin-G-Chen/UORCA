@@ -214,43 +214,60 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
             console.log(
                 f"[bold magenta]Message History:[/] {ctx.message_history}")
 
-        # Check if we have normalized expression data
-        norm_counts_file = os.path.join(
-            ctx.deps.output_dir, "edgeR_normalized_counts.csv")
-        if not os.path.exists(norm_counts_file):
-            msg = "Error: Normalized counts file not found. Please run edgeR analysis first."
+        # Check if we have DEG results
+        deg_file = os.path.join(ctx.deps.output_dir, f"deg_{contrast_name}.csv")
+        if not os.path.exists(deg_file):
+            msg = f"Error: DEG results file '{deg_file}' not found. Please run differential expression analysis first."
             console.log(f"[bold red]Tool Error:[/] {msg}")
             return msg
 
-        console.log(
-            f"[bold yellow]Progress:[/] Loaded expression data with shape: {expr_data.shape}")
-        # Load normalized counts
-        expr_data = pd.read_csv(norm_counts_file, index_col=0)
+        deg_df = pd.read_csv(deg_file)
+        console.log(f"[bold yellow]Progress:[/] Loaded DEG data with shape: {deg_df.shape}")
 
-        # Get contrast details
-        contrast = ctx.deps.contrast_groups[contrast_name]
-        group_a = contrast['numerator']
-        group_b = contrast['denominator']
+        # Build the rank list from the DEG CSV. The DEG file is assumed to have columns "Gene" and "logFC".
+        rnk = deg_df[['Gene', 'logFC']].copy()
+        rnk['Gene'] = rnk['Gene'].str.upper()  # ensure gene symbols are uppercase
+        rnk = rnk.dropna().sort_values("logFC", ascending=False)
+        console.log(f"[bold yellow]Progress:[/] Constructed rank list with {rnk.shape[0]} genes")
 
-        # Create class vector
-        class_vector = []
-        for sample in expr_data.columns:
-            if sample in ctx.deps.metadata_df[ctx.deps.metadata_df[ctx.deps.merged_column] == group_a].index:
-                class_vector.append(group_a)
-            else:
-                class_vector.append(group_b)
+        # Define an output directory that clearly indicates the contrast and that this is a preranked GSEA run.
+        this_gsea_out_dir = os.path.join(ctx.deps.output_dir, f"GSEA_{contrast_name}_prerank")
+        os.makedirs(this_gsea_out_dir, exist_ok=True)
+        console.log(f"[bold yellow]Progress:[/] Created GSEA output directory: {this_gsea_out_dir}")
 
-        # Run GSEA
-        gs_res = gp.gsea(
-            data=expr_data,
-            gene_sets='MSigDB_Hallmark_2020',
-            cls=class_vector,
-            permutation_type='phenotype',
-            permutation_num=1000,
-            outdir=os.path.join(ctx.deps.output_dir, f"gsea_{contrast_name}"),
-            method='signal_to_noise',
-            threads=4
+        # Run preranked GSEA using the fixed GMT file
+        gmt_path = "/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/msigdb/c2.all.v2024.1.Hs.symbols.gmt"
+        pre_res = gp.prerank(
+            rnk=rnk,
+            gene_sets=gmt_path,
+            permutation_num=1000,  # adjust if needed
+            outdir=this_gsea_out_dir,
+            seed=42,
+            verbose=True
         )
+
+        # Save the complete GSEA results to CSV.
+        all_out = os.path.join(this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
+        pre_res.res2d.to_csv(all_out)
+        console.log(f"[bold green]Saved complete GSEA results to:{all_out}")
+
+        # If the expected column is present, filter for significance.
+        if "FDR q-val" in pre_res.res2d.columns:
+            sig = pre_res.res2d[pre_res.res2d["FDR q-val"] < 0.05]
+            sig_out = os.path.join(this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
+            sig.to_csv(sig_out)
+            console.log(f"[bold green]Saved significant GSEA results to:{sig_out}")
+            sig_msg = f"{sig.shape[0]} significant gene sets found"
+        else:
+            sig_msg = "No FDR q-val column found; significant results not extracted"
+
+        msg = f"""GSEA preranked analysis completed for contrast: {contrast_name}
+Total gene sets tested: {pre_res.res2d.shape[0]}
+{sig_msg}
+Complete results saved to: {all_out}
+"""
+        console.log(f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
+        return msg
 
         # Generate plots
         terms = gs_res.res2d.Term
