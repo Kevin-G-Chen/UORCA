@@ -277,16 +277,19 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
         # Generate plots for the top 5 pathways (if available)
         if not pre_res.res2d.empty:
             # Sort by FDR and select top 5 pathways
-            top_terms = pre_res.res2d.sort_values("FDR q-val").head(5).index.tolist()
+            top_terms = pre_res.res2d.sort_values(
+                "FDR q-val").head(5).index.tolist()
             for term in top_terms:
-                plot_out = os.path.join(this_gsea_out_dir, f"gsea_{contrast_name}_{term}.png")
+                plot_out = os.path.join(
+                    this_gsea_out_dir, f"gsea_{contrast_name}_{term}.png")
                 # This call uses the ranking information from pre_res; adjust parameters if necessary
-                gp.gseaplot(pre_res.ranking, pre_res.res2d.loc[term], term, ofname=plot_out)
-                console.log(f"[bold green]Generated GSEA plot for pathway {term} at: {plot_out}")
+                gp.gseaplot(pre_res.ranking,
+                            pre_res.res2d.loc[term], term, ofname=plot_out)
+                console.log(
+                    f"[bold green]Generated GSEA plot for pathway {term} at: {plot_out}")
 Total gene sets tested: {pre_res.res2d.shape[0]}
 {sig_msg}
 Complete results saved to: {all_out}
-"""
         console.log(
             f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
         return msg
@@ -355,7 +358,7 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
 
     Process:
       1. Logs the current context details (only once per run, thanks to a flag in ctx.deps).
-      2. Uses os.walk to recursively traverse the directory structure and check every file's name.
+      2. Uses os.walk to recursively traverse the directory structure and check every file name.
       3. For each file that ends with the specified suffix, concatenates its full path and adds it to a list.
       4. Returns the sorted list of matching file paths.
       5. Reports progress by logging the number of files found.
