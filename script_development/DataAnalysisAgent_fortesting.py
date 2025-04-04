@@ -87,6 +87,7 @@ class RNAseqData:
     merged_column: Optional[str] = None
     contrast_groups: Dict[str, Dict[str, str]] = None
     sample_mapping: Optional[pd.DataFrame] = None
+    deg_results_path: Optional[str] = None
 
 
 # Load environment variables from .env file
@@ -160,6 +161,8 @@ rnaseq_agent = Agent(
     system_prompt=system_prompt
 )
 
+# Please fix this tool, such that it can be used to run GSEA analysis, and is compatible with naming conventions/file finding etc, from other parts of the pipeline AI!
+
 
 @rnaseq_agent.tool
 async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> str:
@@ -215,25 +218,31 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
                 f"[bold magenta]Message History:[/] {ctx.message_history}")
 
         # Check if we have DEG results
-        deg_file = os.path.join(ctx.deps.output_dir, f"deg_{contrast_name}.csv")
+        deg_file = os.path.join(ctx.deps.output_dir,
+                                f"deg_{contrast_name}.csv")
         if not os.path.exists(deg_file):
             msg = f"Error: DEG results file '{deg_file}' not found. Please run differential expression analysis first."
             console.log(f"[bold red]Tool Error:[/] {msg}")
             return msg
 
         deg_df = pd.read_csv(deg_file)
-        console.log(f"[bold yellow]Progress:[/] Loaded DEG data with shape: {deg_df.shape}")
+        console.log(
+            f"[bold yellow]Progress:[/] Loaded DEG data with shape: {deg_df.shape}")
 
         # Build the rank list from the DEG CSV. The DEG file is assumed to have columns "Gene" and "logFC".
         rnk = deg_df[['Gene', 'logFC']].copy()
-        rnk['Gene'] = rnk['Gene'].str.upper()  # ensure gene symbols are uppercase
+        # ensure gene symbols are uppercase
+        rnk['Gene'] = rnk['Gene'].str.upper()
         rnk = rnk.dropna().sort_values("logFC", ascending=False)
-        console.log(f"[bold yellow]Progress:[/] Constructed rank list with {rnk.shape[0]} genes")
+        console.log(
+            f"[bold yellow]Progress:[/] Constructed rank list with {rnk.shape[0]} genes")
 
         # Define an output directory that clearly indicates the contrast and that this is a preranked GSEA run.
-        this_gsea_out_dir = os.path.join(ctx.deps.output_dir, f"GSEA_{contrast_name}_prerank")
+        this_gsea_out_dir = os.path.join(
+            ctx.deps.output_dir, f"GSEA_{contrast_name}_prerank")
         os.makedirs(this_gsea_out_dir, exist_ok=True)
-        console.log(f"[bold yellow]Progress:[/] Created GSEA output directory: {this_gsea_out_dir}")
+        console.log(
+            f"[bold yellow]Progress:[/] Created GSEA output directory: {this_gsea_out_dir}")
 
         # Run preranked GSEA using the fixed GMT file
         gmt_path = "/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/msigdb/c2.all.v2024.1.Hs.symbols.gmt"
@@ -247,16 +256,19 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
         )
 
         # Save the complete GSEA results to CSV.
-        all_out = os.path.join(this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
+        all_out = os.path.join(
+            this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
         pre_res.res2d.to_csv(all_out)
         console.log(f"[bold green]Saved complete GSEA results to:{all_out}")
 
         # If the expected column is present, filter for significance.
         if "FDR q-val" in pre_res.res2d.columns:
             sig = pre_res.res2d[pre_res.res2d["FDR q-val"] < 0.05]
-            sig_out = os.path.join(this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
+            sig_out = os.path.join(
+                this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
             sig.to_csv(sig_out)
-            console.log(f"[bold green]Saved significant GSEA results to:{sig_out}")
+            console.log(
+                f"[bold green]Saved significant GSEA results to:{sig_out}")
             sig_msg = f"{sig.shape[0]} significant gene sets found"
         else:
             sig_msg = "No FDR q-val column found; significant results not extracted"
@@ -266,7 +278,8 @@ Total gene sets tested: {pre_res.res2d.shape[0]}
 {sig_msg}
 Complete results saved to: {all_out}
 """
-        console.log(f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
+        console.log(
+            f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
         return msg
 
         # Generate plots
@@ -1274,6 +1287,10 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
         log_tool_result(f"STDOUT:\n{stdout}")
         log_tool_result(f"STDERR:\n{stderr}")
 
+        # Add the DEG CSV path to the dependency object - fix this for me, to ensure it is compatible with the rest of the pipeline AI!
+        ctx.deps.deg_results_path = os.path.join(
+            ctx.deps.output_dir, "DEG_results.csv")
+
         return f"edgeR/limma analysis completed with return code: {process.returncode}"
 
     except Exception as e:
@@ -1309,9 +1326,11 @@ if __name__ == "__main__":
     class Tee:
         def __init__(self, *streams):
             self.streams = streams
+
         def write(self, data):
             for s in self.streams:
                 s.write(data)
+
         def flush(self):
             for s in self.streams:
                 s.flush()
