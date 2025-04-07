@@ -222,8 +222,8 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
         return msg
 
     deg_df = pd.read_csv(deg_file)
-        console.log(
-            f"[bold yellow]Progress:[/] Loaded DEG data with shape: {deg_df.shape}")
+    console.log(
+        f"[bold yellow]Progress:[/] Loaded DEG data with shape: {deg_df.shape}")
 
         # Build the rank list from the DEG CSV. The DEG file is assumed to have columns "Gene" and "logFC".
         rnk = deg_df[['Gene', 'logFC']].copy()
