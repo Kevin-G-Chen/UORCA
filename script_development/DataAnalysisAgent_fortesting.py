@@ -161,7 +161,6 @@ rnaseq_agent = Agent(
 )
 
 
-
 @rnaseq_agent.tool
 async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
     """
@@ -211,16 +210,13 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
     # Derive contrast name from the DEG file name (e.g., remove 'deg_' prefix and '.csv' extension)
     base_file = os.path.basename(deg_file)
     contrast_name = base_file.replace("deg_", "").replace(".csv", "")
-        console.log(
-            f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
-        if hasattr(ctx, "message_history"):
-            console.log(
-                f"[bold magenta]Message History:[/] {ctx.message_history}")
-        console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
-        console.log(f"[bold cyan]Fastq Directory:[/] {ctx.deps.fastq_dir}")
+    console.log(
+        f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
+    console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
+    console.log(f"[bold cyan]Fastq Directory:[/] {ctx.deps.fastq_dir}")
 
-        # Check if the provided DEG file exists
-        if not os.path.exists(deg_file):
+       # Check if the provided DEG file exists
+       if not os.path.exists(deg_file):
             msg = f"Error: DEG results file '{deg_file}' not found. Please run differential expression analysis first."
             console.log(f"[bold red]Tool Error:[/] {msg}")
             return msg
@@ -256,26 +252,33 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
         )
 
         # Save complete GSEA results CSV and filter significant gene sets
-        all_out = os.path.join(this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
+        all_out = os.path.join(
+            this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
         pre_res.res2d.to_csv(all_out)
         console.log(f"[bold green]Saved complete GSEA results to: {all_out}")
 
         if "FDR q-val" in pre_res.res2d.columns:
             sig = pre_res.res2d[pre_res.res2d["FDR q-val"] < 0.05]
-            sig_out = os.path.join(this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
+            sig_out = os.path.join(
+                this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
             sig.to_csv(sig_out)
-            console.log(f"[bold green]Saved significant GSEA results to: {sig_out}")
+            console.log(
+                f"[bold green]Saved significant GSEA results to: {sig_out}")
             sig_msg = f"{sig.shape[0]} significant gene sets found"
         else:
             sig_msg = "No FDR q-val column found; significant results not extracted"
 
         # Generate plots for the top 5 pathways (if available)
         if not pre_res.res2d.empty:
-            top_terms = pre_res.res2d.sort_values("FDR q-val").head(5).index.tolist()
+            top_terms = pre_res.res2d.sort_values(
+                "FDR q-val").head(5).index.tolist()
             for term in top_terms:
-                plot_out = os.path.join(this_gsea_out_dir, f"gsea_{contrast_name}_{term}.png")
-                gp.gseaplot(pre_res.ranking, pre_res.res2d.loc[term], term, ofname=plot_out)
-                console.log(f"[bold green]Generated GSEA plot for pathway {term} at: {plot_out}")
+                plot_out = os.path.join(
+                    this_gsea_out_dir, f"gsea_{contrast_name}_{term}.png")
+                gp.gseaplot(pre_res.ranking,
+                            pre_res.res2d.loc[term], term, ofname=plot_out)
+                console.log(
+                    f"[bold green]Generated GSEA plot for pathway {term} at: {plot_out}")
 
         msg = f"""GSEA preranked analysis completed for contrast: {contrast_name}
 Total gene sets tested: {pre_res.res2d.shape[0]}
@@ -286,7 +289,6 @@ GSEA plots saved to directory: {this_gsea_out_dir}
         console.log(
             f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
         return msg
-
 
     except Exception as e:
         error_msg = f"Error running GSEA analysis: {str(e)}"
@@ -1264,9 +1266,11 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
         log_tool_result(f"STDERR:\n{stderr}")
 
         import glob  # if not already imported at the top of the function/file
-        deg_files = glob.glob(os.path.join(ctx.deps.output_dir, "DEG_results*.csv"))
+        deg_files = glob.glob(os.path.join(
+            ctx.deps.output_dir, "DEG_results*.csv"))
         if deg_files:
-            ctx.deps.deg_results_path = deg_files[0] if len(deg_files) == 1 else deg_files
+            ctx.deps.deg_results_path = deg_files[0] if len(
+                deg_files) == 1 else deg_files
         else:
             ctx.deps.deg_results_path = None
 
