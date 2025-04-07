@@ -1317,7 +1317,7 @@ if __name__ == "__main__":
     # Initialize conversation with analysis steps (using your testing prompt)
     initial_prompt = """
     Use the provided tools to perform an RNAseq analysis. This should encompass:
-        1. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate.
+        1. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate. Furthermore - if you are unable to open a file, ensure you use the provided tools to attempt to locate these files, and make a determination to see if this is likely correct.
         2. Preparation for the edgeR differential expression analysis, including sample mapping and metadata analysis
         3. Running edgeR analysis for differential expression, including contrasts and results.
         4. Do not perform GSEA analyses
