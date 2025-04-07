@@ -225,62 +225,62 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
     console.log(
         f"[bold yellow]Progress:[/] Loaded DEG data with shape: {deg_df.shape}")
 
-        # Build the rank list from the DEG CSV. The DEG file is assumed to have columns "Gene" and "logFC".
-        rnk = deg_df[['Gene', 'logFC']].copy()
-        # ensure gene symbols are uppercase
-        rnk['Gene'] = rnk['Gene'].str.upper()
-        rnk = rnk.dropna().sort_values("logFC", ascending=False)
+    # Build the rank list from the DEG CSV. The DEG file is assumed to have columns "Gene" and "logFC".
+    rnk = deg_df[['Gene', 'logFC']].copy()
+    # ensure gene symbols are uppercase
+    rnk['Gene'] = rnk['Gene'].str.upper()
+    rnk = rnk.dropna().sort_values("logFC", ascending=False)
+    console.log(
+        f"[bold yellow]Progress:[/] Constructed rank list with {rnk.shape[0]} genes")
+
+    # Define an output directory that clearly indicates the contrast and that this is a preranked GSEA run.
+    this_gsea_out_dir = os.path.join(
+        ctx.deps.output_dir, f"GSEA_{contrast_name}_prerank")
+    os.makedirs(this_gsea_out_dir, exist_ok=True)
+    console.log(
+        f"[bold yellow]Progress:[/] Created GSEA output directory: {this_gsea_out_dir}")
+
+    # Run preranked GSEA using the fixed GMT file
+    gmt_path = "/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/msigdb/c2.all.v2024.1.Hs.symbols.gmt"
+    pre_res = gp.prerank(
+        rnk=rnk,
+        gene_sets=gmt_path,
+        permutation_num=1000,  # adjust if needed
+        outdir=this_gsea_out_dir,
+        seed=42,
+        verbose=True
+    )
+
+    # Save complete GSEA results CSV and filter significant gene sets
+    all_out = os.path.join(
+        this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
+    pre_res.res2d.to_csv(all_out)
+    console.log(f"[bold green]Saved complete GSEA results to: {all_out}")
+
+    if "FDR q-val" in pre_res.res2d.columns:
+        sig = pre_res.res2d[pre_res.res2d["FDR q-val"] < 0.05]
+        sig_out = os.path.join(
+            this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
+        sig.to_csv(sig_out)
         console.log(
-            f"[bold yellow]Progress:[/] Constructed rank list with {rnk.shape[0]} genes")
+            f"[bold green]Saved significant GSEA results to: {sig_out}")
+        sig_msg = f"{sig.shape[0]} significant gene sets found"
+    else:
+        sig_msg = "No FDR q-val column found; significant results not extracted"
 
-        # Define an output directory that clearly indicates the contrast and that this is a preranked GSEA run.
-        this_gsea_out_dir = os.path.join(
-            ctx.deps.output_dir, f"GSEA_{contrast_name}_prerank")
-        os.makedirs(this_gsea_out_dir, exist_ok=True)
-        console.log(
-            f"[bold yellow]Progress:[/] Created GSEA output directory: {this_gsea_out_dir}")
-
-        # Run preranked GSEA using the fixed GMT file
-        gmt_path = "/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/msigdb/c2.all.v2024.1.Hs.symbols.gmt"
-        pre_res = gp.prerank(
-            rnk=rnk,
-            gene_sets=gmt_path,
-            permutation_num=1000,  # adjust if needed
-            outdir=this_gsea_out_dir,
-            seed=42,
-            verbose=True
-        )
-
-        # Save complete GSEA results CSV and filter significant gene sets
-        all_out = os.path.join(
-            this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
-        pre_res.res2d.to_csv(all_out)
-        console.log(f"[bold green]Saved complete GSEA results to: {all_out}")
-
-        if "FDR q-val" in pre_res.res2d.columns:
-            sig = pre_res.res2d[pre_res.res2d["FDR q-val"] < 0.05]
-            sig_out = os.path.join(
-                this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
-            sig.to_csv(sig_out)
+    # Generate plots for the top 5 pathways (if available)
+    if not pre_res.res2d.empty:
+        top_terms = pre_res.res2d.sort_values(
+            "FDR q-val").head(5).index.tolist()
+        for term in top_terms:
+            plot_out = os.path.join(
+                this_gsea_out_dir, f"gsea_{contrast_name}_{term}.png")
+            gp.gseaplot(pre_res.ranking,
+                        pre_res.res2d.loc[term], term, ofname=plot_out)
             console.log(
-                f"[bold green]Saved significant GSEA results to: {sig_out}")
-            sig_msg = f"{sig.shape[0]} significant gene sets found"
-        else:
-            sig_msg = "No FDR q-val column found; significant results not extracted"
+                f"[bold green]Generated GSEA plot for pathway {term} at: {plot_out}")
 
-        # Generate plots for the top 5 pathways (if available)
-        if not pre_res.res2d.empty:
-            top_terms = pre_res.res2d.sort_values(
-                "FDR q-val").head(5).index.tolist()
-            for term in top_terms:
-                plot_out = os.path.join(
-                    this_gsea_out_dir, f"gsea_{contrast_name}_{term}.png")
-                gp.gseaplot(pre_res.ranking,
-                            pre_res.res2d.loc[term], term, ofname=plot_out)
-                console.log(
-                    f"[bold green]Generated GSEA plot for pathway {term} at: {plot_out}")
-
-        msg = f"""GSEA preranked analysis completed for contrast: {contrast_name}
+    msg = f"""GSEA preranked analysis completed for contrast: {contrast_name}
 Total gene sets tested: {pre_res.res2d.shape[0]}
 {sig_msg}
 Complete results saved to: {all_out}
