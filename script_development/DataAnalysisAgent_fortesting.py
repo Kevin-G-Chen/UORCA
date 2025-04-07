@@ -215,13 +215,13 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
     console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
     console.log(f"[bold cyan]Fastq Directory:[/] {ctx.deps.fastq_dir}")
 
-       # Check if the provided DEG file exists
-       if not os.path.exists(deg_file):
-            msg = f"Error: DEG results file '{deg_file}' not found. Please run differential expression analysis first."
-            console.log(f"[bold red]Tool Error:[/] {msg}")
-            return msg
+    # Check if the provided DEG file exists
+    if not os.path.exists(deg_file):
+        msg = f"Error: DEG results file '{deg_file}' not found. Please run differential expression analysis first."
+        console.log(f"[bold red]Tool Error:[/] {msg}")
+        return msg
 
-        deg_df = pd.read_csv(deg_file)
+    deg_df = pd.read_csv(deg_file)
         console.log(
             f"[bold yellow]Progress:[/] Loaded DEG data with shape: {deg_df.shape}")
 
