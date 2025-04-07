@@ -23,6 +23,7 @@ from unidecode import unidecode
 from pydantic import BaseModel, Field, ConfigDict
 import matplotlib.pyplot as plt
 import nest_asyncio
+import gseapy
 from openai import OpenAI
 nest_asyncio.apply()
 console = Console()
