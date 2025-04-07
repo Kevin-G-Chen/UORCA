@@ -163,9 +163,13 @@ rnaseq_agent = Agent(
 
 
 @rnaseq_agent.tool
-async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> str:
+async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
     """
-    Run Gene Set Enrichment Analysis (GSEA) on the normalized expression data for a specified contrast.
+    Run Gene Set Enrichment Analysis (GSEA) on the normalized expression data using the provided DEG file.
+
+    Inputs:
+      - ctx: RunContext[RNAseqData]
+      - deg_file (str): The file path to the DEG results CSV file.
 
     Inputs:
       - ctx: RunContext[RNAseqData]
@@ -204,7 +208,9 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
       after differential expression has been quantified.
     """
     import gseapy as gp
-    try:
+    # Derive contrast name from the DEG file name (e.g., remove 'deg_' prefix and '.csv' extension)
+    base_file = os.path.basename(deg_file)
+    contrast_name = base_file.replace("deg_", "").replace(".csv", "")
         console.log(
             f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
         if hasattr(ctx, "message_history"):
@@ -212,13 +218,8 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
                 f"[bold magenta]Message History:[/] {ctx.message_history}")
         console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
         console.log(f"[bold cyan]Fastq Directory:[/] {ctx.deps.fastq_dir}")
-        if hasattr(ctx, "message_history"):
-            console.log(
-                f"[bold magenta]Message History:[/] {ctx.message_history}")
 
-        # Check if we have DEG results
-        deg_file = os.path.join(ctx.deps.output_dir,
-                                f"deg_{contrast_name}.csv")
+        # Check if the provided DEG file exists
         if not os.path.exists(deg_file):
             msg = f"Error: DEG results file '{deg_file}' not found. Please run differential expression analysis first."
             console.log(f"[bold red]Tool Error:[/] {msg}")
