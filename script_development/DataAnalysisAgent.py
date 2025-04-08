@@ -1,6 +1,4 @@
 
-# Create a global console instance
-# console = Console()
 # Imports
 # ----------------------------
 
@@ -25,6 +23,7 @@ from unidecode import unidecode
 from pydantic import BaseModel, Field, ConfigDict
 import matplotlib.pyplot as plt
 import nest_asyncio
+import gseapy
 from openai import OpenAI
 nest_asyncio.apply()
 console = Console()
@@ -87,6 +86,7 @@ class RNAseqData:
     merged_column: Optional[str] = None
     contrast_groups: Dict[str, Dict[str, str]] = None
     sample_mapping: Optional[pd.DataFrame] = None
+    deg_results_path: Optional[str] = None
 
 
 # Load environment variables from .env file
@@ -162,9 +162,13 @@ rnaseq_agent = Agent(
 
 
 @rnaseq_agent.tool
-async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> str:
+async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
     """
-    Run Gene Set Enrichment Analysis (GSEA) on the normalized expression data for a specified contrast.
+    Run Gene Set Enrichment Analysis (GSEA) on the normalized expression data using the provided DEG file.
+
+    Inputs:
+      - ctx: RunContext[RNAseqData]
+      - deg_file (str): The file path to the DEG results CSV file.
 
     Inputs:
       - ctx: RunContext[RNAseqData]
@@ -202,82 +206,79 @@ async def run_gsea_analysis(ctx: RunContext[RNAseqData], contrast_name: str) -> 
       This tool is used in the later stages of the RNAseq analysis workflow to perform pathway enrichment analysis
       after differential expression has been quantified.
     """
-    try:
-        console.log(
-            f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
-        if hasattr(ctx, "message_history"):
-            console.log(
-                f"[bold magenta]Message History:[/] {ctx.message_history}")
-        console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
-        console.log(f"[bold cyan]Fastq Directory:[/] {ctx.deps.fastq_dir}")
-        if hasattr(ctx, "message_history"):
-            console.log(
-                f"[bold magenta]Message History:[/] {ctx.message_history}")
+    import gseapy as gp
+    import os
+    import pandas as pd
+    import matplotlib.pyplot as plt
 
-        # Check if we have normalized expression data
-        norm_counts_file = os.path.join(
-            ctx.deps.output_dir, "edgeR_normalized_counts.csv")
-        if not os.path.exists(norm_counts_file):
-            msg = "Error: Normalized counts file not found. Please run edgeR analysis first."
+    # Derive contrast name from the DEG file name (e.g., remove 'deg_' prefix and '.csv' extension)
+    base_file = os.path.basename(deg_file)
+    contrast_name = base_file.replace("deg_", "").replace(".csv", "")
+    console.log(
+        f"[bold blue]Tool Called:[/] run_gsea_analysis with contrast_name: {contrast_name}")
+    console.log(f"[bold blue]Context.deps details:[/]\n{vars(ctx.deps)}")
+    console.log(f"[bold cyan]Fastq Directory:[/] {ctx.deps.fastq_dir}")
+
+    try:
+        # Check if the provided DEG file exists
+        if not os.path.exists(deg_file):
+            msg = f"Error: DEG results file '{deg_file}' not found. Please run differential expression analysis first."
             console.log(f"[bold red]Tool Error:[/] {msg}")
             return msg
 
+        deg_df = pd.read_csv(deg_file)
         console.log(
-            f"[bold yellow]Progress:[/] Loaded expression data with shape: {expr_data.shape}")
-        # Load normalized counts
-        expr_data = pd.read_csv(norm_counts_file, index_col=0)
+            f"[bold yellow]Progress:[/] Loaded DEG data with shape: {deg_df.shape}")
 
-        # Get contrast details
-        contrast = ctx.deps.contrast_groups[contrast_name]
-        group_a = contrast['numerator']
-        group_b = contrast['denominator']
+        # Build the rank list from the DEG CSV. The DEG file is assumed to have columns "Gene" and "logFC".
+        rnk = deg_df[['Gene', 'logFC']].copy()
+        # Ensure gene symbols are uppercase
+        rnk['Gene'] = rnk['Gene'].str.upper()
+        rnk = rnk.dropna().sort_values("logFC", ascending=False)
+        console.log(
+            f"[bold yellow]Progress:[/] Constructed rank list with {rnk.shape[0]} genes")
 
-        # Create class vector
-        class_vector = []
-        for sample in expr_data.columns:
-            if sample in ctx.deps.metadata_df[ctx.deps.metadata_df[ctx.deps.merged_column] == group_a].index:
-                class_vector.append(group_a)
-            else:
-                class_vector.append(group_b)
+        # Define an output directory that clearly indicates the contrast and that this is a preranked GSEA run.
+        this_gsea_out_dir = os.path.join(
+            ctx.deps.output_dir, f"GSEA_{contrast_name}_prerank")
+        os.makedirs(this_gsea_out_dir, exist_ok=True)
+        console.log(
+            f"[bold yellow]Progress:[/] Created GSEA output directory: {this_gsea_out_dir}")
 
-        # Run GSEA
-        gs_res = gp.gsea(
-            data=expr_data,
-            gene_sets='MSigDB_Hallmark_2020',
-            cls=class_vector,
-            permutation_type='phenotype',
-            permutation_num=1000,
-            outdir=os.path.join(ctx.deps.output_dir, f"gsea_{contrast_name}"),
-            method='signal_to_noise',
-            threads=4
+        # Run preranked GSEA using the fixed GMT file
+        gmt_path = "/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/msigdb/c2.all.v2024.1.Hs.symbols.gmt"
+        pre_res = gp.prerank(
+            rnk=rnk,
+            gene_sets=gmt_path,
+            permutation_num=1000,  # adjust if needed
+            outdir=this_gsea_out_dir,
+            seed=42,
+            verbose=True
         )
 
-        # Generate plots
-        terms = gs_res.res2d.Term
-        gs_res.plot(
-            terms=terms[:5],
-            show_ranking=True,
-            ofname=os.path.join(ctx.deps.output_dir,
-                                f"gsea_{contrast_name}_top5.png")
-        )
+        # Save complete GSEA results CSV and filter significant gene sets
+        all_out = os.path.join(
+            this_gsea_out_dir, f"{contrast_name}_gsea_results_all.csv")
+        pre_res.res2d.to_csv(all_out)
+        console.log(f"[bold green]Saved complete GSEA results to: {all_out}")
 
-        console.log(
-            f"[bold yellow]Progress:[/] Generated GSEA plots in directory: {os.path.join(ctx.deps.output_dir, f'gsea_{contrast_name}')}")
-        # Summarize results
-        sig_pathways = gs_res.res2d[gs_res.res2d['FDR q-val'] < 0.25]
-        msg = f"""
- GSEA Analysis completed for contrast: {contrast_name}
+        if "FDR q-val" in pre_res.res2d.columns:
+            sig = pre_res.res2d[pre_res.res2d["FDR q-val"] < 0.05]
+            sig_out = os.path.join(
+                this_gsea_out_dir, f"{contrast_name}_gsea_results_sig.csv")
+            sig.to_csv(sig_out)
+            console.log(
+                f"[bold green]Saved significant GSEA results to: {sig_out}")
+            sig_msg = f"{sig.shape[0]} significant gene sets found"
+        else:
+            sig_msg = "No FDR q-val column found; significant results not extracted"
 
- Summary:
- - Total pathways analyzed: {len(gs_res.res2d)}
- - Significant pathways (FDR < 0.25): {len(sig_pathways)}
- - Top enriched pathways:
- {sig_pathways[['Term', 'NES', 'FDR q-val']].head().to_string()}
-
- Generated files:
- - GSEA results: gsea_{contrast_name}/
- - Top pathways plot: gsea_{contrast_name}_top5.png
- """
+        msg = f"""GSEA preranked analysis completed for contrast: {contrast_name}
+Total gene sets tested: {pre_res.res2d.shape[0]}
+{sig_msg}
+Complete results saved to: {all_out}
+GSEA plots saved to directory: {this_gsea_out_dir}
+"""
         console.log(
             f"[bold green]Tool Completed:[/] run_gsea_analysis for contrast: {contrast_name}")
         return msg
@@ -345,7 +346,7 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
 
     Process:
       1. Logs the current context details (only once per run, thanks to a flag in ctx.deps).
-      2. Uses os.walk to recursively traverse the directory structure and check every file's name.
+      2. Uses os.walk to recursively traverse the directory structure and check every file name.
       3. For each file that ends with the specified suffix, concatenates its full path and adds it to a list.
       4. Returns the sorted list of matching file paths.
       5. Reports progress by logging the number of files found.
@@ -1257,6 +1258,15 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
         log_tool_result(f"STDOUT:\n{stdout}")
         log_tool_result(f"STDERR:\n{stderr}")
 
+        import glob  # if not already imported at the top of the function/file
+        deg_files = glob.glob(os.path.join(
+            ctx.deps.output_dir, "DEG_results*.csv"))
+        if deg_files:
+            ctx.deps.deg_results_path = deg_files[0] if len(
+                deg_files) == 1 else deg_files
+        else:
+            ctx.deps.deg_results_path = None
+
         return f"edgeR/limma analysis completed with return code: {process.returncode}"
 
     except Exception as e:
@@ -1317,16 +1327,17 @@ if __name__ == "__main__":
     # Initialize conversation with analysis steps (using your testing prompt)
     initial_prompt = """
     Use the provided tools to perform an RNAseq analysis. This should encompass:
-        1. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate. Furthermore - if you are unable to open a file, ensure you use the provided tools to attempt to locate these files, and make a determination to see if this is likely correct.
+        1. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate.
         2. Preparation for the edgeR differential expression analysis, including sample mapping and metadata analysis
         3. Running edgeR analysis for differential expression, including contrasts and results.
-        4. Do not perform GSEA analyses
+        4. After performing the edgeR analysis, use these results to perform a GSEA.
     """
 
     # Run the agent
     try:
         # Run the agent synchronously using the new dependency instance
-        result = rnaseq_agent.run_sync(initial_prompt, deps=analysis_data)
+        result = rnaseq_agent.run_sync(
+            initial_prompt, deps=analysis_data)
         console.print(
             Panel("Analysis completed successfully!", style="bold green"))
         console.print("\n[bold yellow]Agent response:[/bold yellow]")
