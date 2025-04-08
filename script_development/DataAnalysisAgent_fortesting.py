@@ -68,6 +68,18 @@ def log_tool_result(result):
 # Section: Utility Functions
 #############################
 
+class Contrast_format(BaseModel):
+    """Schema for each contrast."""
+    name: str
+    expression: str
+
+class Contrasts(BaseModel):
+    """Schema for the output of the candidate contrasts."""
+    contrasts: List[Contrast_format]
+    summary: str = Field(
+        description="Summary of the designed contrasts and their biological significance, including commentary about why other columns were not included, and an evaluation of biological relevant, and any redundancy."
+    )
+    model_config = ConfigDict(extra="allow")
 
 @dataclass
 class RNAseqData:
@@ -88,7 +100,22 @@ class RNAseqData:
     contrast_groups: Dict[str, Dict[str, str]] = None
     sample_mapping: Optional[pd.DataFrame] = None
     deg_results_path: Optional[str] = None
+    contrasts: Optional[Contrasts] = None
 
+# Define a class to prepare contrasts
+
+class Contrast_format(BaseModel):
+    """Schema for each contrast."""
+    name: str
+    expression: str
+
+class Contrasts(BaseModel):
+    """Schema for the output of the candidate contrasts."""
+    contrasts: List[Contrast_format]
+    summary: str = Field(
+        description="Summary of the designed contrasts and their biological significance, including commentary about why other columns were not included, and an evaluation of biological relevant, and any redundancy."
+    )
+    model_config = ConfigDict(extra="allow")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -98,16 +125,6 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 # Define Pydantic class for the structured output
 client = OpenAI()
 
-# Define Pydantic class for the structured output
-
-
-class RelevantColumns(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    columns: List[str] = Field(
-        description="Column, or columns, that are best suited for grouping variables in the metadata table.")
-
-
-schema = RelevantColumns.model_json_schema()
 # ----------------------------
 # Create an RNAseq analysis agent
 # ----------------------------
@@ -115,9 +132,11 @@ schema = RelevantColumns.model_json_schema()
 # Adding temporary rough information for the agent until I develop a proper way of implementing documentation
 
 # Read system prompt from file
-system_prompt_path = "../script_development/prompt_development/data_analysis_agent_systemprompt.txt"
+data_analysis_agent_system_prompt_path = "../script_development/prompt_development/data_analysis_agent_systemprompt.txt"
+metadata_prompt_path = "../script_development/prompt_development/metadata_processing_systemprompt.txt"
+
 try:
-    with open(system_prompt_path, 'r') as f:
+    with open(data_analysis_agent_system_prompt_path, 'r') as f:
         system_prompt = f.read()
 
     # Print the first and last few lines for verification
@@ -126,13 +145,6 @@ try:
     print("First 3 lines:")
     for line in lines[:3]:
         print(f"> {line}")
-
-    print("...")
-
-    print("Last 3 lines:")
-    for line in lines[-3:]:
-        print(f"> {line}")
-    print(f"--- END OF PREVIEW ({len(lines)} total lines) ---\n")
 
 # If the file is not found, use a fallback system prompt
 
@@ -160,7 +172,6 @@ rnaseq_agent = Agent(
     deps_type=RNAseqData,
     system_prompt=system_prompt
 )
-
 
 @rnaseq_agent.tool
 async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
@@ -415,255 +426,6 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
         return [error_msg]
 
 
-@rnaseq_agent.tool
-def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
-    """
-    Normalize and clean an input string by removing non-ASCII characters, redundant white space, and unwanted symbols.
-
-    Inputs:
-      - ctx: RunContext[RNAseqData]
-          Provides the current context (although not used for processing in this tool, it conforms to tool signature).
-      - s (str):
-          The string that is to be cleaned. If s is missing or contains special characters, these are normalized.
-
-    Process:
-      1. Checks if the input is missing (NaN) and returns "NA" if so.
-      2. Converts the input to a string and trims leading/trailing whitespace.
-      3. Uses unidecode to normalize special characters to standard ASCII.
-      4. Replaces spaces with underscores.
-      5. Uses a regular expression to remove any remaining non-word characters.
-
-    Output:
-      Returns the cleaned and normalized string.
-
-    Purpose in pipeline:
-      This tool is used to ensure consistency in sample naming across metadata and quantification outputs,
-      which is vital for matching and merging data from different sources.
-    """
-    if pd.isna(s):
-        return "NA"  # Handle missing values
-    # Convert to string and remove leading/trailing whitespaces
-    s = str(s).strip()
-    s = unidecode(s)  # Normalize special characters to ASCII
-    s = s.replace(" ", "_")  # Replace spaces with underscores
-    s = re.sub(r'[^\w]', '', s)  # Remove non-word characters
-    return s
-
-
-@rnaseq_agent.tool
-async def process_metadata(ctx: RunContext[RNAseqData]) -> str:
-    """
-    Load metadata from the file specified in ctx.deps.metadata_path, remove columns where all values are identical,
-    clean column names using clean_string, and identify candidate grouping columns for differential expression analysis.
-
-    If multiple candidate columns are found (based on common biological keywords), they are merged into a new column
-    named "merged_analysis_group". If only one candidate is identified, it is used directly.
-
-    The processed metadata and the selected grouping column are stored in ctx.deps.metadata_df and ctx.deps.merged_column,
-    respectively.
-    """
-    try:
-        log_tool_header("process_metadata", {
-                        "metadata_path": ctx.deps.metadata_path})
-
-        # Load metadata based on file extension
-        if ctx.deps.metadata_path.endswith('.csv'):
-            df = pd.read_csv(ctx.deps.metadata_path)
-        elif ctx.deps.metadata_path.endswith('.tsv') or ctx.deps.metadata_path.endswith('.txt'):
-            df = pd.read_csv(ctx.deps.metadata_path, sep='\t')
-        else:
-            df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
-
-        # Remove columns where all values are the same
-        df = df.loc[:, df.nunique() > 1]
-
-        # Clean column names using the clean_string tool function
-        new_columns = {col: clean_string(ctx, col) for col in df.columns}
-        df.rename(columns=new_columns, inplace=True)
-
-        # Clean all cell values in the dataframe using clean_string
-        for col in df.columns:
-            df[col] = df[col].apply(
-                lambda x: clean_string(ctx, x) if pd.notna(x) else x)
-
-        # Store cleaned metadata in the context
-        ctx.deps.metadata_df = df
-
-        # Identify candidate grouping columns passing metadata via LLM
-
-        # Prepare inputs for LLM prompt
-
-        preview = ctx.deps.metadata_df.to_csv(index=False)
-        columns = list(ctx.deps.metadata_df.columns)
-
-        # Prepare LLM prompt
-
-        prompt = f"""
-        You are an expert in RNAseq metadata analysis. Given the following metadata table, determine the column, or columns, that are most suitable for grouping variables in the context of differential expression analysis.
-
-        Please note that you should focus only on groups that contain biologically interested information. For example, columns like 'sample_id' or 'replicate' are not typically used as grouping variables. Furthermore, "differentiation_experiment," while good for quality control, does not contribute any biological findings, and should not be used as a grouping variable. In contrast, columns such as "genotype" "celltype" and the like are often used as grouping variables.
-
-        Do not select redundant columns. For example, if one column contains values such as "WT" and another contains "Wild Type," you should only select one of them, as these columns are functionally equivalent.
-
-        Metadata columns: {columns}
-        Metadata preview: {preview}
-        """
-
-        response = client.responses.create(
-            model="gpt-4o",
-            input=prompt,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "analysis_columns",
-                    "schema": schema,
-                    "strict": True
-                }
-            }
-        )
-
-        candidate_cols = json.loads(response.output_text)['columns']
-
-        # Merge candidates if more than one is found; otherwise, use the single candidate
-        if len(candidate_cols) > 1:
-            merged_col = "merged_analysis_group"
-            df[merged_col] = df[candidate_cols].apply(
-                lambda row: '_'.join([str(val) for val in row.values]), axis=1)
-            ctx.deps.merged_column = merged_col
-            result_msg = f"Merged candidate columns ({', '.join(candidate_cols)}) into '{merged_col}'."
-        else:
-            ctx.deps.merged_column = candidate_cols[0]
-            result_msg = f"Selected candidate column '{candidate_cols[0]}' as the grouping column."
-
-        # Update the metadata in the context
-        ctx.deps.metadata_df = df
-
-        summary = f"Metadata processed: {df.shape[0]} samples, {df.shape[1]} columns.\n{result_msg}"
-        log_tool_result(summary)
-        return summary
-    except Exception as e:
-        error_msg = f"Error processing metadata: {str(e)}"
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return error_msg
-
-
-@rnaseq_agent.tool
-async def design_contrasts(ctx: RunContext[RNAseqData]) -> str:
-    """
-    Design experimental contrasts for differential expression analysis based on the merged group information from metadata.
-
-    Inputs:
-      - ctx: RunContext[RNAseqData]
-          Must include:
-            • A metadata DataFrame (ctx.deps.metadata_df) with merged grouping specified in ctx.deps.merged_column.
-
-    Process:
-      1. Validates that the metadata and merged analysis column are present.
-      2. Extracts the unique group identifiers from the merged column.
-      3. Based on the number of groups, creates either a simple contrast (for two groups) or, for multiple groups, identifies
-         a reference (control) group and generates pairwise or reference-based contrasts.
-      4. Constructs a dictionary (contrast_details) that maps each contrast name to its details (numerator, denominator, expression).
-      5. Stores the contrast details in ctx.deps.contrast_groups.
-      6. Returns a detailed summary of the designed contrasts, including the groups used and a table-like representation of
-         the contrast details.
-
-    Output:
-      A multiline string report detailing:
-         • The unique groups identified in the metadata.
-         • The contrast names with corresponding details.
-         • Recommendations for using these contrasts in downstream differential expression analysis.
-
-    Purpose in pipeline:
-      Designing contrasts is a critical step that defines comparisons between experimental conditions for subsequent
-      differential expression analysis (e.g., by edgeR).
-    """
-    try:
-        if ctx.deps.metadata_df is None:
-            return "Error: Metadata not loaded. Please run load_metadata first."
-
-        if ctx.deps.merged_column is None:
-            return "Error: Analysis column not identified. Please run identify_analysis_columns first."
-
-        metadata_df = ctx.deps.metadata_df
-        group_col = ctx.deps.merged_column
-
-        # Get unique groups
-        groups = metadata_df[group_col].unique().tolist()
-
-        # Design contrasts based on the groups
-        contrasts = []
-        contrast_details = {}
-
-        if len(groups) == 2:
-            # Simple case with only two groups - one contrast
-            contrasts.append(f"{groups[1]}_vs_{groups[0]}")
-            contrast_details[f"{groups[1]}_vs_{groups[0]}"] = {
-                'name': f"{groups[1]} vs {groups[0]}",
-                'numerator': groups[1],
-                'denominator': groups[0],
-                'expression': f"{groups[1]} - {groups[0]}"
-            }
-        else:
-            # For multiple groups, compare each to a reference
-            # Try to identify a control/reference group
-            potential_controls = [g for g in groups if any(kw in g.lower() for kw in
-                                                           ['control', 'ctrl', 'reference', 'ref', 'normal', 'wt', 'wild', 'mock', 'dmso', 'pbs', 'untreated'])]
-
-            if potential_controls:
-                # Use the identified control
-                reference = potential_controls[0]
-                other_groups = [g for g in groups if g != reference]
-
-                for group in other_groups:
-                    contrast_name = f"{group}_vs_{reference}"
-                    contrasts.append(contrast_name)
-                    contrast_details[contrast_name] = {
-                        'name': f"{group} vs {reference}",
-                        'numerator': group,
-                        'denominator': reference,
-                        'expression': f"{group} - {reference}"
-                    }
-            else:
-                # If no obvious control, pick the first group as reference
-                reference = groups[0]
-                other_groups = groups[1:]
-
-                for group in other_groups:
-                    contrast_name = f"{group}_vs_{reference}"
-                    contrasts.append(contrast_name)
-                    contrast_details[contrast_name] = {
-                        'name': f"{group} vs {reference}",
-                        'numerator': group,
-                        'denominator': reference,
-                        'expression': f"{group} - {reference}"
-                    }
-
-                # Also create pairwise comparisons between non-reference groups if there aren't too many
-                if len(other_groups) <= 4:  # Limit to avoid too many comparisons
-                    for i, group1 in enumerate(other_groups):
-                        for group2 in other_groups[i+1:]:
-                            contrast_name = f"{group1}_vs_{group2}"
-                            contrasts.append(contrast_name)
-                            contrast_details[contrast_name] = {
-                                'name': f"{group1} vs {group2}",
-                                'numerator': group1,
-                                'denominator': group2,
-                                'expression': f"{group1} - {group2}"
-                            }
-
-        # Store the contrasts
-        ctx.deps.contrast_groups = contrast_details
-
-        return f"""
-Designed contrasts based on {group_col} column with values: {', '.join(groups)}
-
-Contrasts:
-{pd.DataFrame([contrast_details[c] for c in contrasts]).to_string()}
-        """
-    except Exception as e:
-        return f"Error designing contrasts: {str(e)}"
-
 
 @rnaseq_agent.tool
 async def print_dependency_paths(ctx: RunContext[RNAseqData]) -> str:
@@ -871,7 +633,7 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
             ]
 
             console.log(
-                f"[bold yellow]Progress:[/] Running Kallisto quantification for sample: {sample_name} via command: {cmd}")
+                f"[bold yellow]Progress:[/] Running Kallisto quantification for sample: {sample_name}")
             process = subprocess.run(cmd, capture_output=True, text=True)
 
             console.log(
@@ -1275,6 +1037,170 @@ cat("=== R Script: edgeR/limma Analysis Completed ===\n")
         log(error_msg, style="bold red")
         return error_msg
 
+
+#############################
+# SECTION: Metadata Parsing Agent tools
+#############################
+
+def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
+    """
+    (Copied from MetadataAgent)
+    Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
+    """
+    if pd.isna(s):
+        return "NA"
+    s = str(s).strip()
+    s = unidecode(s)
+    s = s.replace(" ", "_")
+    s = re.sub(r'[^\w]', '', s)
+    return s
+
+# Copy over process_metadata tool from MetadataAgent
+@rnaseq_agent.tool
+async def initial_process_metadata(ctx: RunContext[RNAseqData]) -> dict:
+    """
+    (Copied from MetadataAgent)
+    Load metadata from ctx.deps.metadata_path, clean all column names and cell values,
+    and remove columns with no variation. This is the first step in preparing and interpreting metadata for analysis.
+    """
+    try:
+        log_tool_header("process_metadata", {"metadata_path": ctx.deps.metadata_path})
+        if ctx.deps.metadata_path.endswith('.csv'):
+            df = pd.read_csv(ctx.deps.metadata_path)
+        elif ctx.deps.metadata_path.endswith(('.tsv', '.txt')):
+            df = pd.read_csv(ctx.deps.metadata_path, sep='\t')
+        else:
+            df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
+
+        # Remove columns where all values are identical
+        df = df.loc[:, df.nunique() > 1]
+        new_columns = {col: clean_string(ctx, col) for col in df.columns}
+        df.rename(columns=new_columns, inplace=True)
+        for col in df.columns:
+            df[col] = df[col].apply(lambda x: clean_string(ctx, x) if pd.notna(x) else x)
+        ctx.deps.metadata_df = df
+        # Optionally, add column stats or additional logging here …
+        summary = f"Metadata processed: {df.shape[0]} rows by {df.shape[1]} columns."
+        log_tool_result(summary)
+        return {"message": summary, "columns": list(df.columns)}
+    except Exception as e:
+        error_msg = f"Error processing metadata: {str(e)}"
+        log(error_msg, style="bold red")
+        return {"message": error_msg, "error": True}
+
+# Copy over merge_analysis_columns (if available in the original MetadataAgent)
+@rnaseq_agent.tool
+async def merge_analysis_columns(ctx: RunContext[RNAseqData], columns_input: Union[str, List[str], dict] = None) -> dict:
+    """
+    Merge specified columns into a single analysis column.
+
+    This tool can accept input in different formats:
+    1. JSON string with {"columns": [...]} structure
+    2. List of column names directly
+    3. A single column name as string
+
+    If only one column is provided, it's set as the analysis column.
+    If multiple columns are provided, they are merged by joining values with an underscore.
+
+    The result is stored in ctx.deps.merged_column.
+    """
+    try:
+        # Handle different input formats flexibly
+        log_tool_header("merge_analysis_columns")
+        candidate_cols = []
+
+        # Case 1: JSON string input
+        if isinstance(columns_input, str):
+            try:
+                # Try to parse as JSON
+                parsed = json.loads(columns_input)
+                if isinstance(parsed, dict) and "columns" in parsed:
+                    candidate_cols = parsed["columns"]
+                elif isinstance(parsed, list):
+                    candidate_cols = parsed
+                else:
+                    # Treat as a single column name
+                    candidate_cols = [columns_input]
+            except json.JSONDecodeError:
+                # Not JSON, treat as a single column name
+                candidate_cols = [columns_input]
+
+        # Case 2: List input
+        elif isinstance(columns_input, list):
+            candidate_cols = columns_input
+
+        # Case 3: Dict input with "columns" key
+        elif isinstance(columns_input, dict) and "columns" in columns_input:
+            candidate_cols = columns_input["columns"]
+
+        # Validate we have something to work with
+        if not candidate_cols:
+            msg = "No columns provided for merging."
+            log_tool_result(msg)
+            return {"message": msg, "success": False, "merged_column": None}
+
+        df = ctx.deps.metadata_df.copy()
+
+        # Filter to ensure columns actually exist in the dataframe
+        valid_cols = [col for col in candidate_cols if col in df.columns]
+        if not valid_cols:
+            msg = f"None of the specified columns {candidate_cols} exist in the metadata."
+            log_tool_result(msg)
+            return {"message": msg, "success": False, "merged_column": None}
+
+        if len(valid_cols) == 1:
+            # Single column; use it directly
+            ctx.deps.merged_column = valid_cols[0]
+            msg = f"Single column '{valid_cols[0]}' selected as the analysis column."
+        else:
+            # Multiple columns; merge them
+            merged_col = "merged_analysis_group"
+            df[merged_col] = df[valid_cols].astype(str).apply(
+                lambda row: "_".join(row.values), axis=1)
+            ctx.deps.metadata_df = df  # update the DataFrame
+            ctx.deps.merged_column = merged_col
+            msg = f"Multiple columns {', '.join(valid_cols)} merged into column '{merged_col}'."
+
+            # Show a preview of the merged values
+            unique_merged = df[merged_col].unique().tolist()
+            preview = unique_merged[:5] if len(unique_merged) > 5 else unique_merged
+            msg += f"\nMerged values (preview): {preview}"
+
+        log_tool_result(msg)
+        return {
+            "message": msg,
+            "success": True,
+            "merged_column": ctx.deps.merged_column,
+            "input_columns": valid_cols
+        }
+    except Exception as e:
+        error_msg = f"Error in merge_analysis_columns: {str(e)}"
+        log(error_msg, style="bold red")
+        log_tool_result(error_msg)
+        return {"message": error_msg, "success": False, "merged_column": None}
+
+# Copy over extract_unique_values (if needed)
+@rnaseq_agent.tool
+async def extract_unique_values(ctx: RunContext[RNAseqData]) -> dict:
+    """
+    (Copied from MetadataAgent) Extract and return unique values from the merged analysis column.
+    """
+    try:
+        log_tool_header("extract_unique_values")
+        if ctx.deps.metadata_df is None:
+            return {"success": False, "message": "Metadata has not been processed.", "unique_values": []}
+        if not ctx.deps.merged_column:
+            return {"success": False, "message": "Analysis column not defined.", "unique_values": []}
+        df = ctx.deps.metadata_df
+        unique_values = sorted(df[ctx.deps.merged_column].dropna().unique().tolist())
+        ctx.deps.unique_groups = unique_values
+        log_tool_result(f"Extracted {len(unique_values)} unique values from column '{ctx.deps.merged_column}'")
+        return {"success": True, "unique_values": unique_values}
+    except Exception as e:
+        error_msg = f"Error extracting unique values: {str(e)}"
+        log(error_msg, style="bold red")
+        return {"success": False, "message": error_msg, "unique_values": []}
+
 # ----------------------------
 # Main Execution
 # ----------------------------
@@ -1329,9 +1255,10 @@ if __name__ == "__main__":
     initial_prompt = """
     Use the provided tools to perform an RNAseq analysis. This should encompass:
         1. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate.
-        2. Preparation for the edgeR differential expression analysis, including sample mapping and metadata analysis
-        3. Running edgeR analysis for differential expression, including contrasts and results.
-        4. After performing the edgeR analysis, use these results to perform a GSEA.
+        2. Processing of the metadata - you should use the dedicated metadata agent to do this.
+        3. Preparing the edgeR analysis
+        4. Running edgeR analysis for differential expression, including contrasts and results.
+        5. For the moment, do NOT perform a GSEA.
     """
 
     # Run the agent
@@ -1346,112 +1273,3 @@ if __name__ == "__main__":
     except Exception as e:
         console.print(
             Panel(f"Error during analysis: {str(e)}", style="bold red"))
-#############################
-# SECTION: Metadata Parsing Agent
-#############################
-
-# Create a new agent for metadata parsing
-metadata_agent = Agent(
-    'openai:gpt-4o', 
-    deps_type=RNAseqData,
-    system_prompt="""You are an expert in RNAseq metadata parsing.
-Please process the metadata to identify biologically relevant columns for grouping,
-clean the column names and values, and merge candidates as necessary."""
-)
-
-# Copy over the clean_string tool from MetadataAgent
-@metadata_agent.tool
-def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
-    """
-    (Copied from MetadataAgent) 
-    Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
-    """
-    if pd.isna(s):
-        return "NA"
-    s = str(s).strip()
-    s = unidecode(s)
-    s = s.replace(" ", "_")
-    s = re.sub(r'[^\w]', '', s)
-    return s
-
-# Copy over process_metadata tool from MetadataAgent
-@metadata_agent.tool
-async def process_metadata(ctx: RunContext[RNAseqData]) -> dict:
-    """
-    (Copied from MetadataAgent) 
-    Load metadata from ctx.deps.metadata_path, clean all column names and cell values, 
-    and remove columns with no variation.
-    """
-    try:
-        log_tool_header("process_metadata", {"metadata_path": ctx.deps.metadata_path})
-        if ctx.deps.metadata_path.endswith('.csv'):
-            df = pd.read_csv(ctx.deps.metadata_path)
-        elif ctx.deps.metadata_path.endswith(('.tsv', '.txt')):
-            df = pd.read_csv(ctx.deps.metadata_path, sep='\t')
-        else:
-            df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
-        
-        # Remove columns where all values are identical
-        df = df.loc[:, df.nunique() > 1]
-        new_columns = {col: clean_string(ctx, col) for col in df.columns}
-        df.rename(columns=new_columns, inplace=True)
-        for col in df.columns:
-            df[col] = df[col].apply(lambda x: clean_string(ctx, x) if pd.notna(x) else x)
-        ctx.deps.metadata_df = df
-        # Optionally, add column stats or additional logging here …
-        summary = f"Metadata processed: {df.shape[0]} rows by {df.shape[1]} columns."
-        log_tool_result(summary)
-        return {"message": summary, "columns": list(df.columns)}
-    except Exception as e:
-        error_msg = f"Error processing metadata: {str(e)}"
-        log(error_msg, style="bold red")
-        return {"message": error_msg, "error": True}
-
-# Copy over merge_analysis_columns (if available in the original MetadataAgent)
-@metadata_agent.tool
-async def merge_analysis_columns(ctx: RunContext[RNAseqData], columns_input: Union[str, List[str], dict]=None) -> dict:
-    """
-    (Copied from MetadataAgent)
-    Merge specified columns into a single analysis column and store in ctx.deps.merged_column.
-    """
-    try:
-        # [insert content exactly as in MetadataAgent]
-        ...
-    except Exception as e:
-        error_msg = f"Error in merge_analysis_columns: {str(e)}"
-        log(error_msg, style="bold red")
-        return {"message": error_msg, "success": False, "merged_column": None}
-
-# Copy over extract_unique_values (if needed)
-@metadata_agent.tool
-async def extract_unique_values(ctx: RunContext[RNAseqData]) -> dict:
-    """
-    (Copied from MetadataAgent) Extract and return unique values from the merged analysis column.
-    """
-    try:
-        if ctx.deps.metadata_df is None:
-            return {"success": False, "message": "Metadata has not been processed.", "unique_values": []}
-        if not ctx.deps.merged_column:
-            return {"success": False, "message": "Analysis column not defined.", "unique_values": []}
-        df = ctx.deps.metadata_df
-        unique_values = sorted(df[ctx.deps.merged_column].dropna().unique().tolist())
-        ctx.deps.unique_groups = unique_values
-        log_tool_result(f"Extracted {len(unique_values)} unique values from column '{ctx.deps.merged_column}'")
-        return {"success": True, "unique_values": unique_values}
-    except Exception as e:
-        error_msg = f"Error extracting unique values: {str(e)}"
-        log(error_msg, style="bold red")
-        return {"success": False, "message": error_msg, "unique_values": []}
-#############################
-# Section: Metadata Parsing Integration
-#############################
-
-@rnaseq_agent.tool
-async def metadata_parsing(ctx: RunContext[RNAseqData]) -> str:
-    """
-    This function is called by the RNAseq Agent and in turn invokes the metadata processing tool from the MetadataParsing agent.
-    """
-    # Call the process_metadata tool from metadata_agent
-    result = await metadata_agent.tools['process_metadata'](ctx)
-    # Optionally, reformat the result into a string if needed
-    return f"Metadata Parsing result: {result.get('message', '')}"
