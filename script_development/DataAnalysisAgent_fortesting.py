@@ -1,8 +1,9 @@
 
-# Imports
-# ----------------------------
+#############################
+# SECTION: Logging and Utilities
+#############################
 
-import logfire
+## (Removed logfire as it isn’t used)
 from pydantic_ai import Agent, RunContext
 import argparse
 import os
@@ -63,9 +64,9 @@ def log_tool_result(result):
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
         console.print(result)
 
-# ----------------------------
-# Define the dependency type
-# ----------------------------
+#############################
+# Section: Utility Functions
+#############################
 
 
 @dataclass
@@ -680,9 +681,9 @@ async def print_dependency_paths(ctx: RunContext[RNAseqData]) -> str:
     log_tool_result(result)
     return result
 
-# ----------------------------
-# Kallisto Quantification Tools
-# ----------------------------
+#############################
+# Section: Kallisto Quantification Tools
+#############################
 
 
 @rnaseq_agent.tool
@@ -903,9 +904,9 @@ Found {len(abundance_files)} abundance files for downstream analysis.
     except Exception as e:
         return f"Error running Kallisto quantification: {str(e)}"
 
-# ----------------------------
-# Differential Expression Analysis Tools
-# ----------------------------
+#############################
+# Section: Differential Expression Analysis Tools
+#############################
 
 
 @rnaseq_agent.tool
@@ -1345,3 +1346,112 @@ if __name__ == "__main__":
     except Exception as e:
         console.print(
             Panel(f"Error during analysis: {str(e)}", style="bold red"))
+#############################
+# SECTION: Metadata Parsing Agent
+#############################
+
+# Create a new agent for metadata parsing
+metadata_agent = Agent(
+    'openai:gpt-4o', 
+    deps_type=RNAseqData,
+    system_prompt="""You are an expert in RNAseq metadata parsing.
+Please process the metadata to identify biologically relevant columns for grouping,
+clean the column names and values, and merge candidates as necessary."""
+)
+
+# Copy over the clean_string tool from MetadataAgent
+@metadata_agent.tool
+def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
+    """
+    (Copied from MetadataAgent) 
+    Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
+    """
+    if pd.isna(s):
+        return "NA"
+    s = str(s).strip()
+    s = unidecode(s)
+    s = s.replace(" ", "_")
+    s = re.sub(r'[^\w]', '', s)
+    return s
+
+# Copy over process_metadata tool from MetadataAgent
+@metadata_agent.tool
+async def process_metadata(ctx: RunContext[RNAseqData]) -> dict:
+    """
+    (Copied from MetadataAgent) 
+    Load metadata from ctx.deps.metadata_path, clean all column names and cell values, 
+    and remove columns with no variation.
+    """
+    try:
+        log_tool_header("process_metadata", {"metadata_path": ctx.deps.metadata_path})
+        if ctx.deps.metadata_path.endswith('.csv'):
+            df = pd.read_csv(ctx.deps.metadata_path)
+        elif ctx.deps.metadata_path.endswith(('.tsv', '.txt')):
+            df = pd.read_csv(ctx.deps.metadata_path, sep='\t')
+        else:
+            df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
+        
+        # Remove columns where all values are identical
+        df = df.loc[:, df.nunique() > 1]
+        new_columns = {col: clean_string(ctx, col) for col in df.columns}
+        df.rename(columns=new_columns, inplace=True)
+        for col in df.columns:
+            df[col] = df[col].apply(lambda x: clean_string(ctx, x) if pd.notna(x) else x)
+        ctx.deps.metadata_df = df
+        # Optionally, add column stats or additional logging here …
+        summary = f"Metadata processed: {df.shape[0]} rows by {df.shape[1]} columns."
+        log_tool_result(summary)
+        return {"message": summary, "columns": list(df.columns)}
+    except Exception as e:
+        error_msg = f"Error processing metadata: {str(e)}"
+        log(error_msg, style="bold red")
+        return {"message": error_msg, "error": True}
+
+# Copy over merge_analysis_columns (if available in the original MetadataAgent)
+@metadata_agent.tool
+async def merge_analysis_columns(ctx: RunContext[RNAseqData], columns_input: Union[str, List[str], dict]=None) -> dict:
+    """
+    (Copied from MetadataAgent)
+    Merge specified columns into a single analysis column and store in ctx.deps.merged_column.
+    """
+    try:
+        # [insert content exactly as in MetadataAgent]
+        ...
+    except Exception as e:
+        error_msg = f"Error in merge_analysis_columns: {str(e)}"
+        log(error_msg, style="bold red")
+        return {"message": error_msg, "success": False, "merged_column": None}
+
+# Copy over extract_unique_values (if needed)
+@metadata_agent.tool
+async def extract_unique_values(ctx: RunContext[RNAseqData]) -> dict:
+    """
+    (Copied from MetadataAgent) Extract and return unique values from the merged analysis column.
+    """
+    try:
+        if ctx.deps.metadata_df is None:
+            return {"success": False, "message": "Metadata has not been processed.", "unique_values": []}
+        if not ctx.deps.merged_column:
+            return {"success": False, "message": "Analysis column not defined.", "unique_values": []}
+        df = ctx.deps.metadata_df
+        unique_values = sorted(df[ctx.deps.merged_column].dropna().unique().tolist())
+        ctx.deps.unique_groups = unique_values
+        log_tool_result(f"Extracted {len(unique_values)} unique values from column '{ctx.deps.merged_column}'")
+        return {"success": True, "unique_values": unique_values}
+    except Exception as e:
+        error_msg = f"Error extracting unique values: {str(e)}"
+        log(error_msg, style="bold red")
+        return {"success": False, "message": error_msg, "unique_values": []}
+#############################
+# Section: Metadata Parsing Integration
+#############################
+
+@rnaseq_agent.tool
+async def metadata_parsing(ctx: RunContext[RNAseqData]) -> str:
+    """
+    This function is called by the RNAseq Agent and in turn invokes the metadata processing tool from the MetadataParsing agent.
+    """
+    # Call the process_metadata tool from metadata_agent
+    result = await metadata_agent.tools['process_metadata'](ctx)
+    # Optionally, reformat the result into a string if needed
+    return f"Metadata Parsing result: {result.get('message', '')}"
