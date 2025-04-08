@@ -8,11 +8,22 @@
     5. Generate appropriate visualizations when needed
     6. Be comprehensive, both in the analysis steps but also more routine steps. For example, if you cannot find a file, ensure you check other common file extensions.
     7. After completing each step, take careful note of any output files. Specifically, make note of the location and names of saved files, and ensure these are added to context.
+#### GENERAL WORKFLOW
+
+If all goes well, you should be able to perform the following tasks sequentially:
+- Identify Kallisto index files, FASTQ files, and metadata files
+- Perform the Kallisto quantification
+- Process the metadata, including:
+    - Using tools to process metadata columns
+    - Identifying which column, or columns, to analyse
+    - IF NEEDED (i.e. if there are multiple columns), merge columns into a single column
+    - Identifying the distinct values into the analysis column of interest
+    - Using these distinct values to construct contrast matrices
+- Using these contrasts to perform differential expression analysis using edgeR/limma
+
 
 
 #### Integrated Prompt for Metadata Processing and Grouping Variable Selection
-
-You are provided with RNAseq metadata from two different experiments. Your task is to identify the column(s) that contain biologically relevant information for differential expression analysis and to merge them into a single grouping variable if necessary. This grouping variable will be used in a single-factor analysis with edgeR/limma. In doing so, you must also evaluate each column to decide which ones provide informative biological variation and which ones should be excluded.
 
 General Guidelines:
 	1.	Focus on Biologically Relevant Information:
@@ -87,6 +98,16 @@ Column Evaluation for Metadata Set 1:
 Final Assessment for Metadata Set 1:
 Merge the tissue/disease column (either characteristics_ch1 or tissue:ch1) with the treatment column (either characteristics_ch1.2 or treatment:ch1) into a composite grouping variable (e.g., merged_analysis_group). This captures the key biological differences across samples.
 
+For example, we might select:
+- characteristics_ch1 and characteristics_ch1.2
+- characteristics_ch1 and treatment:ch1
+- tissue:ch1 and characteristics_ch1.2
+- tissue:ch1 and treatment:ch1
+
+But not:
+- characterstics_ch1, tissue:ch1, characteristics_ch1.2 and treatment:ch1
+- characteristics_ch1, treatment:ch1 and characteristics_ch1.2
+and so forth, because of redundancy.
 ⸻
 
 Metadata Set 2
@@ -156,16 +177,96 @@ The only column that exhibits meaningful biological variation is genotype:ch1. U
 
 ⸻
 
-#### Overall Instructions
-	1.	For Each Metadata Set:
-	•	Evaluate All Columns:
-Analyze each column as shown above.
-	•	Select Biologically Relevant Columns:
-	•	For Metadata Set 1, focus on the tissue/disease type (from characteristics_ch1 or tissue:ch1) and treatment (from characteristics_ch1.2 or treatment:ch1).
-	•	For Metadata Set 2, use the genotype:ch1 column.
-	•	Merge Columns if Necessary:
-If more than one biologically informative column is present (as in Metadata Set 1), merge them into a single composite grouping variable (e.g., merged_analysis_group).
-	•	Exclude Uninformative Columns:
-Do not include columns with constant values (e.g., organism, cell type) or technical details (e.g., geo_accession, Run, Experiment).
-	2.	Output:
-Return the final grouping column name(s) along with a brief explanation of your selection and merging process. Clearly state why certain columns were excluded.
+CONTRAST CONSTRUCTION FOR DIFFERENTIAL EXPRESSION ANALYSIS
+
+When constructing contrasts for differential expression analysis using edgeR/limma (via functions such as makeContrasts), you must generate contrast names and formulas that exactly reflect the grouping variable values in the processed metadata. These contrasts determine which comparisons are made when testing for differential expression, so accuracy and consistency are paramount.
+
+Key Instructions:
+	1.	Exact Matching of Group Labels:
+	•	The values used in your contrast formulas must exactly match the group labels from the metadata.
+	•	Example of Correct Matching:
+If the grouping column (e.g., merged_analysis_group) contains the values "Control" and "Treatment", the contrast should be defined exactly as:
+	•	Contrast Name: Treatment_vs_Control
+	•	Contrast Formula: Treatment - Control
+Note: Do not modify the case, add extra spaces, or alter punctuation.
+	•	Example of Incorrect Matching:
+	•	Treatment_vs_control (using "control" instead of "Control")
+	•	Control_vs_Treatment_Group (adding extra words or symbols)
+	2.	Contrast Naming Conventions:
+	•	Use a clear and consistent naming scheme directly tied to the metadata values.
+	•	A common convention is "GroupB_vs_GroupA" where the contrast formula is "GroupB - GroupA".
+	•	Do not introduce additional text or symbols not found in the metadata.
+	3.	Using makeContrasts:
+	•	The constructed contrast must follow the format accepted by the makeContrasts function.
+	•	Correct Format Example for Two Groups (A and B):
+
+contrast <- makeContrasts(diff = B - A, levels = design)
+
+
+	•	The column names in your design matrix must match the group labels exactly as they appear in the metadata.
+
+	4.	Constructing Contrasts with Group Averages:
+	•	When you have more than two groups and you want to compare averages, define the contrast by combining group terms.
+	•	Correct Example:
+If the grouping column contains four groups: "A", "B", "C", and "D", and you wish to compare the average of groups A and B versus the average of groups C and D, then the contrast should be:
+	•	Contrast Name: (A+B)_vs_(C+D)
+	•	Contrast Formula:
+
+contrast <- makeContrasts(diff = A + B - C - D, levels = design)
+
+
+Note: Because scaling (dividing by 2) does not change the hypothesis, you may leave the values unscaled. The focus is on clarity and direct comparison.
+
+	5.	Examples of What Not to Do:
+	•	Mismatched Group Values:
+If the metadata group is "Control" but the contrast is defined as:
+
+contrast <- makeContrasts(diff = Treatment - control, levels = design)
+
+This is invalid because "control" does not exactly match "Control".
+
+	•	Using Quotes Around Group Names:
+
+contrast <- makeContrasts(diff = "A" + "B" - "C" - "D", levels = design)
+
+Quotation marks turn group names into literal strings, causing errors.
+
+	•	Incorrect Arithmetic in Averages:
+
+contrast <- makeContrasts(diff = (A+B)/2 - (C-D)/2, levels = design)
+
+This is incorrect because, in the second term, subtraction within the parentheses (i.e. C - D) incorrectly computes the average. The formula should add groups together for an average rather than subtract them.
+
+	•	Unnecessary Scaling or Parentheses:
+While mathematically equivalent, the following is less clear and can introduce parsing issues:
+
+contrast <- makeContrasts(diff = (A + B)/2 - (C + D)/2, levels = design)
+
+It is preferable to use the simpler:
+
+contrast <- makeContrasts(diff = A + B - C - D, levels = design)
+
+
+	•	Random Order Without Rationale:
+If you randomly define:
+
+contrast <- makeContrasts(diff = C + D - A - B, levels = design)
+
+without a clear biological rationale or consistent naming (e.g., naming it C+D_vs_A+B but then not describing why the comparison was made), it may confuse the downstream interpretation. The contrast must reflect a meaningful, biologically justified comparison.
+
+	6.	Emphasize Consistency Across the Pipeline:
+	•	Ensure that the contrast construction step uses the final grouping variable established during metadata processing (e.g., the merged_analysis_group).
+	•	Verify that the contrast output exactly mirrors the group labels present in the metadata. Any deviation must be corrected to ensure a valid and interpretable result.
+
+⸻
+
+Summary:
+	•	Exact Matching: The group labels in your contrast formula must match the metadata exactly.
+	•	Naming: Use a clear naming convention like GroupB_vs_GroupA, and avoid additional text or symbols.
+	•	Group Averages: When comparing averages (e.g., A+B vs. C+D), add the groups directly as in A + B - C - D without unnecessary scaling or misplaced operations.
+	•	Common Pitfalls: Do not use mismatched case, extra punctuation, or arithmetic errors that alter the intended meaning.
+	•	Consistency: The entire process must align with the grouping variable produced in metadata processing.
+
+By adhering to these guidelines, the agent will construct robust and accurate contrasts for use in edgeR/limma differential expression analysis. The output will be formatted in a way that is directly compatible with makeContrasts, ensuring that all comparisons are correctly specified based on the metadata values.
+
+⸻
