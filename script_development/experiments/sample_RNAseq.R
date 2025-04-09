@@ -6,7 +6,7 @@ if (!dir.exists(user_lib)) {
 
 library(pacman)
 # Load only the required packages (removing tidyverse)
-p_load(edgeR, limma, tximport)
+p_load(edgeR, limma, tximport, gplots)
 
 cat("=== R Script: edgeR/limma Analysis Start ===\n")
 
@@ -23,6 +23,10 @@ cat("  merged_group =", merged_group, "\n")
 cat("  output_dir =", output_dir, "\n")
 cat("  tx2gene_file =", tx2gene_file, "\n\n")
 
+# Create DEG subfolder within the output directory
+deg_dir <- file.path(output_dir, "DEG")
+dir.create(deg_dir, recursive = TRUE, showWarnings = FALSE)
+cat("Created DEG results directory at:", deg_dir, "\n")
 
 cat("Step 1: Loading metadata from file...\n")
 cat("Loading metadata from:", metadata_file, "\n")
@@ -105,7 +109,7 @@ if(ncol(design) == 2){
   top_results$Gene <- rownames(top_results)
   top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
   print(head(top_results))
-  write.csv(top_results, file = file.path(output_dir, "DEG_results.csv"), row.names = FALSE)
+  write.csv(top_results, file = file.path(deg_dir, "DEG_results.csv"), row.names = FALSE)
 
 } else {
   cat("Multiple groups detected. Generating top results for each coefficient...\n")
@@ -117,7 +121,7 @@ if(ncol(design) == 2){
     top_results$Gene <- rownames(top_results)
     top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
     print(head(top_results))
-    write.csv(top_results, file = file.path(output_dir, paste0("DEG_results_", coef_name, ".csv")), row.names = FALSE)
+    write.csv(top_results, file = file.path(deg_dir, paste0("DEG_results_", coef_name, ".csv")), row.names = FALSE)
   }
 }
 
