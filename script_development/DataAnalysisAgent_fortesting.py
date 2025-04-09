@@ -914,11 +914,16 @@ p_load(edgeR, limma, tximport)
 cat("=== R Script: edgeR/limma Analysis Start ===\n")
 
 args <- commandArgs(trailingOnly = TRUE)
-metadata_file <- args[1]
+cat("Received command arguments:\n")
+cat("  metadata_file =", metadata_file, "\n")
+cat("  merged_group =", merged_group, "\n")
+cat("  output_dir =", output_dir, "\n")
+cat("  tx2gene_file =", tx2gene_file, "\n\n")
 merged_group <- args[2]
 output_dir <- args[3]
 tx2gene_file <- args[4]
 
+cat("Step 1: Loading metadata from file...\n")
 cat("Loading metadata from:", metadata_file, "\n")
 metadata <- read.csv(metadata_file, stringsAsFactors = FALSE)
 if(nrow(metadata) == 0) {
@@ -931,6 +936,7 @@ if(!"abundance_file" %in% colnames(metadata)) {
 
 # Load tx2gene mapping if provided
 if(tx2gene_file != "NA" && file.exists(tx2gene_file)){
+  cat("Step 2: Checking for and loading tx2gene mapping if provided...\n")
   cat("Loading tx2gene mapping from:", tx2gene_file, "\n")
   tx2gene <- read.delim(tx2gene_file, header = FALSE, stringsAsFactors = FALSE)
   # Select columns 1 and 3 (like dplyr::select(1,3))
@@ -946,6 +952,7 @@ if(tx2gene_file != "NA" && file.exists(tx2gene_file)){
   use_tx2gene <- FALSE
 }
 
+cat("Step 3: Importing Kallisto quantification data using tximport...\n")
 cat("Importing Kallisto quantification data...\n")
 if(use_tx2gene){
   kallisto <- tximport(metadata$abundance_file, type = "kallisto",
@@ -956,23 +963,28 @@ if(use_tx2gene){
                        txOut = TRUE, ignoreAfterBar = TRUE)
 }
 
+cat("Step 4: Creating DGEList with the imported counts...\n")
 cat("Creating DGEList...\n")
 DGE <- DGEList(counts = kallisto$counts)
 # Combine DGE$samples with metadata (bind_cols replaced with cbind)
 DGE$samples <- cbind(DGE$samples, metadata)
 
+cat("Step 5: Normalizing the DGEList using calcNormFactors...\n")
 cat("Normalizing DGEList...\n")
 DGE.norm <- calcNormFactors(DGE)
 
+cat("Step 6: Generating design matrix using grouping column:", merged_group, "\n")
 cat("Creating design matrix using grouping column:", merged_group, "\n")
 design <- model.matrix(as.formula(paste("~0 +", merged_group)), data = DGE.norm$samples)
 colnames(design) <- sub(merged_group, "", colnames(design))
 cat("Design matrix:\n")
 print(design)
 
+cat("Step 7: Performing voom transformation...\n")
 cat("Performing voom transformation...\n")
 v <- voom(DGE.norm, design, plot = FALSE)
 
+cat("Step 8: Fitting linear model with limma...\n")
 cat("Fitting linear model...\n")
 fit <- lmFit(v, design)
 fit <- eBayes(fit)
@@ -1008,6 +1020,7 @@ if(ncol(design) == 2){
   }
 }
 
+cat("Step 9: Saving DEG results and normalized DGEList...\n")
 cat("Saving normalized DGEList object...\n")
 saveRDS(DGE.norm, file = file.path(output_dir, "DGE_norm.RDS"))
 
