@@ -914,14 +914,18 @@ p_load(edgeR, limma, tximport)
 cat("=== R Script: edgeR/limma Analysis Start ===\n")
 
 args <- commandArgs(trailingOnly = TRUE)
+
+metadata_file <- args[1]
+merged_group <- args[2]
+output_dir <- args[3]
+tx2gene_file <- args[4]
+
 cat("Received command arguments:\n")
 cat("  metadata_file =", metadata_file, "\n")
 cat("  merged_group =", merged_group, "\n")
 cat("  output_dir =", output_dir, "\n")
 cat("  tx2gene_file =", tx2gene_file, "\n\n")
-merged_group <- args[2]
-output_dir <- args[3]
-tx2gene_file <- args[4]
+
 
 cat("Step 1: Loading metadata from file...\n")
 cat("Loading metadata from:", metadata_file, "\n")
@@ -1253,13 +1257,13 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
             df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
 
         # Remove Run and Experiment columns - these are added in a previous metadata processing step, so these are removed to more accurately emulate the original metadata
-        df = df.loc[:, ~df.columns.str.contains('Run|Experiment', case=False)]
+        # df = df.loc[:, ~df.columns.str.contains('Run|Experiment', case=False)]
         # Remove duplicate rows
         df = df.drop_duplicates()
         # Remove columns where all values are identical
-        # df = df.loc[:, df.nunique() > 1]
+        df = df.loc[:, df.nunique() > 1]
         # Remove columns where all values are different (i.e. all values are unique)
-        df = df.loc[:, df.nunique() < df.shape[0]]
+        # df = df.loc[:, df.nunique() < df.shape[0]]
 
         # Clean column names
         new_columns = {col: clean_string(ctx, col) for col in df.columns}
