@@ -1522,7 +1522,13 @@ if __name__ == "__main__":
 
     # Ensure the output directory exists
     os.makedirs(args.output_dir, exist_ok=True)
-    log_file_path = os.path.join(args.output_dir, "log.txt")
+    # Create a dedicated logs folder inside the output directory
+    logs_dir = os.path.join(args.output_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    # Generate a timestamp string formatted as YYYYMMDD_HHMMSS
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Create the log file name with the timestamp embedded
+    log_file_path = os.path.join(logs_dir, f"log_{timestamp}.txt")
     log_file = open(log_file_path, "a")
 
     # Define a Tee class to duplicate output to both STDOUT and the log file
@@ -1539,6 +1545,7 @@ if __name__ == "__main__":
                 s.flush()
 
     import sys
+    import datetime
     sys.stdout = Tee(sys.stdout, log_file)
 
     # Create an RNAseqData instance (renamed to analysis_data)
