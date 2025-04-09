@@ -19,24 +19,30 @@ from openai import OpenAI
 # ----------------------------
 # Configure logging
 # ----------------------------
+
+
 class LogLevel:
     MINIMAL = 0   # Only critical information
     NORMAL = 1    # Default level
     VERBOSE = 2   # Detailed information
     DEBUG = 3     # Maximum debugging information
 
+
 CURRENT_LOG_LEVEL = LogLevel.NORMAL
 console = Console()
+
 
 def log(message, level=LogLevel.NORMAL, style=""):
     if CURRENT_LOG_LEVEL >= level:
         console.print(message, style=style if style else None)
+
 
 def log_tool_header(tool_name, params=None):
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
         console.print(f"TOOL: {tool_name}", style="bold blue")
         if params:
             console.print(f"Parameters: {params}")
+
 
 def log_tool_result(result):
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
@@ -45,6 +51,8 @@ def log_tool_result(result):
 # ----------------------------
 # Dependency Class
 # ----------------------------
+
+
 @dataclass
 class RNAseqData:
     """Container for metadata analysis data with enhanced context tracking."""
@@ -57,6 +65,7 @@ class RNAseqData:
     # To store designed contrasts if needed
     contrast_details: Optional[Dict[str, Any]] = None
 
+
 # ----------------------------
 # Load environment variables and initialize OpenAI client
 # ----------------------------
@@ -67,18 +76,23 @@ client = OpenAI()
 # ----------------------------
 # Define output schema for contrasts
 # ----------------------------
+
+
 class Contrast_format(BaseModel):
     """Schema for each contrast."""
     name: str
     expression: str
+    description: Optional[str] = Field(
+        description="Biological interpretation of the contrast")
+    justification: Optional[str] = Field(
+        description="Justification for the contrast design, in terms of value to the scientific community")
+
 
 class Contrasts(BaseModel):
     """Schema for the output of the candidate contrasts."""
     contrasts: List[Contrast_format]
-    summary: str = Field(
-        description="Summary of the designed contrasts and their biological significance, including commentary about why other columns were not included, and an evaluation of biological relevant, and any redundancy."
-    )
     model_config = ConfigDict(extra="allow")
+
 
 # ----------------------------
 # Create RNAseq metadata analysis agent
@@ -120,7 +134,7 @@ except Exception as e:
     """
     print("Using fallback system prompt instead.")
 
-rnaseq_agent = Agent(
+metadata_agent = Agent(
     'openai:gpt-4o',         # Use a powerful model
     deps_type=RNAseqData,
     system_prompt=system_prompt
@@ -129,7 +143,9 @@ rnaseq_agent = Agent(
 # ----------------------------
 # Utility function: Clean a string
 # ----------------------------
-@rnaseq_agent.tool
+
+
+@metadata_agent.tool
 def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     """
     Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
@@ -145,7 +161,9 @@ def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
 # ----------------------------
 # Tool 1: Process metadata
 # ----------------------------
-@rnaseq_agent.tool
+
+
+@metadata_agent.tool
 async def process_metadata(ctx: RunContext[RNAseqData]) -> dict:
     """
     Load metadata from ctx.deps.metadata_path, clean all column names and
@@ -202,7 +220,6 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> dict:
 
         summary = f"""Metadata processed: {df.shape[0]} rows and {df.shape[1]} columns.
 Columns: {', '.join(df.columns)}
-Preview: {df.head(3).to_dict(orient='records')}
 """
         log_tool_result(summary)
 
@@ -222,7 +239,9 @@ Preview: {df.head(3).to_dict(orient='records')}
 # ----------------------------
 # Tool 2: Merge Analysis Columns
 # ----------------------------
-@rnaseq_agent.tool
+
+
+@metadata_agent.tool
 async def merge_analysis_columns(ctx: RunContext[RNAseqData], columns_input: Union[str, List[str], dict] = None) -> dict:
     """
     Merge specified columns into a single analysis column.
@@ -295,7 +314,8 @@ async def merge_analysis_columns(ctx: RunContext[RNAseqData], columns_input: Uni
 
             # Show a preview of the merged values
             unique_merged = df[merged_col].unique().tolist()
-            preview = unique_merged[:5] if len(unique_merged) > 5 else unique_merged
+            preview = unique_merged[:5] if len(
+                unique_merged) > 5 else unique_merged
             msg += f"\nMerged values (preview): {preview}"
 
         log_tool_result(msg)
@@ -314,7 +334,9 @@ async def merge_analysis_columns(ctx: RunContext[RNAseqData], columns_input: Uni
 # ----------------------------
 # Tool 3: Extract Unique Values
 # ----------------------------
-@rnaseq_agent.tool
+
+
+@metadata_agent.tool
 async def extract_unique_values(ctx: RunContext[RNAseqData]) -> dict:
     """
     Simply extracts and returns the unique values from the selected analysis column.
@@ -341,7 +363,8 @@ async def extract_unique_values(ctx: RunContext[RNAseqData]) -> dict:
         ctx.deps.unique_groups = unique_values
 
         # Log the unique values found
-        log_tool_result(f"Extracted {len(unique_values)} unique values from column '{analysis_col}'")
+        log_tool_result(
+            f"Extracted {len(unique_values)} unique values from column '{analysis_col}'")
 
         # Return only the unique values with basic metadata
         return {
@@ -389,7 +412,7 @@ if __name__ == "__main__":
         about which steps to take based on the data characteristics.
         """
 
-        result = rnaseq_agent.run_sync(
+        result = metadata_agent.run_sync(
             initial_prompt,
             deps=analysis_data,
             result_type=Contrasts
@@ -401,7 +424,8 @@ if __name__ == "__main__":
         # Show the actual results from the agent's work
         console.print("\n[bold yellow]Final Results:[/bold yellow]")
         if analysis_data.merged_column:
-            console.print(f"Selected analysis column: {analysis_data.merged_column}")
+            console.print(
+                f"Selected analysis column: {analysis_data.merged_column}")
         if analysis_data.unique_groups:
             console.print(f"Unique groups: {analysis_data.unique_groups}")
 
@@ -416,4 +440,5 @@ if __name__ == "__main__":
         console.print(
             Panel(f"Error during metadata processing: {str(e)}", style="bold red"))
         import traceback
-        console.print(traceback.format_exc(), style="red", level=LogLevel.DEBUG)
+        console.print(traceback.format_exc(),
+                      style="red", level=LogLevel.DEBUG)

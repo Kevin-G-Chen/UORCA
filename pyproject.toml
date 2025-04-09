@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "bio>=1.7.1",
+    "datetime>=5.5",
     "gseapy>=1.1.8",
     "logfire>=3.9.0",
     "matplotlib>=3.10.1",
