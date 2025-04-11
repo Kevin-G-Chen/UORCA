@@ -6,7 +6,7 @@ if (!dir.exists(user_lib)) {
 
 
 library(pacman)
-p_load(edgeR, tximport, limma, gplots)
+p_load(edgeR, tximport, limma, gplots, ComplexHeatmap)
 
 create_plot_output_dirs <- function(output_dir) {
   plots_dir <- file.path(output_dir, "plots")
@@ -102,14 +102,14 @@ plot_filtering <- function(lcpm_pre, lcpm_post, output_dir, width = 1000, height
     col <- rainbow(nsamples)
     plot(density(lcpm_pre[, 1]),
         col = col[1], lwd = 2, ylim = c(0, 0.26),
-        las = 2, main = "Before Filtering", xlab = "Log-CPM"
+        las = 2, main = "Before Filtering", xlab = "Log2-CPM"
     )
     for (i in 2:nsamples) {
         lines(density(lcpm_pre[, i]), col = col[i], lwd = 2)
     }
     plot(density(lcpm_post[, 1]),
         col = col[1], lwd = 2, ylim = c(0, 0.26),
-        las = 2, main = "After Filtering", xlab = "Log-CPM"
+        las = 2, main = "After Filtering", xlab = "Log2-CPM"
     )
     for (i in 2:nsamples) {
         lines(density(lcpm_post[, i]), col = col[i], lwd = 2)
@@ -131,11 +131,11 @@ plot_normalization <- function(DGE_filtered, dge_norm, output_dir, width = 1000,
     ylim <- range(c(lcpm_raw, lcpm_norm))
     boxplot(lcpm_raw,
         las = 2, col = rainbow(ncol(lcpm_raw)),
-        main = "Before Normalization", ylab = "Log-CPM", ylim = ylim
+        main = "Before Normalization", ylab = "Log2-CPM", ylim = ylim
     )
     boxplot(lcpm_norm,
         las = 2, col = rainbow(ncol(lcpm_norm)),
-        main = "After Normalization", ylab = "Log-CPM", ylim = ylim
+        main = "After Normalization", ylab = "Log2-CPM", ylim = ylim
     )
     dev.off()
     return(paste0("Normalization plots saved to ", plots_dir))
@@ -152,7 +152,7 @@ save_voom_plot <- function(dge, fit, design, output_dir, width = 800, height = 6
 
     # Save the SA plot
     png(file.path(plots_dir, "sa_plot.png"), width = width, height = height, res = res)
-    saplot <- plotSA(fit, main = "Final model: Mean-Variance trend")
+    saplot <- plotSA(fit, main = "Final model: Mean-Variance trend", xlab = "Mean log2-counts")
     dev.off()
 
     return(paste0("Voom and SA plots saved to ", plots_dir))
@@ -172,12 +172,16 @@ plot_ma <- function(fit_object, output_dir, coef = 1, status = NULL, highlight =
     if (!is.null(status)) {
         plotMA(fit_object,
             coef = coef, status = status,
-            main = paste0("MA Plot: ", contrast_name)
+            main = paste0("MA Plot: ", contrast_name),
+            xlab = "Average log2-expression",
+            ylab = "log2-fold-change"
         )
     } else {
         plotMA(fit_object,
             coef = coef,
-            main = paste0("MA Plot: ", contrast_name)
+            main = paste0("MA Plot: ", contrast_name),
+            xlab = "Average log2-expression",
+            ylab = "log2-fold-change"
         )
     }
 
@@ -198,7 +202,8 @@ plot_volcano <- function(fit_object, output_dir, coef = 1, highlight = 10, width
     # Use limma's built-in volcanoplot function
     volcanoplot(fit_object,
         coef = coef, highlight = highlight,
-        main = paste0("Volcano Plot: ", contrast_name)
+        main = paste0("Volcano Plot: ", contrast_name),
+        names = rownames(fit_object)
     )
 
     dev.off()
@@ -206,10 +211,27 @@ plot_volcano <- function(fit_object, output_dir, coef = 1, highlight = 10, width
 }
 
 # 7. Heatmap of Top DEGs
-plot_deg_heatmap <- function(dge, fit_object, output_dir, coef = 1, n_genes = 100, clustering_method = "complete",
-                             width = 1000, height = 800, res = 100) {
+plot_deg_heatmap <- function(dge, fit_object, output_dir, group_data = NULL,
+                                  coef = 1, n_genes = 100, clustering_method = "complete",
+                                  width = 1000, height = 800, res = 100) {
+    # Load required packages if not already loaded
+    if (!requireNamespace("ComplexHeatmap", quietly = TRUE)) {
+        library(ComplexHeatmap)
+    }
+    if (!requireNamespace("circlize", quietly = TRUE)) {
+        library(circlize)
+    }
+
+    # Create directory for plots if it doesn't exist
     plots_dir <- file.path(output_dir, "plots", "heatmap")
+    if (!dir.exists(plots_dir)) {
+        dir.create(plots_dir, recursive = TRUE)
+    }
+
+    # Determine the contrast name from the fit_object
     contrast_name <- colnames(fit_object)[coef]
+
+    # Identify top genes based on available p-values or table data
     if (!is.null(fit_object$p.value) && !is.null(fit_object$lods)) {
         o <- order(fit_object$p.value[, coef])
     } else if (!is.null(fit_object$table)) {
@@ -218,8 +240,12 @@ plot_deg_heatmap <- function(dge, fit_object, output_dir, coef = 1, n_genes = 10
         stop("Cannot determine top genes from the fit object")
     }
     top_genes_idx <- head(o, n_genes)
+
+    # Calculate log-CPM from the DGE object
     lcpm <- cpm(dge, log = TRUE)
     lcpm_top <- lcpm[top_genes_idx, ]
+
+    # Retrieve gene symbols (using either fit_object$genes or dge$genes)
     if (!is.null(fit_object$genes)) {
         gene_symbols <- fit_object$genes$SYMBOL[top_genes_idx]
         if (is.null(gene_symbols)) {
@@ -233,32 +259,113 @@ plot_deg_heatmap <- function(dge, fit_object, output_dir, coef = 1, n_genes = 10
     } else {
         gene_symbols <- rownames(lcpm_top)
     }
+    rownames(lcpm_top) <- gene_symbols
+
+    # Define sample (column) labels
     if (!is.null(dge$samples$geo_accession)) {
-        groups <- dge$samples$geo_accession
+        col_labels <- dge$samples$geo_accession
     } else {
-        groups <- colnames(lcpm_top)
+        col_labels <- colnames(lcpm_top)
     }
+    colnames(lcpm_top) <- col_labels
+
+    # Z-score normalization (row-wise)
     lcpm_scaled <- t(scale(t(lcpm_top)))
-    col_palette <- colorRampPalette(c("blue", "white", "red"))(100)
+
+    # Create color palette for heatmap (blue-white-red)
+    col_fun <- circlize::colorRamp2(c(min(lcpm_scaled), 0, max(lcpm_scaled)), c("blue", "white", "red"))
+
+    # Prepare column annotation based on group_data if provided
+    if (!is.null(group_data)) {
+        if (length(group_data) != ncol(lcpm_top)) {
+            stop("Length of group_data must equal number of samples (columns) in lcpm_top")
+        }
+
+        # Create a color palette for the groups
+        unique_groups <- unique(group_data)
+        group_colors <- setNames(rainbow(length(unique_groups)), unique_groups)
+
+        # Create column annotation
+        column_ha <- ComplexHeatmap::HeatmapAnnotation(
+            Group = group_data,
+            col = list(Group = group_colors),
+            name = "Sample Groups",
+            annotation_legend_param = list(
+                Group = list(
+                    title = "Sample Group",
+                    at = unique_groups
+                )
+            )
+        )
+    } else {
+        column_ha <- NULL
+    }
+
+    # Set up clustering parameters
+    if (clustering_method == "complete") {
+        clustering_distance_rows <- "euclidean"
+        clustering_distance_columns <- "euclidean"
+        clustering_method_rows <- "complete"
+        clustering_method_columns <- "complete"
+    } else {
+        # Other clustering methods can be added here
+        clustering_distance_rows <- "euclidean"
+        clustering_distance_columns <- "euclidean"
+        clustering_method_rows <- clustering_method
+        clustering_method_columns <- clustering_method
+    }
 
     # Adjust height based on number of genes
-    height_adjusted <- max(800, n_genes * 8)
+    height_adjusted <- max(height, n_genes * 8)
 
-    png(file.path(plots_dir, paste0("heatmap_top", n_genes, "_", gsub("[^a-zA-Z0-9]", "_", contrast_name), ".png")),
-        width = width, height = height_adjusted, res = res
+    # Save the ComplexHeatmap to a PNG file
+    png_file <- file.path(plots_dir, paste0(
+        "heatmap_complex_top", n_genes, "_",
+        gsub("[^a-zA-Z0-9]", "_", contrast_name), ".png"
+    ))
+
+    png(png_file, width = width, height = height_adjusted, res = res)
+
+    # Create the heatmap
+    ht <- ComplexHeatmap::Heatmap(
+        lcpm_scaled,
+        name = "Z-score\n(log2-CPM)",  # Legend title
+        col = col_fun,
+
+        # Clustering parameters
+        cluster_rows = TRUE,
+        clustering_distance_rows = clustering_distance_rows,
+        clustering_method_rows = clustering_method_rows,
+        cluster_columns = TRUE,
+        clustering_distance_columns = clustering_distance_columns,
+        clustering_method_columns = clustering_method_columns,
+
+        # Labels
+        row_labels = gene_symbols,
+        column_labels = col_labels,
+
+        # Top annotation with group colors
+        top_annotation = column_ha,
+
+        # Layout
+        row_names_gp = grid::gpar(fontsize = 8),
+        column_names_gp = grid::gpar(fontsize = 8),
+        column_names_rot = 45,
+
+        # Title
+        column_title = paste0("Top ", n_genes, " DE Genes: ", contrast_name),
+        column_title_gp = grid::gpar(fontsize = 12, fontface = "bold")
     )
 
-    library(gplots)
-    heatmap.2(lcpm_scaled,
-        col = col_palette, labRow = gene_symbols, labCol = groups,
-        trace = "none", density.info = "none", margin = c(8, 10), cexRow = 0.6,
-        cexCol = 1, key.title = NA, key.xlab = "Z-score",
-        main = paste0("Top ", n_genes, " DE Genes: ", contrast_name),
-        hclustfun = function(x) hclust(x, method = clustering_method),
-        scale = "none"
-    )
+    # Draw the heatmap
+    ComplexHeatmap::draw(ht, padding = grid::unit(c(2, 2, 2, 2), "cm"))
+
     dev.off()
-    return(paste0("Heatmap of top ", n_genes, " DEGs for ", contrast_name, " saved to ", plots_dir))
+
+    return(paste0(
+        "ComplexHeatmap of top ", n_genes, " DEGs for ", contrast_name,
+        " saved to ", png_file
+    ))
 }
 
 plots_dir <- create_plot_output_dirs(output_dir)
@@ -373,7 +480,7 @@ if (ncol(design) == 2) {
     save_voom_plot(DGE.norm, efit, design, output_dir)
     plot_ma(efit, output_dir, coef = 1, status = dt)
     plot_volcano(efit, output_dir, coef = 1, highlight = 10)
-    plot_deg_heatmap(DGE.norm, efit, output_dir, coef = 1, n_genes = 100)
+    plot_deg_heatmap(DGE.norm, efit, output_dir, group_data, coef = 1, n_genes = 50)
 
     cat("Top differential expression results for contrast:\n")
     top_results <- topTable(efit, number = Inf)
@@ -391,7 +498,7 @@ if (ncol(design) == 2) {
         dt <- decideTests(efit, p.value = 0.05)[, i]
         plot_ma(efit, output_dir, coef = 1, status = dt)
         plot_volcano(efit, output_dir, coef = 1, highlight = 10)
-        plot_deg_heatmap(DGE.norm, efit, output_dir, coef = i, n_genes = 100)
+        plot_deg_heatmap(DGE.norm, efit, output_dir, group_data, coef = 1, n_genes = 50)
         top_results <- topTable(efit, coef = i, number = Inf)
 
         top_results$Gene <- rownames(top_results)
