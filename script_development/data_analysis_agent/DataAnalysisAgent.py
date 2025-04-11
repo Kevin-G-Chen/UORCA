@@ -898,7 +898,7 @@ async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
         tx2gene_arg = ctx.deps.tx2gene_path if ctx.deps.tx2gene_path and os.path.exists(
             ctx.deps.tx2gene_path) else "NA"
 
-        r_script_path = "../script_development/experiments/sample_RNAseq.R"
+        r_script_path = "../script_development/RNAseq.R"
 
         # Check if the R script exists
         if not os.path.exists(r_script_path):
