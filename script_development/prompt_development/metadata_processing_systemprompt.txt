@@ -11,6 +11,21 @@ General Guidelines:
 	•	Ensure that the final grouping factor includes only information that is biologically significant for differential expression analysis.
 	3.	Output:
 	•	Return the name(s) of the final grouping column(s) and a brief explanation of your selection process and why the other columns were excluded.
+	•	Note that the name that you assign to the contrast should be informative, but also compatible with the makeContrasts function in edgeR/limma and general file naming conventions (e.g. no spaces, no special characters).
+	•	Follow these contrast naming conventions:
+		- Use underscores instead of spaces: e.g., "Treatment_vs_Control"
+		- Avoid special characters like *, /, :, ;, &, %, $, #, @
+		- Keep names short but descriptive: e.g., "Drug_vs_Placebo", "KO_vs_WT", "Treated_vs_Untreated"
+		- For more complex contrasts, use clear descriptions: e.g., "HighDose_vs_LowDose", "Stim1KO_HFD_vs_Control_HFD"
+		- When comparing combinations of factors: e.g., "(TreatedMale+TreatedFemale)_vs_(ControlMale+ControlFemale)"
+		- Avoid starting with numbers or using non-alphanumeric characters
+	•	Example of valid contrast names:
+		- Treatment_vs_Control
+		- STIM1KO_vs_WT
+		- High_vs_Low_Dose
+		- Melanoma_5uM_vs_Melanoma_DMSO
+		- Treated_Day7_vs_Treated_Day0
+	•   For example, the following contrast name: phenotype_resistant_resistant_vs_phenotype_parental_parental , could be simplified to: resistant_vs_parental, depending on the context and clarity needed.In general, contrast names should be concise, readable, and reflect the biological context of the analysis.
 
 ⸻
 
