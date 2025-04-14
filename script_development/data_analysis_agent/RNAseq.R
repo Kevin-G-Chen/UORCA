@@ -496,6 +496,7 @@ if (ncol(design) == 2) {
         efit <- eBayes(vfit)
         coef_name <- colnames(design)[i]
         dt <- decideTests(efit, p.value = 0.05)[, i]
+        save_voom_plot(DGE.norm, efit, design, output_dir)
         plot_ma(efit, output_dir, coef = 1, status = dt)
         plot_volcano(efit, output_dir, coef = 1, highlight = 10)
         plot_deg_heatmap(DGE.norm, efit, output_dir, group_data, coef = 1, n_genes = 50)
