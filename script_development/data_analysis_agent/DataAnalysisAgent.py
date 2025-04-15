@@ -107,6 +107,10 @@ class RNAseqData:
     deg_results_path: Optional[str] = None
     contrasts: Optional[Contrasts] = None
 
+    # Additional fields for contrast handling
+    contrast_path: Optional[str] = None  # Path to the JSON file containing contrasts
+    contrast_matrix_df: Optional[pd.DataFrame] = None  # DataFrame representation of contrasts
+
 # Define a class to prepare contrasts
 
 
@@ -867,59 +871,115 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 @rnaseq_agent.tool
 async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
     """
-    Minimal tool to run an edgeR/limma analysis using a single R script.
+    Run edgeR/limma analysis using the metadata agent's contrasts.
 
-    This tool performs the following steps:
-      1. Loads required libraries (using pacman) and reads the metadata CSV from ctx.deps.metadata_path.
-      2. Expects the metadata CSV to include an 'abundance_file' column with Kallisto output paths.
-      3. Imports quantification data via tximport. If a tx2gene mapping file is provided in ctx.deps.tx2gene_path,
-         it is used; otherwise, the script runs without it.
-      4. Creates a DGEList and attaches the metadata.
-      5. Normalizes the DGEList using calcNormFactors.
-      6. Constructs a design matrix using the grouping column specified in ctx.deps.merged_column.
-      7. Performs a voom transformation and fits a linear model with limma.
-      8. If exactly two groups are present, a contrast is computed (group2 - group1); if more than two groups,
-         top tables for each coefficient are generated.
-      9. Saves differential expression results (CSV files) and the normalized DGEList (RDS file).
+    This tool performs differential expression analysis using:
+    1. The sample mapping created in a previous step
+    2. The contrasts defined by the metadata agent
+    3. An R script that handles the analysis
 
-    Logging messages are printed to STDOUT/STDERR during the execution of the R script.
+    The analysis workflow includes:
+    - Loading quantification data via tximport
+    - Creating and normalizing a DGEList
+    - Building a design matrix using the grouping column
+    - Performing voom transformation and fitting a limma model
+    - Applying the contrasts defined by the metadata agent
+    - Saving results and generating plots
 
-    Note: This is a baseline analysis template and does not include additional filtering or plotting steps.
+    Results are saved in the output directory specified in the context.
     """
     try:
         log_tool_header("run_edger_limma_analysis")
 
         # Ensure the output directory exists
         os.makedirs(ctx.deps.output_dir, exist_ok=True)
-        r_script_path = os.path.join(
-            ctx.deps.output_dir, "edger_limma_analysis.R")
+
+        # Check if we have contrasts available
+        if ctx.deps.contrast_matrix_df is None and not ctx.deps.contrasts:
+            log("No contrasts defined. Please run process_metadata_with_agent first.",
+                style="bold yellow")
+            return "Error: No contrasts defined for differential expression analysis."
+
+        # If we have contrasts but they're not in DataFrame format, convert them
+        if ctx.deps.contrast_matrix_df is None and ctx.deps.contrasts:
+            log("Converting contrasts from agent output to DataFrame format",
+                level=LogLevel.VERBOSE)
+            contrast_data = []
+            for contrast in ctx.deps.contrasts.data.contrasts:
+                contrast_data.append({
+                    'name': contrast.name,
+                    'expression': contrast.expression,
+                    'description': contrast.description if hasattr(contrast, 'description') else "",
+                    'justification': contrast.justification if hasattr(contrast, 'justification') else ""
+                })
+            if contrast_data:
+                ctx.deps.contrast_matrix_df = pd.DataFrame(contrast_data)
+
+                # Save contrasts to a CSV file if not already done
+                if ctx.deps.contrast_path is None:
+                    contrast_path = os.path.join(ctx.deps.output_dir, "contrasts.csv")
+                    pd.DataFrame(contrast_data).to_csv(contrast_path, index=False)
+                    ctx.deps.contrast_path = contrast_path
+                    log(f"Saved contrasts to {contrast_path}", level=LogLevel.NORMAL)
+
+        # Get the sample mapping path
+        sample_mapping_path = ctx.deps.sample_mapping
 
         # Determine the tx2gene file argument; if not provided, pass "NA"
         tx2gene_arg = ctx.deps.tx2gene_path if ctx.deps.tx2gene_path and os.path.exists(
             ctx.deps.tx2gene_path) else "NA"
 
-        r_script_path = "../script_development/data_analysis_agent/RNAseq.R"
+        # Use the main script
+        main_r_script_path = "../script_development/data_analysis_agent/RNAseq.R"
 
         # Check if the R script exists
-        if not os.path.exists(r_script_path):
+        if not os.path.exists(main_r_script_path):
             # Try an alternative path if the first one doesn't exist
-            r_script_path = "aim1/UORCA/script_development/experiments/sample_RNAseq.R"
-            if not os.path.exists(r_script_path):
-                return f"Error: R script not found at expected paths. Please verify the R script location."
+            main_r_script_path = "aim1/UORCA/script_development/experiments/sample_RNAseq.R"
+            if not os.path.exists(main_r_script_path):
+                return "Error: R script not found at expected paths. Please verify the R script location."
 
-        # Execute the R script. Pass the metadata path, merged column, output directory, and tx2gene argument.
-        cmd = ['Rscript', r_script_path, ctx.deps.sample_mapping,
+        # Execute the R script with the necessary arguments
+        cmd = ['Rscript', main_r_script_path, sample_mapping_path,
                ctx.deps.merged_column, ctx.deps.output_dir, tx2gene_arg]
-        print("Running R script for edgeR/limma analysis:", ' '.join(cmd))
+
+        # Add the contrasts CSV file as the fifth argument if it exists
+        if ctx.deps.contrast_path and os.path.exists(ctx.deps.contrast_path):
+            cmd.append(ctx.deps.contrast_path)
+
+        log(f"Running R script: {' '.join(cmd)}", level=LogLevel.NORMAL)
         process = subprocess.run(cmd, capture_output=True, text=True)
         stdout = process.stdout
         stderr = process.stderr
 
         # Log the captured outputs for traceability
         log_tool_result(f"STDOUT:\n{stdout}")
-        log_tool_result(f"STDERR:\n{stderr}")
+        if stderr:
+            log_tool_result(f"STDERR:\n{stderr}")
 
-        return f"edgeR/limma analysis completed with return code: {process.returncode}"
+        # Check the return code
+        if process.returncode != 0:
+            return f"edgeR/limma analysis failed with return code: {process.returncode}. See error output above."
+
+        # Find and record DEG result files
+        deg_dir = os.path.join(ctx.deps.output_dir, "DEG")
+        if os.path.exists(deg_dir):
+            deg_files = [os.path.join(deg_dir, f) for f in os.listdir(deg_dir) if f.endswith('.csv')]
+            if deg_files:
+                ctx.deps.deg_results_path = deg_files[0] if len(deg_files) == 1 else deg_files
+                log(f"Found {len(deg_files)} differential expression result files", level=LogLevel.NORMAL)
+
+        return f"""
+edgeR/limma analysis completed successfully.
+
+Analysis performed using:
+- {len(ctx.deps.contrast_matrix_df)} contrasts defined by the metadata agent
+- Grouping column: {ctx.deps.merged_column}
+- {len(ctx.deps.unique_groups or [])} unique groups
+
+Results saved to {ctx.deps.output_dir}
+Differential expression results saved to {deg_dir}
+"""
 
     except Exception as e:
         error_msg = f"Error in run_edger_limma_analysis: {str(e)}"
@@ -1323,6 +1383,7 @@ async def process_metadata_with_agent(ctx: RunContext[RNAseqData]) -> str:
     and generate appropriate contrasts for differential expression analysis.
 
     The results are stored back in the main RNAseq context for downstream analysis.
+    The contrasts are also saved to a CSV file and converted to a DataFrame for use in edgeR/limma analysis.
     """
     try:
         log_tool_header("process_metadata_with_agent")
@@ -1359,6 +1420,29 @@ async def process_metadata_with_agent(ctx: RunContext[RNAseqData]) -> str:
         ctx.deps.unique_groups = metadata_deps.unique_groups
         ctx.deps.contrasts = metadata_result
 
+        # Create a contrast DataFrame from the agent's output
+        contrast_data = []
+        for contrast in metadata_result.data.contrasts:
+            contrast_data.append({
+                'name': contrast.name,
+                'expression': contrast.expression,
+                'description': contrast.description if hasattr(contrast, 'description') else "",
+                'justification': contrast.justification if hasattr(contrast, 'justification') else ""
+            })
+
+        # Convert to DataFrame and store in the context
+        if contrast_data:
+            ctx.deps.contrast_matrix_df = pd.DataFrame(contrast_data)
+
+            # Save contrasts to a CSV file for later use
+            os.makedirs(ctx.deps.output_dir, exist_ok=True)
+            contrast_path = os.path.join(ctx.deps.output_dir, "contrasts.csv")
+            pd.DataFrame(contrast_data).to_csv(contrast_path, index=False)
+            ctx.deps.contrast_path = contrast_path
+            log(f"Saved contrasts to {contrast_path}", level=LogLevel.NORMAL)
+        else:
+            log("No contrasts were generated by the metadata agent", level=LogLevel.NORMAL, style="bold yellow")
+
         # Generate a summary for the main agent
         summary = f"""
 Metadata processing completed successfully.
@@ -1371,8 +1455,11 @@ Designed contrasts:
         for contrast in metadata_result.data.contrasts:
             summary += f"- {contrast.name}: {contrast.expression}\n"
 
-        if hasattr(metadata_result, 'summary'):
+        if hasattr(metadata_result.data, 'summary'):
             summary += f"\nSummary:\n{metadata_result.data.summary}\n"
+
+        if ctx.deps.contrast_path:
+            summary += f"\nContrasts saved to: {ctx.deps.contrast_path}\n"
 
         log_tool_result(summary)
         return summary

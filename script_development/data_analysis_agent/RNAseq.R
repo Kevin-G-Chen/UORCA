@@ -24,12 +24,14 @@ metadata_file <- args[1]
 merged_group <- args[2]
 output_dir <- args[3]
 tx2gene_file <- args[4]
+contrasts_file <- if(length(args) > 4) args[5] else NULL
 
 cat("Received command arguments:\n")
 cat("  metadata_file =", metadata_file, "\n")
 cat("  merged_group =", merged_group, "\n")
 cat("  output_dir =", output_dir, "\n")
-cat("  tx2gene_file =", tx2gene_file, "\n\n")
+cat("  tx2gene_file =", tx2gene_file, "\n")
+cat("  contrasts_file =", contrasts_file, "\n\n")
 
 
 # 1. MDS Plot
@@ -467,45 +469,129 @@ v <- voom(DGE.norm,
 cat("Step 8: Fitting linear model with limma...\n")
 cat("Fitting linear model...\n")
 
-if (ncol(design) == 2) {
-    cat("Exactly two groups detected. Calculating contrast (group2 - group1)...\n")
-    contrast_name <- paste(colnames(design)[2], "-", colnames(design)[1])
-    contrast <- makeContrasts(diff = contrast_name, levels = design)
-    cat("Contrast matrix:")
-    print(contrast)
-    vfit <- lmFit(v, design)
-    vfit <- contrasts.fit(vfit, contrast)
-    efit <- eBayes(vfit)
-    dt <- decideTests(efit, p.value = 0.05)
-    save_voom_plot(DGE.norm, efit, design, output_dir)
-    plot_ma(efit, output_dir, coef = 1, status = dt)
-    plot_volcano(efit, output_dir, coef = 1, highlight = 10)
-    plot_deg_heatmap(DGE.norm, efit, output_dir, group_data, coef = 1, n_genes = 50)
+# Check if we have a contrasts file to use
+custom_contrast_matrix <- NULL
+if (!is.null(contrasts_file) && file.exists(contrasts_file)) {
+    cat("Loading custom contrasts from CSV file:", contrasts_file, "\n")
 
-    cat("Top differential expression results for contrast:\n")
-    top_results <- topTable(efit, number = Inf)
-    print(head(top_results))
-    top_results$Gene <- rownames(top_results)
-    top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
-    print(head(top_results))
-    write.csv(top_results, file = file.path(deg_dir, "DEG_results.csv"), row.names = FALSE)
-} else {
-    cat("Multiple groups detected. Generating top results for each coefficient...\n")
-    for (i in 1:ncol(design)) {
-        vfit <- lmFit(v, design)
-        efit <- eBayes(vfit)
-        coef_name <- colnames(design)[i]
+    # Read the CSV file containing contrasts
+    contrasts_df <- try(read.csv(contrasts_file, stringsAsFactors = FALSE))
+
+    if (class(contrasts_df) != "try-error" && nrow(contrasts_df) > 0 &&
+        all(c("name", "expression") %in% colnames(contrasts_df))) {
+
+        cat("Loaded", nrow(contrasts_df), "contrasts from CSV file\n")
+
+        # Print the full contrast details including justification if available
+        if ("justification" %in% colnames(contrasts_df) || "description" %in% colnames(contrasts_df)) {
+            cat("Contrast details:\n")
+            for (i in 1:nrow(contrasts_df)) {
+                cat("---\n")
+                cat("Name:", contrasts_df$name[i], "\n")
+                cat("Expression:", contrasts_df$expression[i], "\n")
+                if ("description" %in% colnames(contrasts_df) && !is.na(contrasts_df$description[i]) && contrasts_df$description[i] != "") {
+                    cat("Description:", contrasts_df$description[i], "\n")
+                }
+                if ("justification" %in% colnames(contrasts_df) && !is.na(contrasts_df$justification[i]) && contrasts_df$justification[i] != "") {
+                    cat("Justification:", contrasts_df$justification[i], "\n")
+                }
+            }
+            cat("---\n\n")
+        } else {
+            # Simple output if no additional information
+            print(contrasts_df[, c("name", "expression")])
+        }
+
+        # Extract unique factor levels from expressions
+        levels_df <- unique(unlist(strsplit(contrasts_df$expression, " - ")))
+
+        # Generate the makeContrasts call
+        contrast_parts <- paste0(contrasts_df$name, " = \"", contrasts_df$expression, "\"")
+        contrasts_str <- paste(contrast_parts, collapse = ", ")
+        levels_str <- paste(paste0("\"", levels_df, "\""), collapse = ", ")
+        makeContrasts_str <- paste0("makeContrasts(", contrasts_str, ", levels = c(", levels_str, "))")
+
+        cat("Generated makeContrasts call:\n", makeContrasts_str, "\n\n")
+
+        # Create the contrast matrix
+        custom_contrast_matrix <- eval(parse(text = makeContrasts_str))
+
+        cat("Custom contrast matrix:\n")
+        print(custom_contrast_matrix)
+    } else {
+        warning("Failed to read contrasts from CSV file or invalid format")
+    }
+}
+
+if (!is.null(custom_contrast_matrix)) {
+    cat("Using custom contrasts defined by the metadata agent...\n")
+    vfit <- lmFit(v, design)
+    vfit <- contrasts.fit(vfit, custom_contrast_matrix)
+    efit <- eBayes(vfit)
+
+    # Generate results for each contrast
+    for (i in 1:ncol(custom_contrast_matrix)) {
+        contrast_name <- colnames(custom_contrast_matrix)[i]
+        cat("Analyzing contrast:", contrast_name, "\n")
+
         dt <- decideTests(efit, p.value = 0.05)[, i]
+        save_voom_plot(DGE.norm, efit, design, output_dir)
+        plot_ma(efit, output_dir, coef = i, status = dt)
+        plot_volcano(efit, output_dir, coef = i, highlight = 10)
+        plot_deg_heatmap(DGE.norm, efit, output_dir, group_data, coef = i, n_genes = 50)
+
+        top_results <- topTable(efit, coef = i, number = Inf)
+        top_results$Gene <- rownames(top_results)
+        top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
+
+        # Save results with the contrast name
+        clean_contrast_name <- gsub("[^a-zA-Z0-9_]", "_", contrast_name)
+        result_file <- file.path(deg_dir, paste0("deg_", clean_contrast_name, ".csv"))
+        write.csv(top_results, file = result_file, row.names = FALSE)
+        cat("Saved results to:", result_file, "\n")
+    }
+} else {
+    # Fall back to default behavior
+    if (ncol(design) == 2) {
+        cat("Exactly two groups detected. Calculating contrast (group2 - group1)...\n")
+        contrast_name <- paste(colnames(design)[2], "-", colnames(design)[1])
+        contrast <- makeContrasts(diff = contrast_name, levels = design)
+        cat("Contrast matrix:")
+        print(contrast)
+        vfit <- lmFit(v, design)
+        vfit <- contrasts.fit(vfit, contrast)
+        efit <- eBayes(vfit)
+        dt <- decideTests(efit, p.value = 0.05)
         save_voom_plot(DGE.norm, efit, design, output_dir)
         plot_ma(efit, output_dir, coef = 1, status = dt)
         plot_volcano(efit, output_dir, coef = 1, highlight = 10)
         plot_deg_heatmap(DGE.norm, efit, output_dir, group_data, coef = 1, n_genes = 50)
-        top_results <- topTable(efit, coef = i, number = Inf)
 
+        cat("Top differential expression results for contrast:\n")
+        top_results <- topTable(efit, number = Inf)
+        print(head(top_results))
         top_results$Gene <- rownames(top_results)
         top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
         print(head(top_results))
-        write.csv(top_results, file = file.path(deg_dir, paste0("DEG_results_", coef_name, ".csv")), row.names = FALSE)
+        write.csv(top_results, file = file.path(deg_dir, "DEG_results.csv"), row.names = FALSE)
+    } else {
+        cat("Multiple groups detected. Generating top results for each coefficient...\n")
+        for (i in 1:ncol(design)) {
+            vfit <- lmFit(v, design)
+            efit <- eBayes(vfit)
+            coef_name <- colnames(design)[i]
+            dt <- decideTests(efit, p.value = 0.05)[, i]
+            save_voom_plot(DGE.norm, efit, design, output_dir)
+            plot_ma(efit, output_dir, coef = 1, status = dt)
+            plot_volcano(efit, output_dir, coef = 1, highlight = 10)
+            plot_deg_heatmap(DGE.norm, efit, output_dir, group_data, coef = 1, n_genes = 50)
+            top_results <- topTable(efit, coef = i, number = Inf)
+
+            top_results$Gene <- rownames(top_results)
+            top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
+            print(head(top_results))
+            write.csv(top_results, file = file.path(deg_dir, paste0("DEG_results_", coef_name, ".csv")), row.names = FALSE)
+        }
     }
 }
 
