@@ -169,9 +169,9 @@ The only column that exhibits meaningful biological variation is genotype:ch1. U
 
 ⸻
 
-CONTRAST CONSTRUCTION FOR DIFFERENTIAL EXPRESSION ANALYSIS
+CONTRAST CONSTRUCTION FOR DIFFERENTIAL EXPRESSION ANALYSIS - PAIRWISE COMPARISONS ONLY
 
-When constructing contrasts for differential expression analysis using edgeR/limma (via functions such as makeContrasts), you must generate contrast names and formulas that exactly reflect the grouping variable values in the processed metadata. These contrasts determine which comparisons are made when testing for differential expression, so accuracy and consistency are paramount.
+When constructing contrasts for differential expression analysis using edgeR/limma (via functions such as makeContrasts), you must generate only pairwise contrast names and formulas that exactly reflect the grouping variable values in the processed metadata. These contrasts determine which direct comparisons are made when testing for differential expression, so accuracy and consistency are paramount. Only direct pairwise comparisons between groups are allowed; do not construct complex contrasts involving group averages or combinations.
 
 Key Instructions:
 	1.	Exact Matching of Group Labels:

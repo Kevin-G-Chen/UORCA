@@ -9,12 +9,13 @@ import pandas as pd
 from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, Union
 from unidecode import unidecode
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
 from openai import OpenAI
+from Bio import Entrez
 
 # ----------------------------
 # Configure logging
@@ -48,6 +49,7 @@ def log_tool_result(result):
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
         console.print(result)
 
+
 # ----------------------------
 # Dependency Class
 # ----------------------------
@@ -64,6 +66,11 @@ class RNAseqData:
     unique_groups: Optional[List[str]] = None
     # To store designed contrasts if needed
     contrast_details: Optional[Dict[str, Any]] = None
+    # Track all iterations of contrasts for reflection
+    all_contrasts_iterations: List[Dict[str, Any]] = field(default_factory=list)
+    # Store GEO-related information
+    geo_summary: Optional[str] = None
+    geo_accession: Optional[str] = None
 
 
 # ----------------------------
@@ -91,6 +98,20 @@ class Contrast_format(BaseModel):
 class Contrasts(BaseModel):
     """Schema for the output of the candidate contrasts."""
     contrasts: List[Contrast_format]
+    summary: Optional[str] = Field(
+        description="Summary of the designed contrasts and their biological significance.",
+        default=None
+    )
+    model_config = ConfigDict(extra="allow")
+
+
+class ReflectionResult(BaseModel):
+    """Schema for the reflection agent's output - matching the Contrasts schema."""
+    contrasts: List[Contrast_format]
+    summary: Optional[str] = Field(
+        description="Summary of the reflection process and suggested contrasts",
+        default=None
+    )
     model_config = ConfigDict(extra="allow")
 
 
@@ -105,7 +126,7 @@ try:
 
     # Print the first and last few lines for verification
     lines = system_prompt.split('\n')
-    print(f"\n--- SYSTEM PROMPT FILE LOADED ---")
+    print("\n--- SYSTEM PROMPT FILE LOADED ---")
     print("First 3 lines:")
     for line in lines[:3]:
         print(f"> {line}")
@@ -116,7 +137,7 @@ try:
     for line in lines[-3:]:
         print(f"> {line}")
     print(f"--- END OF PREVIEW ({len(lines)} total lines) ---\n")
-except Exception as e:
+except Exception:
     system_prompt = """
     #### Integrated Prompt for Metadata Processing and Grouping Variable Selection
 
@@ -141,9 +162,63 @@ metadata_agent = Agent(
 )
 
 # ----------------------------
-# Utility function: Clean a string
+# Create reflection agent with a combined prompt
 # ----------------------------
 
+def load_reflection_prompt():
+    metadata_prompt = system_prompt  # Use the already loaded metadata agent prompt
+    reflection_prompt_path = "../script_development/prompt_development/reflection_agent_system_prompt.txt"
+
+    try:
+        with open(reflection_prompt_path, 'r') as f:
+            reflection_prompt = f.read()
+
+        # Print the first and last few lines for verification
+        lines = reflection_prompt.split('\n')
+        print("\n--- REFLECTION PROMPT FILE LOADED ---")
+        print("First 3 lines:")
+        for line in lines[:3]:
+            print(f"> {line}")
+
+        print("...")
+
+        print("Last 3 lines:")
+        for line in lines[-3:]:
+            print(f"> {line}")
+        print(f"--- END OF PREVIEW ({len(lines)} total lines) ---\n")
+
+        # Combine the prompts
+        combined_prompt = f"""
+        #### Combined Metadata Processing and Reflection Agent System Prompt
+
+        # Part 1: Metadata Processing Guidelines
+        {metadata_prompt}
+
+        # Part 2: Reflection-Specific Guidelines
+        {reflection_prompt}
+        """
+        return combined_prompt
+
+    except Exception:
+        fallback_prompt = """
+        You are a reflection agent designed to analyze and suggest additional contrasts for RNAseq metadata analysis. You will receive a list of existing contrasts and the unique values in the analysis column. Your task is to reflect on these contrasts and suggest additional biologically meaningful contrasts that might have been missed. Consider the pairwise comparisons that could be made and any potentially meaningful group combinations. If you believe the current set of contrasts is comprehensive, please explain why no additional contrasts are needed. Do not go out of your way to try and "force" new contrasts - only suggest those that are truly meaningful and relevant to the analysis. Your output should include the new contrasts and a summary of your reflection process.
+        """
+        print("Using fallback reflection prompt instead.")
+        return fallback_prompt
+
+# Load the combined prompt
+reflection_system_prompt = load_reflection_prompt()
+
+
+reflection_agent = Agent(
+    'openai:gpt-4o',
+    deps_type=RNAseqData,
+    system_prompt=reflection_system_prompt
+)
+
+# ----------------------------
+# Utility function: Clean a string
+# ----------------------------
 
 @metadata_agent.tool
 def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
@@ -162,7 +237,6 @@ def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
 # Tool 1: Process metadata
 # ----------------------------
 
-
 @metadata_agent.tool
 async def process_metadata(ctx: RunContext[RNAseqData]) -> dict:
     """
@@ -177,8 +251,7 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> dict:
     Returns information about the processed data.
     """
     try:
-        log_tool_header("process_metadata", {
-                        "metadata_path": ctx.deps.metadata_path})
+        log_tool_header("process_metadata", {"metadata_path": ctx.deps.metadata_path})
 
         # Load metadata based on file extension
         if ctx.deps.metadata_path.endswith('.csv'):
@@ -188,7 +261,7 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> dict:
         else:
             df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
 
-        # Remove Run and Experiment columns - these are added in a previous metadata processing step, so these are removed to more accurately emulate the original metadata
+        # Remove Run and Experiment columns - these are added in a previous metadata processing step
         df = df.loc[:, ~df.columns.str.contains('Run|Experiment', case=False)]
         # Remove duplicate rows
         df = df.drop_duplicates()
@@ -206,8 +279,16 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> dict:
             df[col] = df[col].apply(
                 lambda x: clean_string(ctx, x) if pd.notna(x) else x)
 
+        if df.empty:
+            raise ValueError("No data after processing")
+
         # Store cleaned metadata in context
         ctx.deps.metadata_df = df
+
+        # Generate summary and stats
+        nrows, ncols = df.shape
+        col_names = [str(col) for col in df.columns]
+        summary = f"Processed {nrows} rows and {ncols} columns. Found columns: {', '.join(col_names)}"
 
         # Count unique values for each column
         column_stats = {}
@@ -218,23 +299,25 @@ async def process_metadata(ctx: RunContext[RNAseqData]) -> dict:
                 "values": list(unique_vals) if len(unique_vals) < 20 else list(unique_vals[:20])
             }
 
-        summary = f"""Metadata processed: {df.shape[0]} rows and {df.shape[1]} columns.
-Columns: {', '.join(df.columns)}
-"""
         log_tool_result(summary)
-
-        # Return information about the processed data
         return {
             "message": summary,
-            "columns": list(df.columns),
+            "columns": col_names,
             "column_stats": column_stats,
-            "shape": df.shape
+            "shape": (nrows, ncols),
+            "error": False
         }
-    except Exception as e:
-        error_msg = f"Error processing metadata: {str(e)}"
+
+    except Exception as exc:
+        error_msg = f"Error processing metadata: {str(exc)}"
         log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return {"message": error_msg, "error": True}
+        return {
+            "message": error_msg,
+            "error": True,
+            "columns": [],
+            "column_stats": {},
+            "shape": (0, 0)
+        }
 
 # ----------------------------
 # Tool 2: Merge Analysis Columns
@@ -310,13 +393,15 @@ async def merge_analysis_columns(ctx: RunContext[RNAseqData], columns_input: Uni
                 lambda row: "_".join(row.values), axis=1)
             ctx.deps.metadata_df = df  # update the DataFrame
             ctx.deps.merged_column = merged_col
-            msg = f"Multiple columns {', '.join(valid_cols)} merged into column '{merged_col}'."
+            col_list = ", ".join(valid_cols)
+            msg = f"Multiple columns {col_list} merged into column '{merged_col}'."
 
             # Show a preview of the merged values
             unique_merged = df[merged_col].unique().tolist()
             preview = unique_merged[:5] if len(
                 unique_merged) > 5 else unique_merged
-            msg += f"\nMerged values (preview): {preview}"
+            preview_str = str(preview)
+            msg += f"\nMerged values (preview): {preview_str}"
 
         log_tool_result(msg)
         return {
@@ -325,8 +410,8 @@ async def merge_analysis_columns(ctx: RunContext[RNAseqData], columns_input: Uni
             "merged_column": ctx.deps.merged_column,
             "input_columns": valid_cols
         }
-    except Exception as e:
-        error_msg = f"Error in merge_analysis_columns: {str(e)}"
+    except Exception as err:
+        error_msg = f"Error in merge_analysis_columns: {str(err)}"
         log(error_msg, style="bold red")
         log_tool_result(error_msg)
         return {"message": error_msg, "success": False, "merged_column": None}
@@ -363,33 +448,248 @@ async def extract_unique_values(ctx: RunContext[RNAseqData]) -> dict:
         ctx.deps.unique_groups = unique_values
 
         # Log the unique values found
+        val_count = len(unique_values)
         log_tool_result(
-            f"Extracted {len(unique_values)} unique values from column '{analysis_col}'")
+            f"Extracted {val_count} unique values from column '{analysis_col}'")
 
         # Return only the unique values with basic metadata
         return {
             "success": True,
             "column": analysis_col,
             "unique_values": unique_values,
-            "count": len(unique_values)
+            "count": val_count
+        }
+
+    except Exception as err:
+        error_message = f"Error extracting unique values: {str(err)}"
+        log(error_message, style="bold red")
+        return {"success": False, "message": error_message, "unique_values": []}
+
+
+@metadata_agent.tool
+async def fetch_geo_summary(ctx: RunContext[RNAseqData]) -> dict:
+    """
+    Fetches and stores the GEO summary for the dataset being analyzed.
+    Extracts the GEO accession from the metadata path or file contents if available.
+
+    Returns:
+        dict: Contains success status, GEO accession (if found), and summary text
+    """
+    try:
+        # Configure Entrez
+        Entrez.email = "k.cannon@garvan.org.au"  # Using your institutional email
+
+        # Try to find GEO accession from metadata path or contents
+        geo_accession = None
+
+        # First check if we have loaded metadata
+        if ctx.deps.metadata_df is not None:
+            # Check if there's a column that might contain the GEO accession
+            possible_cols = ['geo_accession', 'GEO_accession', 'GSE', 'gse']
+            for col in possible_cols:
+                if col in ctx.deps.metadata_df.columns:
+                    # Take the first non-null value
+                    values = ctx.deps.metadata_df[col].dropna()
+                    if not values.empty:
+                        geo_accession = values.iloc[0]
+                        break
+
+        # If we haven't found it in the DataFrame, try the filename
+        if not geo_accession:
+            # Look for GSE pattern in the metadata path
+            match = re.search(r'(GSE\d+)', ctx.deps.metadata_path)
+            if match:
+                geo_accession = match.group(1)
+
+        if not geo_accession:
+            return {
+                "success": False,
+                "message": "Could not determine GEO accession from metadata",
+                "geo_accession": None,
+                "summary": None
+            }
+
+        # Use the field qualifier [ACCN] to search within the Accession field
+        query = f"{geo_accession}[ACCN]"
+
+        # Perform the search
+        search_handle = Entrez.esearch(db="gds", term=query, retmode="xml")
+        search_results = Entrez.read(search_handle)
+        search_handle.close()
+        uid_list = search_results.get("IdList", [])
+
+        if not uid_list:
+            return {
+                "success": False,
+                "message": f"No record found for GEO accession {geo_accession}",
+                "geo_accession": geo_accession,
+                "summary": None
+            }
+
+        # Use the first UID in the list for fetching summary details
+        uid = uid_list[0]
+        summary_handle = Entrez.esummary(db="gds", id=uid, retmode="xml")
+        summary_result = Entrez.read(summary_handle)
+        summary_handle.close()
+
+        # Retrieve the record and check the Accession field
+        record = summary_result[0]
+        record_accession = record.get("Accession", "")
+
+        if record_accession != geo_accession:
+            return {
+                "success": False,
+                "message": f"Found record with Accession '{record_accession}', not the requested '{geo_accession}'",
+                "geo_accession": geo_accession,
+                "summary": None
+            }
+
+        # Get and store the summary
+        summary = record.get("summary", "No summary available")
+        ctx.deps.geo_summary = summary
+        ctx.deps.geo_accession = geo_accession
+
+        # Show first few lines of the summary
+
+        log_tool_result(f"Retrieved summary for {geo_accession}: \n {summary[:100]}...")
+
+        return {
+            "success": True,
+            "message": "Successfully retrieved GEO summary",
+            "geo_accession": geo_accession,
+            "summary": summary
         }
 
     except Exception as e:
-        error_msg = f"Error extracting unique values: {str(e)}"
+        error_msg = f"Error fetching GEO summary: {str(e)}"
         log(error_msg, style="bold red")
-        return {"success": False, "message": error_msg, "unique_values": []}
+        return {
+            "success": False,
+            "message": error_msg,
+            "geo_accession": None,
+            "summary": None
+        }
 
 # ----------------------------
-# Main Execution - Improved Agentic Approach
+# NEW: Function to run reflection iteratively
+# ----------------------------
+
+def run_reflection_process(metadata_deps, initial_contrasts):
+    """
+    Run the reflection process iteratively until no new contrasts are suggested.
+    Now includes detailed reporting by reflection iteration.
+    """
+    log("Starting reflection process...", style="bold green")
+
+    # Initialize a copy of the contrasts
+    all_contrasts = initial_contrasts.contrasts.copy()
+    iteration = 1
+
+    # Track unique contrast expressions to avoid duplicates
+    unique_expressions = {c.expression for c in all_contrasts}
+
+    # Track all iterations for reporting
+    metadata_deps.all_contrasts_iterations = []
+    report_sections = []
+    # INITIAL CONTRASTS
+    initial_set = [{"name": c.name, "expression": c.expression} for c in all_contrasts]
+    metadata_deps.all_contrasts_iterations.append({
+        "iteration": 0,
+        "type": "initial",
+        "contrasts": initial_set
+    })
+    # Summary for initial
+    report_sections.append("## INITIAL CONTRASTS ##\n" + "\n".join([f"- {c['name']}: {c['expression']}" for c in initial_set]))
+
+    while True:
+        log(f"\n[bold cyan]Reflection Iteration {iteration}[/bold cyan]")
+        log(f"Current contrasts: {len(all_contrasts)}")
+
+        reflection_prompt = f"""
+        I have the following {len(all_contrasts)} contrasts already identified for differential expression analysis:
+
+        {chr(10).join([f"- {c.name}: {c.expression}" for c in all_contrasts])}
+
+        The unique values in the analysis column are: {metadata_deps.unique_groups}
+
+        Please reflect on these contrasts and suggest additional biologically meaningful contrasts that might have been missed.
+        Consider both pairwise comparisons and potentially meaningful group combinations.
+
+        If you believe the current set of contrasts is comprehensive, please explain why no additional contrasts are needed.
+        """
+
+        # Run the reflection agent
+        reflection_result = reflection_agent.run_sync(
+            reflection_prompt,
+            deps=metadata_deps,
+            result_type=ReflectionResult
+        )
+
+        # Extract the additional contrasts
+        new_contrasts = []
+        for contrast in reflection_result.data.contrasts:
+            if contrast.expression not in unique_expressions:
+                new_contrasts.append(contrast)
+                unique_expressions.add(contrast.expression)
+
+        # Track this iteration
+        meta_this_iter = {
+            "iteration": iteration,
+            "type": "reflection",
+            "new_contrasts": [{"name": c.name, "expression": c.expression} for c in new_contrasts],
+            "summary": reflection_result.data.summary
+        }
+        metadata_deps.all_contrasts_iterations.append(meta_this_iter)
+
+        # Add to report section
+        if new_contrasts:
+            section = f"## REFLECTION {iteration} ##\nAdded {len(new_contrasts)} contrasts:"
+            section += "\n" + "\n".join([f"- {c.name}: {c.expression}" for c in new_contrasts])
+        else:
+            section = f"## REFLECTION {iteration} ##\nNo new contrasts added."
+        report_sections.append(section)
+
+        if not new_contrasts:
+            log("No new contrasts suggested. Reflection process complete.", style="bold green")
+            break
+
+        log(f"Reflection suggested {len(new_contrasts)} new contrasts:", style="bold yellow")
+        for c in new_contrasts:
+            log(f"- {c.name}: {c.expression}")
+            all_contrasts.append(c)
+
+        iteration += 1
+
+        if iteration > 10:
+            log("Reached maximum reflection iterations. Stopping.", style="bold yellow")
+            break
+
+    # Create a summary of the reflection process with per-phase reporting
+    reflection_summary = "\n\n".join(report_sections)
+    reflection_summary += f"\n\nTotal initial contrasts: {len(initial_contrasts.contrasts)}\n"
+    reflection_summary += f"Total additional contrasts after reflection: {len(all_contrasts) - len(initial_contrasts.contrasts)}\n"
+    reflection_summary += f"Final contrasts available: {len(all_contrasts)}\n"
+    reflection_summary += f"Reflection iterations: {iteration - 1}\n"
+
+    final_contrasts = Contrasts(
+        contrasts=all_contrasts,
+        summary=reflection_summary
+    )
+    return final_contrasts
+
+# ----------------------------
+# Main Execution - Enhanced with Reflection
 # ----------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="RNAseq metadata analysis pipeline with column selection, column merging, and value extraction"
+        description="Enhanced RNAseq metadata analysis pipeline with contrast reflection"
     )
     parser.add_argument("--metadata_path", type=str, default="metadata.csv",
                         help="Path to the metadata CSV file")
     parser.add_argument("--log_level", type=int, default=LogLevel.NORMAL,
                         help="Logging level (0=minimal, 1=normal, 2=verbose, 3=debug)")
+    parser.add_argument("--skip_reflection", action="store_true",
+                        help="Skip the reflection process and only run the base metadata agent")
     args = parser.parse_args()
 
     CURRENT_LOG_LEVEL = args.log_level
@@ -409,14 +709,29 @@ if __name__ == "__main__":
         5. Design appropriate contrasts for differential expression analysis based on these unique values
 
         You should handle any errors or special cases in the data, and make appropriate decisions
-        about which steps to take based on the data characteristics.
+        about which steps to take based on the data characteristics. It is highly recommended to extract a GEO summary to better understand the dataset and its metadata.
         """
 
-        result = metadata_agent.run_sync(
+        # Run the initial metadata agent to get contrasts
+        console.print(Panel("Running Initial Metadata Analysis", style="bold blue"))
+        initial_result = metadata_agent.run_sync(
             initial_prompt,
             deps=analysis_data,
             result_type=Contrasts
         )
+
+        # If reflection is enabled, enhance the contrasts
+        if not args.skip_reflection:
+            console.print(Panel("Running Contrast Reflection Process", style="bold blue"))
+            # Run the reflection process to get enhanced contrasts
+            enhanced_contrasts = run_reflection_process(
+                    analysis_data,
+                    initial_result.data
+                )
+            final_result = enhanced_contrasts
+
+        else:
+            final_result = initial_result.data
 
         # Display final results
         console.print(Panel("Analysis Complete", style="bold green"))
@@ -430,15 +745,27 @@ if __name__ == "__main__":
             console.print(f"Unique groups: {analysis_data.unique_groups}")
 
         console.print("\nDesigned Contrasts:")
-        if hasattr(result, 'contrasts'):
-            for contrast in result.contrasts:
-                console.print(f"- {contrast.name}: {contrast.expression}")
-        else:
-            console.print(result.data)
+        for contrast in final_result.contrasts:
+            console.print(f"- {contrast.name}: {contrast.expression}")
+
+        if hasattr(final_result, 'summary') and final_result.summary:
+            console.print("\n[bold cyan]Summary:[/bold cyan]")
+            console.print(final_result.summary)
+
+        # If reflection was run, show the process
+        if not args.skip_reflection and hasattr(analysis_data, 'all_contrasts_iterations'):
+            console.print("\n[bold cyan]Reflection Process:[/bold cyan]")
+            for iteration in analysis_data.all_contrasts_iterations:
+                if iteration["type"] == "initial":
+                    console.print(f"Initial contrasts: {len(iteration['contrasts'])}")
+                else:
+                    console.print(f"Iteration {iteration['iteration']}: {len(iteration.get('new_contrasts', []))} new contrasts")
+                    if "summary" in iteration:
+                        console.print(f"Reflection: {iteration['summary']}")
 
     except Exception as e:
         console.print(
             Panel(f"Error during metadata processing: {str(e)}", style="bold red"))
         import traceback
         console.print(traceback.format_exc(),
-                      style="red", level=LogLevel.DEBUG)
+                      style="red")
