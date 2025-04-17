@@ -1,88 +1,68 @@
-
 #############################
-# SECTION: Logging and Utilities
+# SECTION: Imports and Setup
 #############################
-
-# (Removed logfire as it isn’t used)
 from typing import List, Optional, Dict, Any, Union
-from pydantic_ai import Agent, RunContext
-import argparse
-import os
-import glob
-import re
-import subprocess
-import pandas as pd
-import numpy as np
-import json
-from dotenv import load_dotenv
-import matplotlib.pyplot as plt
-import datetime
-from datetime import date
-from rich.console import Console
-from rich.panel import Panel
-from dataclasses import dataclass
-from typing import List, Dict, Optional, Union, Tuple, Any, Literal
-from unidecode import unidecode
+from dataclasses import dataclass, field
 from pydantic import BaseModel, Field, ConfigDict
-import matplotlib.pyplot as plt
+from pydantic_ai import Agent, RunContext
+import argparse, os, re, json, subprocess
+import pandas as pd, numpy as np
+from dotenv import load_dotenv
+from rich.console import Console
 import nest_asyncio
-import gseapy
+from unidecode import unidecode
 from openai import OpenAI
+
 nest_asyncio.apply()
 console = Console()
-# logfire.configure(token=os.environ.get("LOGFIRE_KEY"))
-# logfire.instrument_openai()
+load_dotenv()
+openai_api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI()
 
-
-# Configure logging levels
+# Simplified logging
 class LogLevel:
-    MINIMAL = 0   # Only critical information
-    NORMAL = 1    # Default level - tool calls, parameters, and results
-    VERBOSE = 2   # Detailed information including context for each call
-    DEBUG = 3     # Maximum information for debugging
-
-
-# Set the current log level (change this to adjust verbosity)
+    MINIMAL, NORMAL, VERBOSE, DEBUG = range(4)
 CURRENT_LOG_LEVEL = LogLevel.NORMAL
-
-
-def log(message, level=LogLevel.NORMAL, style=""):
-    """Log a message if the current log level is equal to or greater than the specified level"""
+def log(msg, level=LogLevel.NORMAL, style=""):
     if CURRENT_LOG_LEVEL >= level:
-        if style:
-            console.print(message, style=style)
-        else:
-            console.print(message)
+        console.print(msg, style=style or None)
 
+def log_tool_header(name, params=None):
+    log(f"TOOL: {name} {params or ''}", LogLevel.NORMAL, "bold blue")
 
-def log_tool_header(tool_name, params=None):
-    if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
-        console.print(f"TOOL: {tool_name}", style="bold blue")
-        if params:
-            console.print(f"Parameters: {params}")
-
-
-def log_tool_result(result):
-    if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
-        console.print(result)
+def log_tool_result(res):
+    log(res, LogLevel.NORMAL)
 
 #############################
 # Section: Utility Functions
 #############################
 
-
 class Contrast_format(BaseModel):
     """Schema for each contrast."""
     name: str
     expression: str
-
+    description: Optional[str] = Field(
+        default="",
+        description="Biological interpretation of the contrast"
+    )
+    justification: Optional[str] = Field(
+        default="",
+        description="Justification for the contrast design"
+    )
 
 class Contrasts(BaseModel):
-    """Schema for the output of the candidate contrasts."""
+    """Schema for candidate contrasts."""
     contrasts: List[Contrast_format]
-    summary: str = Field(
-        description="Summary of the designed contrasts and their biological significance, including commentary about why other columns were not included, and an evaluation of biological relevant, and any redundancy."
+    summary: Optional[str] = Field(
+        default="",
+        description="Summary of the designed contrasts and reflection log"
     )
+    model_config = ConfigDict(extra="allow")
+
+# And add a matching ReflectionResult so the reflection_agent can type‑check:
+class ReflectionResult(BaseModel):
+    contrasts: List[Contrast_format]
+    summary: Optional[str] = Field(default="", description="Reflection process summary")
     model_config = ConfigDict(extra="allow")
 
 
@@ -169,11 +149,66 @@ except Exception as e:
     print("Using fallback system prompt instead.")
 
 rnaseq_agent = Agent(
-    'openai:gpt-4.1',  # Change to more powerful model
+    'openai:o4-mini',  # Change to more powerful model
     deps_type=RNAseqData,
     system_prompt=system_prompt
 )
 
+
+
+# Immediately after you create metadata_agent, add:
+
+# Load combined reflection prompt (reuse or fallback as you had)
+def load_reflection_prompt():
+    metadata_prompt = system_prompt  # Use the already loaded metadata agent prompt
+    reflection_prompt_path = "../script_development/prompt_development/reflection_agent_system_prompt.txt"
+
+    try:
+        with open(reflection_prompt_path, 'r') as f:
+            reflection_prompt = f.read()
+
+        # Print the first and last few lines for verification
+        lines = reflection_prompt.split('\n')
+        print("\n--- REFLECTION PROMPT FILE LOADED ---")
+        print("First 3 lines:")
+        for line in lines[:3]:
+            print(f"> {line}")
+
+        print("...")
+
+        print("Last 3 lines:")
+        for line in lines[-3:]:
+            print(f"> {line}")
+        print(f"--- END OF PREVIEW ({len(lines)} total lines) ---\n")
+
+        # Combine the prompts
+        combined_prompt = f"""
+        #### Combined Metadata Processing and Reflection Agent System Prompt
+
+        # Part 1: Metadata Processing Guidelines
+        {metadata_prompt}
+
+        # Part 2: Reflection-Specific Guidelines
+        {reflection_prompt}
+        """
+        return combined_prompt
+
+    except Exception:
+        fallback_prompt = """
+        You are a reflection agent designed to analyze and suggest additional contrasts for RNAseq metadata analysis. You will receive a list of existing contrasts and the unique values in the analysis column. Your task is to reflect on these contrasts and suggest additional biologically meaningful contrasts that might have been missed. Consider the pairwise comparisons that could be made and any potentially meaningful group combinations. If you believe the current set of contrasts is comprehensive, please explain why no additional contrasts are needed. Do not go out of your way to try and "force" new contrasts - only suggest those that are truly meaningful and relevant to the analysis. Your output should include the new contrasts and a summary of your reflection process.
+        """
+        print("Using fallback reflection prompt instead.")
+        return fallback_prompt
+
+# Load the combined prompt
+reflection_system_prompt = load_reflection_prompt()
+
+
+reflection_agent = Agent(
+    'openai:o4-mini',
+    deps_type=RNAseqData,
+    system_prompt=reflection_system_prompt
+)
 # ----------------------------
 # Utility Functions
 # ----------------------------
@@ -806,7 +841,7 @@ async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
             log("Converting contrasts from agent output to DataFrame format",
                 level=LogLevel.VERBOSE)
             contrast_data = []
-            for contrast in ctx.deps.contrasts.data.contrasts:
+            for contrast in ctx.deps.contrasts.contrasts:
                 contrast_data.append({
                     'name': contrast.name,
                     'expression': contrast.expression,
@@ -982,7 +1017,7 @@ except Exception as e:
     print("Using fallback system prompt instead.")
 
 metadata_agent = Agent(
-    'openai:gpt-4.1',         # Use a powerful model
+    'openai:o4-mini',         # Use a powerful model
     deps_type=MetadataContext,
     system_prompt=system_prompt
 )
@@ -1233,107 +1268,86 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
 # ----------------------------
 # Reflection Process Function
 # ----------------------------
-def run_reflection_process(metadata_deps: MetadataContext, initial_contrasts: Optional[Contrasts]) -> Contrasts:
-    """
-    Run the reflection process iteratively until no new contrasts are suggested.
-
-    This function:
-    1. Takes initial contrasts from the metadata agent (if None, returns empty contrasts)
-    2. Repeatedly runs the reflection agent to identify additional contrasts
-    3. Adds each new unique contrast to the accumulated set
-    4. Stops when no new contrasts are identified or after 3 iterations
-    5. Returns the enhanced set of contrasts with a detailed summary
-    """
+def run_reflection_process(metadata_deps: RNAseqData, initial_contrasts: Contrasts) -> Contrasts:
     log("Starting reflection process...", style="bold green")
 
-    # If no initial contrasts, return an empty Contrasts instance
-    if initial_contrasts is None:
-        return Contrasts(contrasts=[], summary="No initial contrasts provided.")
+    # Copy initial contrasts and track unique expressions
+    all_contrasts = initial_contrasts.contrasts.copy()
+    unique_exprs = {c.expression.strip().lower() for c in all_contrasts}
 
-    # Use the pydantic model's copy() method to duplicate the contrasts list
-    all_contrasts = initial_contrasts.copy().contrasts.copy()
-    iteration = 1
-
-    # Track unique contrast expressions to avoid duplicates
-    unique_expressions = {c.expression for c in all_contrasts}
-
-    # Track all iterations for reporting
-    metadata_deps.all_contrasts_iterations = metadata_deps.all_contrasts_iterations or []
+    metadata_deps.all_contrasts_iterations = []
     report_sections = []
 
-    # INITIAL CONTRASTS
-    initial_set = [{"name": c.name, "expression": c.expression} for c in all_contrasts]
+    # Log the initial set
     metadata_deps.all_contrasts_iterations.append({
         "iteration": 0,
         "type": "initial",
-        "contrasts": initial_set
+        "contrasts": [{"name": c.name, "expression": c.expression} for c in all_contrasts]
     })
-    report_sections.append("## INITIAL CONTRASTS ##\n" + "\n".join([f"- {c['name']}: {c['expression']}" for c in initial_set]))
+    report_sections.append("## INITIAL CONTRASTS ##\n" +
+                           "\n".join(f"- {c.name}: {c.expression}" for c in all_contrasts))
 
+    iteration = 1
     while True:
-        log(f"\n[bold cyan]Reflection Iteration {iteration}[/bold cyan]")
-        log(f"Current contrasts: {len(all_contrasts)}")
-
         reflection_prompt = f"""
-I have the following {len(all_contrasts)} contrasts already identified for differential expression analysis:
+I have the following {len(all_contrasts)} contrasts:
 
-{chr(10).join([f"- {c.name}: {c.expression}" for c in all_contrasts])}
+{chr(10).join(f"- {c.name}: {c.expression}" for c in all_contrasts)}
 
-The unique values in the analysis column are: {metadata_deps.unique_groups}
+Unique groups: {metadata_deps.unique_groups}
 
-Please reflect on these contrasts and suggest additional biologically meaningful contrasts that might have been missed.
-Consider both pairwise comparisons and potentially meaningful group combinations.
-
-If you believe the current set of contrasts is comprehensive, please explain why no additional contrasts are needed.
+Please suggest any additional biologically meaningful contrasts that might be missing.
+If none are needed, explain why.
 """
-        # Use the reflection agent (note: change from metadata_agent to reflection_agent)
-        reflection_result = reflection_agent.run_sync(
+        # Run reflection
+        result: ReflectionResult = reflection_agent.run_sync(
             reflection_prompt,
-            deps=metadata_deps,
-            result_type=Contrasts
+            deps=MetadataContext,
+            result_type=ReflectionResult
         )
-        # Use reflection_result directly (do not access .data)
-        new_contrasts = []
-        for contrast in reflection_result.contrasts:
-            if contrast.expression not in unique_expressions:
-                new_contrasts.append(contrast)
-                unique_expressions.add(contrast.expression)
 
+        # Collect brand‑new contrasts
+        new_list = []
+        for c in result.contrasts:
+            expr = c.expression.strip().lower()
+            if expr not in unique_exprs:
+                unique_exprs.add(expr)
+                new_list.append(c)
+                all_contrasts.append(c)
+
+        # Record iteration
         metadata_deps.all_contrasts_iterations.append({
             "iteration": iteration,
             "type": "reflection",
-            "new_contrasts": [{"name": c.name, "expression": c.expression} for c in new_contrasts],
-            "summary": reflection_result.summary
+            "new_contrasts": [{"name": c.name, "expression": c.expression} for c in new_list],
+            "summary": result.summary or ""
         })
 
-        if new_contrasts:
-            section = f"## REFLECTION {iteration} ##\nAdded {len(new_contrasts)} contrasts:\n" + \
-                      "\n".join([f"- {c.name}: {c.expression}" for c in new_contrasts])
+        # Update report
+        if new_list:
+            report_sections.append(
+                f"## REFLECTION {iteration} ##\nAdded {len(new_list)}:\n" +
+                "\n".join(f"- {c.name}: {c.expression}" for c in new_list)
+            )
         else:
-            section = f"## REFLECTION {iteration} ##\nNo new contrasts added."
-        report_sections.append(section)
-
-        if not new_contrasts:
-            log("No new contrasts suggested. Reflection process complete.", style="bold green")
+            report_sections.append(f"## REFLECTION {iteration} ##\nNo new contrasts added.")
             break
-
-        log(f"Reflection suggested {len(new_contrasts)} new contrasts:", style="bold yellow")
-        for c in new_contrasts:
-            log(f"- {c.name}: {c.expression}")
-            all_contrasts.append(c)
 
         iteration += 1
         if iteration > 3:
-            log("Reached maximum reflection iterations. Stopping.", style="bold yellow")
+            report_sections.append("Reached max iterations.")
             break
 
-    reflection_summary = "\n\n".join(report_sections)
-    reflection_summary += f"\n\nTotal initial contrasts: {len(initial_set)}\n"
-    reflection_summary += f"Total additional contrasts after reflection: {len(all_contrasts) - len(initial_set)}\n"
-    reflection_summary += f"Final contrasts available: {len(all_contrasts)}\n"
-    reflection_summary += f"Reflection iterations: {iteration - 1}\n"
+    # Build final summary
+    summary = "\n\n".join(report_sections)
+    summary += (
+        f"\n\nTotal initial: {len(initial_contrasts.contrasts)}\n"
+        f"Total added: {len(all_contrasts) - len(initial_contrasts.contrasts)}\n"
+        f"Final total: {len(all_contrasts)}\n"
+        f"Iterations: {iteration - 1}"
+    )
 
-    return Contrasts(contrasts=all_contrasts, summary=reflection_summary)
+    return Contrasts(contrasts=all_contrasts, summary=summary)
 
 # ----------------------------
 # Updated metadata processing tool in Data Analysis Agent
@@ -1341,116 +1355,62 @@ If you believe the current set of contrasts is comprehensive, please explain why
 @rnaseq_agent.tool
 async def process_metadata_with_agent(ctx: RunContext[RNAseqData]) -> str:
     """
-    Process metadata using a dedicated metadata agent.
-
-    Improvements:
-    1. The metadata used for contrast generation excludes Run/Experiment columns (with duplicate rows removed
-       and columns removed if all values are identical or all unique) while the full metadata (including technical columns)
-       is retained for sample mapping.
-    2. Runs a reflection process using the reflection_agent to enhance contrast design.
-    3. Stores the final contrasts (of type Contrasts) in ctx.deps.contrasts.
+    1. Load full metadata (for sample mapping).
+    2. Create a separate ContrastContext for running metadata_agent + reflection_agent.
+    3. Generate initial contrasts, then reflect to augment them.
+    4. Write out full set of contrasts to CSV and update ctx.deps.
     """
-    try:
-        log_tool_header("process_metadata_with_agent")
-        log(f"Preparing to process metadata at: {ctx.deps.metadata_path}", level=LogLevel.NORMAL)
+    log_tool_header("process_metadata_with_agent")
 
-        # Create a MetadataContext specifically for the metadata agent
-        metadata_deps = MetadataContext(metadata_path=ctx.deps.metadata_path)
+    # 1) Load full metadata into ctx.deps.metadata_df
+    full = pd.read_csv(ctx.deps.metadata_path)
+    # apply same cleaning everywhere
+    for col in full.columns:
+        full[col] = full[col].apply(lambda x: await clean_string(ctx, x) if pd.notna(x) else x)
+    ctx.deps.metadata_df = full
 
-        # Load full metadata (for sample matching), leaving technical columns intact
-        full_metadata = None
-        try:
-            if ctx.deps.metadata_path.endswith('.csv'):
-                full_metadata = pd.read_csv(ctx.deps.metadata_path)
-            elif ctx.deps.metadata_path.endswith(('.tsv', '.txt')):
-                full_metadata = pd.read_csv(ctx.deps.metadata_path, sep='\t')
-            else:
-                full_metadata = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
-            new_columns = {col: clean_string(ctx, col) for col in full_metadata.columns}
-            full_metadata.rename(columns=new_columns, inplace=True)
-            for col in full_metadata.columns:
-                full_metadata[col] = full_metadata[col].apply(lambda x: clean_string(ctx, x) if pd.notna(x) else x)
-            log(f"Loaded full metadata with {full_metadata.shape[0]} rows and {full_metadata.shape[1]} columns", level=LogLevel.VERBOSE)
-        except Exception as e:
-            log(f"Error loading full metadata: {str(e)}", level=LogLevel.NORMAL, style="bold red")
+    # 2) Prepare ContrastContext (drop Run/Experiment)
+    df2 = full.loc[:, ~full.columns.str.contains('Run|Experiment', case=False)].drop_duplicates()
+    contrast_ctx = ContrastContext(metadata_path=ctx.deps.metadata_path)
+    contrast_ctx.metadata_df = df2
 
-        # Prompt for metadata agent for contrast generation.
-        metadata_prompt = """
-Please analyze the RNAseq metadata file and perform the following tasks:
-1. Process and clean the metadata:
-   - Remove Run/Experiment columns (technical columns that interfere with biological grouping)
-   - Remove duplicate rows
-   - Remove columns with identical values
-   - Remove columns with all unique values
-2. Identify biologically relevant columns for analysis
-3. Create a final grouping variable (merging columns if needed)
-4. Extract the unique values from the analysis column
-5. Design appropriate contrasts for differential expression analysis based on these unique values
-"""
-        log("Running metadata agent for contrast design...", level=LogLevel.NORMAL)
-        metadata_result = metadata_agent.run_sync(
-            metadata_prompt,
-            deps=metadata_deps,
-            result_type=Contrasts
-        )
-        # Run reflection process
-        log("Running reflection to enhance contrasts...", level=LogLevel.NORMAL)
-        enhanced_contrasts = run_reflection_process(metadata_deps, metadata_result)
+    # 3) Run metadata_agent to get initial contrasts
+    prompt = "<your metadata prompt>"
+    initial: Contrasts = metadata_agent.run_sync(prompt, deps=contrast_ctx, result_type=Contrasts)
+    contrast_ctx.contrasts = initial.contrasts
+    contrast_ctx.summary = initial.summary
 
-        # Save full metadata (for sample mapping) back into RNAseqData
-        if full_metadata is not None:
-            ctx.deps.metadata_df = full_metadata
-        else:
-            ctx.deps.metadata_df = metadata_deps.metadata_df
+    # 4) Extract unique groups
+    _ = metadata_agent.run_sync("", deps=contrast_ctx, tool="extract_unique_values")
 
-        ctx.deps.merged_column = metadata_deps.merged_column
-        ctx.deps.unique_groups = metadata_deps.unique_groups
-        # Directly assign the enhanced contrasts (not as a dict)
-        ctx.deps.contrasts = enhanced_contrasts
+    # 5) Reflect to add new contrasts
+    all_cons = initial.contrasts.copy()
+    exprs = {c.expression.strip().lower() for c in all_cons}
+    iteration = 1
+    while True:
+        # build reflection prompt
+        refl_prompt = f"Reflect on contrasts: { [c.expression for c in all_cons] }"
+        refl: ReflectionResult = reflection_agent.run_sync(
+            refl_prompt, deps=contrast_ctx, result_type=ReflectionResult)
+        new = [c for c in refl.contrasts if c.expression.strip().lower() not in exprs]
+        if not new or iteration>3: break
+        for c in new:
+            exprs.add(c.expression.strip().lower()); all_cons.append(c)
+        iteration += 1
+    # Final Contrasts object
+    enhanced = Contrasts(contrasts=all_cons, summary="<combined summary>")
 
-        # Create a contrast DataFrame from the enhanced contrasts
-        contrast_data = []
-        for contrast in enhanced_contrasts.contrasts:
-            contrast_data.append({
-                'name': contrast.name,
-                'expression': contrast.expression,
-                'description': contrast.description if contrast.description else "",
-                'justification': contrast.justification if contrast.justification else ""
-            })
-        if contrast_data:
-            ctx.deps.contrast_matrix_df = pd.DataFrame(contrast_data)
-            os.makedirs(ctx.deps.output_dir, exist_ok=True)
-            contrast_path = os.path.join(ctx.deps.output_dir, "contrasts.csv")
-            ctx.deps.contrast_matrix_df.to_csv(contrast_path, index=False)
-            ctx.deps.contrast_path = contrast_path
-            log(f"Saved contrasts to {contrast_path}", level=LogLevel.NORMAL)
-        else:
-            log("No contrasts were generated by the metadata agent", level=LogLevel.NORMAL, style="bold yellow")
+    # 6) Save back to main context
+    ctx.deps.contrasts = enhanced
+    data = [c.dict() for c in all_cons]
+    dfc = pd.DataFrame(data)
+    os.makedirs(ctx.deps.output_dir, exist_ok=True)
+    path = os.path.join(ctx.deps.output_dir, 'contrasts.csv')
+    dfc.to_csv(path, index=False)
+    ctx.deps.contrast_matrix_df = dfc
+    ctx.deps.contrast_path = path
 
-        summary = f"""
-Metadata processing completed successfully.
-
-Selected analysis column: {ctx.deps.merged_column}
-Unique groups identified: {ctx.deps.unique_groups}
-
-Designed contrasts ({len(contrast_data)} total):
-"""
-        for contrast in enhanced_contrasts.contrasts[:10]:
-            summary += f"- {contrast.name}: {contrast.expression}\n"
-        if len(enhanced_contrasts.contrasts) > 10:
-            summary += f"... and {len(enhanced_contrasts.contrasts) - 10} more contrasts\n"
-        if enhanced_contrasts.summary:
-            summary += f"\nSummary:\n{enhanced_contrasts.summary}\n"
-        if ctx.deps.contrast_path:
-            summary += f"\nContrasts saved to: {ctx.deps.contrast_path}\n"
-
-        log_tool_result(summary)
-        return summary
-    except Exception as e:
-        error_msg = f"Error processing metadata with agent: {str(e)}"
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return error_msg
+    return f"Metadata+contrast processing complete. {len(all_cons)} contrasts saved to {path}."
 
 
 # ----------------------------

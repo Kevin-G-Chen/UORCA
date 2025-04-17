@@ -509,7 +509,7 @@ if (!is.null(contrasts_file) && file.exists(contrasts_file)) {
         contrast_parts <- paste0(contrasts_df$name, " = \"", contrasts_df$expression, "\"")
         contrasts_str <- paste(contrast_parts, collapse = ", ")
         levels_str <- paste(paste0("\"", levels_df, "\""), collapse = ", ")
-        makeContrasts_str <- paste0("makeContrasts(", contrasts_str, ", levels = c(", levels_str, "))")
+        makeContrasts_str <- paste0("makeContrasts(", contrasts_str, ", levels = colnames(design))")
 
         cat("Generated makeContrasts call:\n", makeContrasts_str, "\n\n")
 

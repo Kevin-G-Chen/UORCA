@@ -180,7 +180,7 @@ except Exception as e:
     print("Using fallback system prompt instead.")
 
 rnaseq_agent = Agent(
-    'openai:gpt-4o',  # Change to more powerful model
+    'openai:gpt-4.1',  # Change to more powerful model
     deps_type=RNAseqData,
     system_prompt=system_prompt
 )
@@ -522,9 +522,9 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
 
 
 @rnaseq_agent.tool
-async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
+async def run_kallisto_quantification(ctx: RunContext[RNAseqData], parallel: bool = True, max_workers: Optional[int] = None, threads_per_job: Optional[int] = None) -> str:
     """
-    Run Kallisto quantification on paired-end FASTQ files and record the resulting abundance files.
+    Run Kallisto quantification on paired-end FASTQ files with adaptive parallelization and record the resulting abundance files.
 
     Inputs:
       - ctx: RunContext[RNAseqData]
@@ -533,6 +533,9 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
              • kallisto_index_dir: The directory containing the Kallisto index files.
              • output_dir: The directory to store Kallisto outputs.
              • organism: Organism information to select the correct index.
+      - parallel: Whether to enable parallel processing (default: True)
+      - max_workers: Maximum number of concurrent Kallisto processes (default: auto-determined)
+      - threads_per_job: Number of threads per Kallisto instance (default: auto-determined)
 
     Process:
       1. Logs current FASTQ directory and full context details.
@@ -543,9 +546,10 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
       6. Creates the output directory if it does not exist.
       7. Searches for paired FASTQ files using regular expression patterns for R1 and R2.
       8. Matches R1 with R2 files to form sample pairs.
-      9. For each paired sample, builds the Kallisto command and executes it via subprocess.
-      10. Logs progress before and after running quantification for each sample.
-      11. Collects the paths to generated abundance files (e.g., abundance.tsv) and stores them in ctx.deps.abundance_files.
+      9. Determines optimal parallelization strategy based on available system resources.
+      10. For each paired sample, builds the Kallisto command and executes it via subprocess (in parallel if enabled).
+      11. Logs progress before and after running quantification for each sample.
+      12. Collects the paths to generated abundance files (e.g., abundance.tsv) and stores them in ctx.deps.abundance_files.
 
     Output:
       A string summary reporting:
@@ -558,6 +562,9 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
       transcript abundance estimates, which are later used for differential expression analysis.
     """
     try:
+        import concurrent.futures
+        import multiprocessing
+
         console.log(
             f"[bold cyan]Fastq Directory from context:[/] {ctx.deps.fastq_dir}")
         console.log(
@@ -627,9 +634,25 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
             else:
                 return "Error: Could not identify paired FASTQ files"
 
-        # Run Kallisto for each pair
-        results = []
-        for sample_name, (r1, r2) in paired_files.items():
+        # Determine parallelization strategy based on available resources
+        total_cpus = multiprocessing.cpu_count()
+        total_samples = len(paired_files)
+
+        # Default parallelization strategy if not specified
+        if max_workers is None:
+            # Use at most half of CPUs for concurrent processes, but at least 1
+            max_workers = min(total_samples, max(1, total_cpus // 2))
+
+        if threads_per_job is None:
+            # Distribute available CPUs among workers, but at least 1 thread per job
+            threads_per_job = max(1, total_cpus // max_workers)
+
+        console.log(f"[bold cyan]System resources:[/] {total_cpus} CPUs available")
+        console.log(f"[bold cyan]Parallelization strategy:[/] Running up to {max_workers} samples simultaneously with {threads_per_job} threads each")
+
+        # Function to process one sample
+        def process_sample(sample_info):
+            sample_name, (r1, r2) = sample_info
             sample_output_dir = os.path.join(output_dir, sample_name)
             os.makedirs(sample_output_dir, exist_ok=True)
 
@@ -639,7 +662,7 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
                 "--rf-stranded",  # Temporary hardcode until I implement determination of strandedness
                 "-i", index_path,
                 "-o", sample_output_dir,
-                "-t", "24",  # Use 4 threads
+                "-t", str(threads_per_job),  # Use calculated threads per sample
                 "--plaintext",  # Output plaintext instead of HDF5
                 r1, r2
             ]
@@ -650,25 +673,46 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
 
             console.log(
                 f"[bold yellow]Progress:[/] Completed Kallisto run for sample: {sample_name} (return code: {process.returncode})")
-            if process.returncode == 0:
-                results.append(f"Successfully processed {sample_name}")
-            else:
-                results.append(
-                    f"Error processing {sample_name}: {process.stderr}")
 
-        # Collect paths to abundance files
+            result = {
+                "sample": sample_name,
+                "success": process.returncode == 0,
+                "message": f"Successfully processed {sample_name}" if process.returncode == 0 else f"Error processing {sample_name}: {process.stderr}",
+                "abundance_file": os.path.join(sample_output_dir, "abundance.tsv") if process.returncode == 0 else None
+            }
+
+            return result
+
+        results = []
         abundance_files = []
-        for sample_name in paired_files.keys():
-            abundance_file = os.path.join(
-                output_dir, sample_name, "abundance.tsv")
-            if os.path.exists(abundance_file):
-                abundance_files.append(abundance_file)
+
+        # Use parallel processing if enabled and we have multiple samples
+        if parallel and total_samples > 1:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_sample = {executor.submit(process_sample, item): item for item in paired_files.items()}
+                for future in concurrent.futures.as_completed(future_to_sample):
+                    try:
+                        result = future.result()
+                        results.append(result["message"])
+                        if result["success"] and result["abundance_file"] and os.path.exists(result["abundance_file"]):
+                            abundance_files.append(result["abundance_file"])
+                    except Exception as exc:
+                        sample_name = future_to_sample[future][0]
+                        results.append(f"Error processing {sample_name}: {str(exc)}")
+        else:
+            # Sequential processing as fallback
+            for sample_name, (r1, r2) in paired_files.items():
+                result = process_sample((sample_name, (r1, r2)))
+                results.append(result["message"])
+                if result["success"] and result["abundance_file"] and os.path.exists(result["abundance_file"]):
+                    abundance_files.append(result["abundance_file"])
 
         # Store the abundance file paths
         ctx.deps.abundance_files = abundance_files
 
         return f"""
 Kallisto quantification completed for {len(results)} sample pairs.
+Parallelization: {max_workers} concurrent samples with {threads_per_job} threads each.
 
 Results:
 {chr(10).join(results)}
@@ -1128,7 +1172,7 @@ except Exception as e:
     print("Using fallback system prompt instead.")
 
 metadata_agent = Agent(
-    'openai:gpt-4o',         # Use a powerful model
+    'openai:gpt-4.1',         # Use a powerful model
     deps_type=MetadataContext,
     system_prompt=system_prompt
 )
@@ -1187,8 +1231,7 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
         df = df.drop_duplicates()
         # Remove columns where all values are identical
         df = df.loc[:, df.nunique() > 1]
-        # Remove columns where all values are different (i.e. all values are unique)
-        # df = df.loc[:, df.nunique() < df.shape[0]]
+        # Remove columns where all values are different (i.e. all values are unique), but ensure Run and Experiment columns are not removed
 
         # Clean column names
         new_columns = {col: clean_string(ctx, col) for col in df.columns}
