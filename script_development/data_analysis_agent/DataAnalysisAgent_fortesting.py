@@ -9,9 +9,12 @@ import argparse, os, re, json, subprocess
 import pandas as pd, numpy as np
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.panel import Panel
 import nest_asyncio
 from unidecode import unidecode
 from openai import OpenAI
+import sys
+import datetime
 
 nest_asyncio.apply()
 console = Console()
@@ -79,7 +82,8 @@ class RNAseqData:
     tx2gene_path: Optional[str] = None
 
     # Runtime data that gets populated during analysis
-    metadata_df: Optional[pd.DataFrame] = None
+    metadata_df: Optional[pd.DataFrame] = None # filtered metadata, i.e. for contrast generation
+    metadata_full_df: Optional[pd.DataFrame] = None # unfiltered metadata
     abundance_files: List[str] = None
     merged_column: Optional[str] = None
     contrast_groups: Dict[str, Dict[str, str]] = None
@@ -122,7 +126,7 @@ try:
 
     # Print the first and last few lines for verification
     lines = system_prompt.split('\n')
-    print(f"\n--- SYSTEM PROMPT FILE LOADED ---")
+    print(f"\n--- DATA ANALYSIS AGENT PROMPT FILE LOADED ---")
     print("First 3 lines:")
     for line in lines[:3]:
         print(f"> {line}")
@@ -663,7 +667,7 @@ async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
             return error_msg
 
         # Check if we have metadata
-        if ctx.deps.metadata_df is None:
+        if ctx.deps.metadata_full_df is None:
             error_msg = "Error: Metadata not loaded. Please run load_metadata first."
             log_tool_result(error_msg)
             return error_msg
@@ -685,7 +689,7 @@ async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
 
         # Create a mapping between abundance files and metadata
         # First, try to match based on exact sample names
-        metadata_df = ctx.deps.metadata_df
+        metadata_df = ctx.deps.metadata_full_df
         matched_samples = {}
         unmatched_samples = []
 
@@ -1354,64 +1358,109 @@ If none are needed, explain why.
 # ----------------------------
 @rnaseq_agent.tool
 async def process_metadata_with_agent(ctx: RunContext[RNAseqData]) -> str:
-    """
-    1. Load full metadata (for sample mapping).
-    2. Create a separate ContrastContext for running metadata_agent + reflection_agent.
-    3. Generate initial contrasts, then reflect to augment them.
-    4. Write out full set of contrasts to CSV and update ctx.deps.
-    """
     log_tool_header("process_metadata_with_agent")
 
     # 1) Load full metadata into ctx.deps.metadata_df
     full = pd.read_csv(ctx.deps.metadata_path)
-    # apply same cleaning everywhere
+    ctx.deps.metadata_full_df = full.copy()
+
     for col in full.columns:
-        full[col] = full[col].apply(lambda x: await clean_string(ctx, x) if pd.notna(x) else x)
+        full[col] = full[col].apply(lambda x: clean_string(ctx, x) if pd.notna(x) else x)
     ctx.deps.metadata_df = full
 
-    # 2) Prepare ContrastContext (drop Run/Experiment)
+    # 2) Prepare contrast context (drop Run/Experiment)
     df2 = full.loc[:, ~full.columns.str.contains('Run|Experiment', case=False)].drop_duplicates()
-    contrast_ctx = ContrastContext(metadata_path=ctx.deps.metadata_path)
+    contrast_ctx = RNAseqData(
+        fastq_dir=ctx.deps.fastq_dir,
+        kallisto_index_dir=ctx.deps.kallisto_index_dir,
+        metadata_path=ctx.deps.metadata_path,
+        organism=ctx.deps.organism,
+        output_dir=ctx.deps.output_dir
+    )
     contrast_ctx.metadata_df = df2
 
-    # 3) Run metadata_agent to get initial contrasts
-    prompt = "<your metadata prompt>"
-    initial: Contrasts = metadata_agent.run_sync(prompt, deps=contrast_ctx, result_type=Contrasts)
+    # 3) Load system prompt for metadata processing
+    metadata_prompt_path = "../script_development/prompt_development/metadata_processing_systemprompt.txt"
+    try:
+        with open(metadata_prompt_path, 'r') as f:
+            initial_prompt = f.read()
+        lines = initial_prompt.split('\n')
+        log("\n--- METADATA PROMPT LOADED ---", level=LogLevel.VERBOSE)
+        log("First 3 lines:", level=LogLevel.VERBOSE)
+        for line in lines[:3]:
+            log(f"> {line}", level=LogLevel.VERBOSE)
+    except Exception as e:
+        log(f"Failed to read metadata prompt file: {str(e)}", level=LogLevel.NORMAL)
+        initial_prompt = """
+Please analyze this RNAseq metadata and:
+1. Process and clean the metadata
+2. Identify biologically relevant columns
+3. Create a final grouping variable
+4. Extract unique values
+5. Design appropriate contrasts for differential expression analysis
+
+Focus on identifying contrasts that will reveal meaningful biological differences.
+"""
+        log("Using fallback metadata prompt", level=LogLevel.NORMAL)
+
+    # 4) Run metadata agent for initial contrasts
+    initial_run = metadata_agent.run_sync(
+        initial_prompt,
+        deps=contrast_ctx,
+        result_type=Contrasts
+    )
+    initial = initial_run.data
     contrast_ctx.contrasts = initial.contrasts
-    contrast_ctx.summary = initial.summary
+    contrast_ctx.summary   = initial.summary
 
-    # 4) Extract unique groups
-    _ = metadata_agent.run_sync("", deps=contrast_ctx, tool="extract_unique_values")
+    # Seed report with the metadata agent’s own summary
+    report_sections = ["## INITIAL CONTRASTS ##", initial.summary or ""]
 
-    # 5) Reflect to add new contrasts
+    # 5) Reflection loop
     all_cons = initial.contrasts.copy()
-    exprs = {c.expression.strip().lower() for c in all_cons}
+    exprs     = {c.expression.strip().lower() for c in all_cons}
     iteration = 1
+
     while True:
-        # build reflection prompt
-        refl_prompt = f"Reflect on contrasts: { [c.expression for c in all_cons] }"
-        refl: ReflectionResult = reflection_agent.run_sync(
-            refl_prompt, deps=contrast_ctx, result_type=ReflectionResult)
+        refl_prompt = f"Reflect on contrasts: {[c.expression for c in all_cons]}"
+        refl_run    = reflection_agent.run_sync(
+            refl_prompt, deps=contrast_ctx, result_type=ReflectionResult
+        )
+        refl        = refl_run.data
+
         new = [c for c in refl.contrasts if c.expression.strip().lower() not in exprs]
-        if not new or iteration>3: break
+        # Append whatever the agent said
+        if refl.summary:
+            report_sections.append(f"## REFLECTION {iteration} SUMMARY ##\n{refl.summary}")
+        if not new or iteration > 3:
+            break
+
+        report_sections.append(f"## REFLECTION {iteration} ADDED ##")
+        report_sections += [f"- {c.name}: {c.expression}" for c in new]
+
         for c in new:
-            exprs.add(c.expression.strip().lower()); all_cons.append(c)
+            exprs.add(c.expression.strip().lower())
+            all_cons.append(c)
         iteration += 1
-    # Final Contrasts object
-    enhanced = Contrasts(contrasts=all_cons, summary="<combined summary>")
+
+    # Build final summary from the collected sections
+    final_summary = "\n\n".join(report_sections)
+    enhanced      = Contrasts(contrasts=all_cons, summary=final_summary)
 
     # 6) Save back to main context
-    ctx.deps.contrasts = enhanced
-    data = [c.dict() for c in all_cons]
-    dfc = pd.DataFrame(data)
-    os.makedirs(ctx.deps.output_dir, exist_ok=True)
-    path = os.path.join(ctx.deps.output_dir, 'contrasts.csv')
+    dfc = pd.DataFrame([c.dict() for c in all_cons])
+    ctx.deps.contrast_matrix_df  = dfc
+    path = os.path.join(ctx.deps.output_dir, "contrasts.csv")
     dfc.to_csv(path, index=False)
-    ctx.deps.contrast_matrix_df = dfc
-    ctx.deps.contrast_path = path
+    ctx.deps.contrast_path       = path
+    ctx.deps.merged_column = contrast_ctx.merged_column
+    ctx.deps.unique_groups = contrast_ctx.unique_groups
 
-    return f"Metadata+contrast processing complete. {len(all_cons)} contrasts saved to {path}."
+    # Show the values saved into the main context
+    log_tool_result(f"Set merged_column to: {ctx.deps.merged_column}")
+    log_tool_result(f"Set unique_groups to: {ctx.deps.unique_groups}")
 
+    return f"Metadata+contrast processing complete; saved {len(all_cons)} contrasts to {path}."
 
 # ----------------------------
 # Main Execution
@@ -1456,8 +1505,6 @@ if __name__ == "__main__":
             for s in self.streams:
                 s.flush()
 
-    import sys
-    import datetime
     sys.stdout = Tee(sys.stdout, log_file)
 
     # Create an RNAseqData instance (renamed to analysis_data)
@@ -1473,8 +1520,8 @@ if __name__ == "__main__":
     # Initialize conversation with analysis steps (using your testing prompt)
     initial_prompt = """
     Use the provided tools to perform an RNAseq analysis. This should encompass:
-        1. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate.
-        2. Processing of the metadata - you should use the dedicated metadata agent to do this.
+        1. Processing of the metadata - you should use the dedicated metadata agent to do this.
+        2. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate.
         3. Preparing the edgeR analysis
         4. Running edgeR analysis for differential expression, including contrasts and results.
         5. For the moment, do NOT perform a GSEA.
