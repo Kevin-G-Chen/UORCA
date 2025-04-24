@@ -19,7 +19,7 @@ async def poet(theme: str) -> str:
     return r.output
 
 @server.tool()
-async def chat(user_message: str) -> Any:
+async def chat(user_message: str) -> any:
     # Let the agent decide which of its tools to invoke
     result = await server_agent.run(user_message)
     return result
