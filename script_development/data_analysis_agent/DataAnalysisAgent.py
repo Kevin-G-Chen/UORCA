@@ -1411,7 +1411,7 @@ async def process_metadata_with_agent(ctx: RunContext[RNAseqData]) -> str:
         metadata_result = metadata_agent.run_sync(
             metadata_prompt,
             deps=metadata_deps,
-            result_type=Contrasts
+            output_type=Contrasts
         )
 
         # Transfer the key information from the metadata agent back to the main agent context

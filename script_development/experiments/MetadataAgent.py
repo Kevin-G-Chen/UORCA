@@ -477,7 +477,7 @@ async def fetch_geo_summary(ctx: RunContext[RNAseqData]) -> dict:
     """
     try:
         # Configure Entrez
-        Entrez.email = "k.cannon@garvan.org.au"  # Using your institutional email
+        Entrez.email = "kevin.chen@telethonkids.org.au"  # Using your institutional email
 
         # Try to find GEO accession from metadata path or contents
         geo_accession = None
@@ -622,7 +622,7 @@ def run_reflection_process(metadata_deps, initial_contrasts):
         reflection_result = reflection_agent.run_sync(
             reflection_prompt,
             deps=metadata_deps,
-            result_type=ReflectionResult
+            output_type=ReflectionResult
         )
 
         # Extract the additional contrasts
@@ -717,7 +717,7 @@ if __name__ == "__main__":
         initial_result = metadata_agent.run_sync(
             initial_prompt,
             deps=analysis_data,
-            result_type=Contrasts
+            output_type=Contrasts
         )
 
         # If reflection is enabled, enhance the contrasts
