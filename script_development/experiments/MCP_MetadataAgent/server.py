@@ -23,7 +23,7 @@ except Exception:
         "contrasts."
     )
 
-llm_agent = Agent("openai:gpt-4.1", system_prompt=system_prompt_text,)
+llm_agent = Agent("openai:o4-mini", system_prompt=system_prompt_text,)
 
 server = FastMCP("RNA-seq Metadata MCP")
 

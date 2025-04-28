@@ -14,7 +14,7 @@ metadata_server = MCPServerStdio(
 )
 
 agent = Agent(
-    "openai:gpt-4o",
+    "openai:o4-mini",
     system_prompt=(
         "You are an RNA-seq metadata expert.  Use whatever tools are "
         "necessary to satisfy the user."
