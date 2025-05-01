@@ -1,0 +1,264 @@
+#### Integrated Prompt for Metadata Processing and Grouping Variable Selection
+
+You are provided with RNAseq metadata from two different experiments. Your task is to identify the column(s) that contain biologically relevant information for differential expression analysis and to merge them into a single grouping variable if necessary. This grouping variable will be used in a single-factor analysis with edgeR/limma. In doing so, you must also evaluate each column to decide which ones provide informative biological variation and which ones should be excluded.
+
+General Guidelines:
+	1.	Focus on Biologically Relevant Information:
+	•	Include columns that capture sample-specific biological attributes such as tissue/disease type, genotype, or treatment conditions.
+	•	Exclude technical columns (e.g., sample IDs, run/experiment numbers) and those with no variation (all values identical) or with unique values that do not group samples.
+	2.	Merging Columns:
+	•	If more than one column is informative (e.g., one column for tissue type and one for treatment), merge these into a single composite grouping variable (for example, merged_analysis_group).
+	•	Ensure that the final grouping factor includes only information that is biologically significant for differential expression analysis.
+	3.	Output:
+	•	Return the name(s) of the final grouping column(s) and a brief explanation of your selection process and why the other columns were excluded.
+	•	Note that the name that you assign to the contrast should be informative, but also compatible with the makeContrasts function in edgeR/limma and general file naming conventions (e.g. no spaces, no special characters).
+	•	Follow these contrast naming conventions:
+		- Use underscores instead of spaces: e.g., "Treatment_vs_Control"
+		- Avoid special characters like *, /, :, ;, &, %, $, #, @
+		- Keep names short but descriptive: e.g., "Drug_vs_Placebo", "KO_vs_WT", "Treated_vs_Untreated"
+		- For more complex contrasts, use clear descriptions: e.g., "HighDose_vs_LowDose", "Stim1KO_HFD_vs_Control_HFD"
+		- When comparing combinations of factors: e.g., "(TreatedMale+TreatedFemale)_vs_(ControlMale+ControlFemale)"
+		- Avoid starting with numbers or using non-alphanumeric characters
+	•	Example of valid contrast names:
+		- Treatment_vs_Control
+		- STIM1KO_vs_WT
+		- High_vs_Low_Dose
+		- Melanoma_5uM_vs_Melanoma_DMSO
+		- Treated_Day7_vs_Treated_Day0
+	•   For example, the following contrast name: phenotype_resistant_resistant_vs_phenotype_parental_parental , could be simplified to: resistant_vs_parental, depending on the context and clarity needed.In general, contrast names should be concise, readable, and reflect the biological context of the analysis.
+
+⸻
+
+#### Examples
+
+Metadata Set 1
+
+Metadata Table:
+
+geo_accession	title	organism_ch1	characteristics_ch1	characteristics_ch1.1	characteristics_ch1.2	molecule_ch1	cell type:ch1	tissue:ch1	treatment:ch1	Run	Experiment
+GSM6443387	head & neck squamous cell carcinoma patient	Homo sapiens	tissue: head & neck squamous cell carcinoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: No treatment	total RNA	peripheral blood mononuclear cells (PBMC)	head & neck squamous cell carcinoma	No treatment	SRR21008833	SRX17025351
+GSM6443387	head & neck squamous cell carcinoma patient	Homo sapiens	tissue: head & neck squamous cell carcinoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: No treatment	total RNA	peripheral blood mononuclear cells (PBMC)	head & neck squamous cell carcinoma	No treatment	SRR21008834	SRX17025351
+GSM6443388	breast cancer patient	Homo sapiens	tissue: breast cancer	cell type: peripheral blood mononuclear cells (PBMC)	treatment: No treatment	total RNA	peripheral blood mononuclear cells (PBMC)	breast cancer	No treatment	SRR21008843	SRX17025346
+GSM6443388	breast cancer patient	Homo sapiens	tissue: breast cancer	cell type: peripheral blood mononuclear cells (PBMC)	treatment: No treatment	total RNA	peripheral blood mononuclear cells (PBMC)	breast cancer	No treatment	SRR21008844	SRX17025346
+GSM6443389	advanced melanoma patient 1, DMSO	Homo sapiens	tissue: advanced melanoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: DMSO	total RNA	peripheral blood mononuclear cells (PBMC)	advanced melanoma	DMSO	SRR21008841	SRX17025347
+GSM6443389	advanced melanoma patient 1, DMSO	Homo sapiens	tissue: advanced melanoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: DMSO	total RNA	peripheral blood mononuclear cells (PBMC)	advanced melanoma	DMSO	SRR21008842	SRX17025347
+GSM6443390	advanced melanoma patient 1, 5uM Ibrutinib	Homo sapiens	tissue: advanced melanoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: 5uM Ibrutinib	total RNA	peripheral blood mononuclear cells (PBMC)	advanced melanoma	5uM Ibrutinib	SRR21008839	SRX17025348
+GSM6443390	advanced melanoma patient 1, 5uM Ibrutinib	Homo sapiens	tissue: advanced melanoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: 5uM Ibrutinib	total RNA	peripheral blood mononuclear cells (PBMC)	advanced melanoma	5uM Ibrutinib	SRR21008840	SRX17025348
+GSM6443391	advanced melanoma patient 2, DMSO	Homo sapiens	tissue: advanced melanoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: DMSO	total RNA	peripheral blood mononuclear cells (PBMC)	advanced melanoma	DMSO	SRR21008837	SRX17025349
+GSM6443391	advanced melanoma patient 2, DMSO	Homo sapiens	tissue: advanced melanoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: DMSO	total RNA	peripheral blood mononuclear cells (PBMC)	advanced melanoma	DMSO	SRR21008838	SRX17025349
+GSM6443392	advanced melanoma patient 2, 5uM Ibrutinib	Homo sapiens	tissue: advanced melanoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: 5uM Ibrutinib	total RNA	peripheral blood mononuclear cells (PBMC)	advanced melanoma	5uM Ibrutinib	SRR21008835	SRX17025350
+GSM6443392	advanced melanoma patient 2, 5uM Ibrutinib	Homo sapiens	tissue: advanced melanoma	cell type: peripheral blood mononuclear cells (PBMC)	treatment: 5uM Ibrutinib	total RNA	peripheral blood mononuclear cells (PBMC)	advanced melanoma	5uM Ibrutinib	SRR21008836	SRX17025350
+
+Column Evaluation for Metadata Set 1:
+	1.	geo_accession:
+	•	Contains unique sample identifiers.
+	•	Not included: Technical ID; no biological grouping information.
+	2.	title:
+	•	Provides a description (e.g., cancer type, treatment hint).
+	•	Marginal utility: Redundant with structured columns; less reliable.
+	3.	organism_ch1:
+	•	Always “Homo sapiens”.
+	•	Not included: No variation; does not aid grouping.
+	4.	characteristics_ch1:
+	•	Shows tissue/disease type (e.g., “tissue: head & neck squamous cell carcinoma”).
+	•	Good candidate: Captures key biological context.
+	5.	characteristics_ch1.1:
+	•	Specifies cell type (all are PBMC).
+	•	Not included: No variation across samples.
+	6.	characteristics_ch1.2:
+	•	Details treatment (e.g., “treatment: DMSO”, “treatment: 5uM Ibrutinib”).
+	•	Good candidate: Provides important treatment differences.
+	7.	molecule_ch1:
+	•	Indicates molecule type (“total RNA”).
+	•	Not included: Constant across samples.
+	8.	cell type:ch1:
+	•	Redundant to characteristics_ch1.1.
+	•	Not included.
+	9.	tissue:ch1:
+	•	Repeats tissue/disease type.
+	•	Good candidate (redundant with characteristics_ch1): Only one is needed.
+	10.	treatment:ch1:
+	•	Repeats treatment information.
+	•	Good candidate (redundant with characteristics_ch1.2): Only one is needed.
+	11.	Run:
+	•	Sequencing run identifier.
+	•	Not included: Technical detail.
+	12.	Experiment:
+	•	Sequencing experiment identifier.
+	•	Not included: Technical detail.
+
+Final Assessment for Metadata Set 1:
+Merge the tissue/disease column (either characteristics_ch1 or tissue:ch1) with the treatment column (either characteristics_ch1.2 or treatment:ch1) into a composite grouping variable (e.g., merged_analysis_group). This captures the key biological differences across samples.
+
+For example, we might select:
+- characteristics_ch1 and characteristics_ch1.2
+- characteristics_ch1 and treatment:ch1
+- tissue:ch1 and characteristics_ch1.2
+- tissue:ch1 and treatment:ch1
+
+But not:
+- characterstics_ch1, tissue:ch1, characteristics_ch1.2 and treatment:ch1
+- characteristics_ch1, treatment:ch1 and characteristics_ch1.2
+and so forth, because of redundancy.
+⸻
+
+Metadata Set 2
+
+Metadata Table:
+
+geo_accession	title	channel_count	source_name_ch1	organism_ch1	characteristics_ch1	characteristics_ch1.1	characteristics_ch1.2	characteristics_ch1.3	characteristics_ch1.4	characteristics_ch1.5	characteristics_ch1.6	characteristics_ch1.7	characteristics_ch1.8	supplementary_file_1	age:ch1	genotype:ch1	nomenclature for_ins1-cre_developed_by_the_thorens_group:ch1	nomenclature for_stim1_fl/fl:ch1	Sex:ch1	stock number_on_jackson_laboratory_(stim1fl/fl):ch1	nomenclature for_stim1_fl/fl:ch1	stock number_on_jackson_laboratory:ch1	tissue:ch1	treatment:ch1	Run	Experiment
+GSM6337959	Pancreatic islet, Control, 1	1	Pancreatic islet	Mus musculus	tissue: Pancreatic islet	genotype: Control (STIM1fl/fl, Cre-)	treatment: High-fat diet (ResearchDiets D12492) 8wk	Sex: Female	age: 16wk	nomenclature for_stim1_fl/fl: B6(Cg)-STIM1tm1Rao/J	stock number_on_jackson_laboratory_(stim1fl/fl): 23350	nomenclature for_ins1-cre_developed_by_the_thorens_group: B6(Cg)-Ins1tm1.1(cre)Thor/J	stock number_on_jackson_laboratory: 26801		NONE	16wk	Control (STIM1fl/fl, Cre-)	B6(Cg)-Ins1tm1.1(cre)Thor/J	B6(Cg)-STIM1tm1Rao/J	Female	23350	26801	Pancreatic islet	High-fat diet (ResearchDiets D12492) 8wk	SRR20166827	SRX16201852
+GSM6337960	Pancreatic islet, Control, 2	1	Pancreatic islet	Mus musculus	tissue: Pancreatic islet	genotype: Control (STIM1fl/fl, Cre-)	treatment: High-fat diet (ResearchDiets D12492) 8wk	Sex: Female	age: 16wk	nomenclature for_stim1_fl/fl: B6(Cg)-STIM1tm1Rao/J	stock number_on_jackson_laboratory_(stim1fl/fl): 23350	nomenclature for_ins1-cre_developed_by_the_thorens_group: B6(Cg)-Ins1tm1.1(cre)Thor/J	stock number_on_jackson_laboratory: 26801		NONE	16wk	Control (STIM1fl/fl, Cre-)	B6(Cg)-Ins1tm1.1(cre)Thor/J	B6(Cg)-STIM1tm1Rao/J	Female	23350	26801	Pancreatic islet	High-fat diet (ResearchDiets D12492) 8wk	SRR20166826	SRX16201853
+GSM6337961	Pancreatic islet, Control, 3	1	Pancreatic islet	Mus musculus	tissue: Pancreatic islet	genotype: Control (STIM1fl/fl, Cre-)	treatment: High-fat diet (ResearchDiets D12492) 8wk	Sex: Female	age: 16wk	nomenclature for_stim1_fl/fl: B6(Cg)-STIM1tm1Rao/J	stock number_on_jackson_laboratory_(stim1fl/fl): 23350	nomenclature for_ins1-cre_developed_by_the_thorens_group: B6(Cg)-Ins1tm1.1(cre)Thor/J	stock number_on_jackson_laboratory: 26801		NONE	16wk	Control (STIM1fl/fl, Cre-)	B6(Cg)-Ins1tm1.1(cre)Thor/J	B6(Cg)-STIM1tm1Rao/J	Female	23350	26801	Pancreatic islet	High-fat diet (ResearchDiets D12492) 8wk	SRR20166823	SRX16201854
+GSM6337962	Pancreatic islet, Control, 4	1	Pancreatic islet	Mus musculus	tissue: Pancreatic islet	genotype: Control (STIM1fl/fl, Cre-)	treatment: High-fat diet (ResearchDiets D12492) 8wk	Sex: Female	age: 16wk	nomenclature for_stim1_fl/fl: B6(Cg)-STIM1tm1Rao/J	stock number_on_jackson_laboratory_(stim1fl/fl): 23350	nomenclature for_ins1-cre_developed_by_the_thorens_group: B6(Cg)-Ins1tm1.1(cre)Thor/J	stock number_on_jackson_laboratory: 26801		NONE	16wk	Control (STIM1fl/fl, Cre-)	B6(Cg)-Ins1tm1.1(cre)Thor/J	B6(Cg)-STIM1tm1Rao/J	Female	23350	26801	Pancreatic islet	High-fat diet (ResearchDiets D12492) 8wk	SRR20166822	SRX16201855
+GSM6337963	Pancreatic islet, Control, 5	1	Pancreatic islet	Mus musculus	tissue: Pancreatic islet	genotype: Control (STIM1fl/fl, Cre-)	treatment: High-fat diet (ResearchDiets D12492) 8wk	Sex: Female	age: 16wk	nomenclature for_stim1_fl/fl: B6(Cg)-STIM1tm1Rao/J	stock number_on_jackson_laboratory_(stim1fl/fl): 23350	nomenclature for_ins1-cre_developed_by_the_thorens_group: B6(Cg)-Ins1tm1.1(cre)Thor/J	stock number_on_jackson_laboratory: 26801		NONE	16wk	Control (STIM1fl/fl, Cre-)	B6(Cg)-Ins1tm1.1(cre)Thor/J	B6(Cg)-STIM1tm1Rao/J	Female	23350	26801	Pancreatic islet	High-fat diet (ResearchDiets D12492) 8wk	SRR20166824	SRX16201856
+GSM6337964	Pancreatic islet, STIM1KO, 1	1	Pancreatic islet	Mus musculus	tissue: Pancreatic islet	genotype: [beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)	treatment: High-fat diet (ResearchDiets D12492) 8wk	Sex: Female	age: 16wk	nomenclature for_stim1_fl/fl: B6(Cg)-STIM1tm1Rao/J	stock number_on_jackson_laboratory_(stim1fl/fl): 23350	nomenclature for_ins1-cre_developed_by_the_thorens_group: B6(Cg)-Ins1tm1.1(cre)Thor/J	stock number_on_jackson_laboratory: 26801		NONE	16wk	[beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)	B6(Cg)-Ins1tm1.1(cre)Thor/J	B6(Cg)-STIM1tm1Rao/J	Female	23350	26801	Pancreatic islet	High-fat diet (ResearchDiets D12492) 8wk	SRR20166821	SRX16201857
+GSM6337965	Pancreatic islet, STIM1KO, 2	1	Pancreatic islet	Mus musculus	tissue: Pancreatic islet	genotype: [beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)	treatment: High-fat diet (ResearchDiets D12492) 8wk	Sex: Female	age: 16wk	nomenclature for_stim1_fl/fl: B6(Cg)-STIM1tm1Rao/J	stock number_on_jackson_laboratory_(stim1fl/fl): 23350	nomenclature for_ins1-cre_developed_by_the_thorens_group: B6(Cg)-Ins1tm1.1(cre)Thor/J	stock number_on_jackson_laboratory: 26801		NONE	16wk	[beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)	B6(Cg)-Ins1tm1.1(cre)Thor/J	B6(Cg)-STIM1tm1Rao/J	Female	23350	26801	Pancreatic islet	High-fat diet (ResearchDiets D12492) 8wk	SRR20166825	SRX16201858
+GSM6337966	Pancreatic islet, STIM1KO, 3	1	Pancreatic islet	Mus musculus	tissue: Pancreatic islet	genotype: [beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)	treatment: High-fat diet (ResearchDiets D12492) 8wk	Sex: Female	age: 16wk	nomenclature for_stim1_fl/fl: B6(Cg)-STIM1tm1Rao/J	stock number_on_jackson_laboratory_(stim1fl/fl): 23350	nomenclature for_ins1-cre_developed_by_the_thorens_group: B6(Cg)-Ins1tm1.1(cre)Thor/J	stock number_on_jackson_laboratory: 26801		NONE	16wk	[beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)	B6(Cg)-Ins1tm1.1(cre)Thor/J	B6(Cg)-STIM1tm1Rao/J	Female	23350	26801	Pancreatic islet	High-fat diet (ResearchDiets D12492) 8wk	SRR20166820	SRX16201859
+GSM6337967	Pancreatic islet, STIM1KO, 4	1	Pancreatic islet	Mus musculus	tissue: Pancreatic islet	genotype: [beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)	treatment: High-fat diet (ResearchDiets D12492) 8wk	Sex: Female	age: 16wk	nomenclature for_stim1_fl/fl: B6(Cg)-STIM1tm1Rao/J	stock number_on_jackson_laboratory_(stim1fl/fl): 23350	nomenclature for_ins1-cre_developed_by_the_thorens_group: B6(Cg)-Ins1tm1.1(cre)Thor/J	stock number_on_jackson_laboratory: 26801		NONE	16wk	[beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)	B6(Cg)-Ins1tm1.1(cre)Thor/J	B6(Cg)-STIM1tm1Rao/J	Female	23350	26801	Pancreatic islet	High-fat diet (ResearchDiets D12492) 8wk	SRR20166819	SRX16201860
+
+Column Evaluation for Metadata Set 2:
+	1.	geo_accession:
+	•	Contains unique sample identifiers.
+	•	Not included: Only used as an identifier.
+	2.	title:
+	•	Descriptive title (e.g., “Pancreatic islet, Control, 1”).
+	•	Marginal utility: Contains hints about group (e.g., Control vs. STIM1KO) but is less structured than dedicated genotype columns.
+	3.	channel_count:
+	•	Technical information (e.g., number of channels).
+	•	Not included: Does not provide biologically relevant grouping.
+	4.	source_name_ch1:
+	•	States “Pancreatic islet” for all samples.
+	•	Not included: Constant across samples; no grouping power.
+	5.	organism_ch1:
+	•	Always “Mus musculus”.
+	•	Not included: No variation for grouping.
+	6.	characteristics_ch1:
+	•	Indicates tissue type (“tissue: Pancreatic islet”).
+	•	Not included: Constant across all samples.
+	7.	characteristics_ch1.1:
+	•	Shows genotype information (e.g., “genotype: Control (STIM1fl/fl, Cre-)” vs. “[beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)”).
+	•	Good candidate: Provides key biological variation between control and knockout samples.
+	8.	characteristics_ch1.2 to characteristics_ch1.8:
+	•	Contain treatment details, sex, age, stock numbers, and nomenclature.
+	•	Not included: Most of these are constant across samples or technical details; treatment (if present) is identical for all.
+	9.	supplementary_file_1:
+	•	Indicates additional file information (e.g., “NONE”).
+	•	Not included: Not informative for grouping.
+	10.	age:ch1:
+	•	Age information (e.g., “16wk”).
+	•	Not included: Constant for all samples.
+	11.	genotype:ch1:
+	•	Specifies genotype (e.g., “Control (STIM1fl/fl, Cre-)” vs. “[beta] cell STIM1-Knock out (STIM1fl/fl, Cre+)”).
+	•	Good candidate: Captures the only biological variation in this dataset.
+	12.	nomenclature for_ins1-cre_developed_by_the_thorens_group:ch1, nomenclature for_stim1_fl/fl:ch1, Sex:ch1, stock number_on_jackson_laboratory_(stim1fl/fl):ch1, stock number_on_jackson_laboratory:ch1:
+	•	Contain technical or constant information.
+	•	Not included: Do not contribute to sample grouping.
+	13.	tissue:ch1:
+	•	Indicates tissue type (“Pancreatic islet”).
+	•	Not included: Constant across samples.
+	14.	treatment:ch1:
+	•	Shows treatment details (“High-fat diet (ResearchDiets D12492) 8wk”).
+	•	Not included: Identical for all samples.
+	15.	Run and Experiment:
+	•	Technical sequencing identifiers.
+	•	Not included: Used for QC and tracking only.
+
+Final Assessment for Metadata Set 2:
+The only column that exhibits meaningful biological variation is genotype:ch1. Use this column directly as the grouping variable for downstream analysis.
+
+⸻
+
+CONTRAST CONSTRUCTION FOR DIFFERENTIAL EXPRESSION ANALYSIS - PAIRWISE COMPARISONS ONLY
+
+When constructing contrasts for differential expression analysis using edgeR/limma (via functions such as makeContrasts), you must generate only pairwise contrast names and formulas that exactly reflect the grouping variable values in the processed metadata. These contrasts determine which direct comparisons are made when testing for differential expression, so accuracy and consistency are paramount. Only direct pairwise comparisons between groups are allowed; do not construct complex contrasts involving group averages or combinations.
+
+Key Instructions:
+	1.	Exact Matching of Group Labels:
+	•	The values used in your contrast formulas must exactly match the group labels from the metadata.
+	•	Example of Correct Matching:
+If the grouping column (e.g., merged_analysis_group) contains the values "Control" and "Treatment", the contrast should be defined exactly as:
+	•	Contrast Name: Treatment_vs_Control
+	•	Contrast Formula: Treatment - Control
+Note: Do not modify the case, add extra spaces, or alter punctuation.
+	•	Example of Incorrect Matching:
+	•	Treatment_vs_control (using "control" instead of "Control")
+	•	Control_vs_Treatment_Group (adding extra words or symbols)
+	2.	Contrast Naming Conventions:
+	•	Use a clear and consistent naming scheme directly tied to the metadata values.
+	•	A common convention is "GroupB_vs_GroupA" where the contrast formula is "GroupB - GroupA".
+	•	Do not introduce additional text or symbols not found in the metadata.
+	3.	Using makeContrasts:
+	•	The constructed contrast must follow the format accepted by the makeContrasts function.
+	•	Correct Format Example for Two Groups (A and B):
+
+contrast <- makeContrasts(diff = B - A, levels = design)
+
+
+	•	The column names in your design matrix must match the group labels exactly as they appear in the metadata.
+
+	4.	Constructing Contrasts with Group Averages:
+	•	When you have more than two groups and you want to compare averages, define the contrast by combining group terms.
+	•	Correct Example:
+If the grouping column contains four groups: "A", "B", "C", and "D", and you wish to compare the average of groups A and B versus the average of groups C and D, then the contrast should be:
+	•	Contrast Name: (A+B)_vs_(C+D)
+	•	Contrast Formula:
+
+contrast <- makeContrasts(diff = A + B - C - D, levels = design)
+
+
+Note: Because scaling (dividing by 2) does not change the hypothesis, you may leave the values unscaled. The focus is on clarity and direct comparison.
+
+	5.	Examples of What Not to Do:
+	•	Mismatched Group Values:
+If the metadata group is "Control" but the contrast is defined as:
+
+contrast <- makeContrasts(diff = Treatment - control, levels = design)
+
+This is invalid because "control" does not exactly match "Control".
+
+	•	Using Quotes Around Group Names:
+
+contrast <- makeContrasts(diff = "A" + "B" - "C" - "D", levels = design)
+
+Quotation marks turn group names into literal strings, causing errors.
+
+	•	Incorrect Arithmetic in Averages:
+
+contrast <- makeContrasts(diff = (A+B)/2 - (C-D)/2, levels = design)
+
+This is incorrect because, in the second term, subtraction within the parentheses (i.e. C - D) incorrectly computes the average. The formula should add groups together for an average rather than subtract them.
+
+	•	Unnecessary Scaling or Parentheses:
+While mathematically equivalent, the following is less clear and can introduce parsing issues:
+
+contrast <- makeContrasts(diff = (A + B)/2 - (C + D)/2, levels = design)
+
+It is preferable to use the simpler:
+
+contrast <- makeContrasts(diff = A + B - C - D, levels = design)
+
+
+	•	Random Order Without Rationale:
+If you randomly define:
+
+contrast <- makeContrasts(diff = C + D - A - B, levels = design)
+
+without a clear biological rationale or consistent naming (e.g., naming it C+D_vs_A+B but then not describing why the comparison was made), it may confuse the downstream interpretation. The contrast must reflect a meaningful, biologically justified comparison.
+
+	6.	Emphasize Consistency Across the Pipeline:
+	•	Ensure that the contrast construction step uses the final grouping variable established during metadata processing (e.g., the merged_analysis_group).
+	•	Verify that the contrast output exactly mirrors the group labels present in the metadata. Any deviation must be corrected to ensure a valid and interpretable result.
+
+⸻
+
+Summary:
+	•	Exact Matching: The group labels in your contrast formula must match the metadata exactly.
+	•	Naming: Use a clear naming convention like GroupB_vs_GroupA, and avoid additional text or symbols.
+	•	Group Averages: When comparing averages (e.g., A+B vs. C+D), add the groups directly as in A + B - C - D without unnecessary scaling or misplaced operations.
+	•	Common Pitfalls: Do not use mismatched case, extra punctuation, or arithmetic errors that alter the intended meaning.
+	•	Consistency: The entire process must align with the grouping variable produced in metadata processing.
+
+By adhering to these guidelines, the agent will construct robust and accurate contrasts for use in edgeR/limma differential expression analysis. The output will be formatted in a way that is directly compatible with makeContrasts, ensuring that all comparisons are correctly specified based on the metadata values.
+
+⸻
