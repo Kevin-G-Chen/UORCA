@@ -8,6 +8,7 @@ dependencies = [
     "bio>=1.7.1",
     "datetime>=5.5",
     "docutils>=0.21.2",
+    "geoparse>=2.0.4",
     "gseapy>=1.1.8",
     "logfire>=3.9.0",
     "matplotlib>=3.10.1",

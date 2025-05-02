@@ -5,6 +5,7 @@
 
 # (Removed logfire as it isn’t used)
 from typing import List, Optional, Dict, Any, Union
+from shared import RNAseqData
 from pydantic_ai import Agent, RunContext
 import argparse
 import os
@@ -28,7 +29,6 @@ import matplotlib.pyplot as plt
 import nest_asyncio
 import gseapy
 from openai import OpenAI
-nest_asyncio.apply()
 console = Console()
 # logfire.configure(token=os.environ.get("LOGFIRE_KEY"))
 # logfire.instrument_openai()
@@ -66,68 +66,43 @@ def log_tool_result(result):
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
         console.print(result)
 
-#############################
-# Section: Utility Functions
-#############################
-
-
-class Contrast_format(BaseModel):
-    """Schema for each contrast."""
-    name: str
-    expression: str
-
-
-class Contrasts(BaseModel):
-    """Schema for the output of the candidate contrasts."""
-    contrasts: List[Contrast_format]
-    summary: str = Field(
-        description="Summary of the designed contrasts and their biological significance, including commentary about why other columns were not included, and an evaluation of biological relevant, and any redundancy."
-    )
-    model_config = ConfigDict(extra="allow")
-
-
 @dataclass
-class RNAseqData:
-    """Container for RNAseq analysis data and paths."""
-    # Input data
-    fastq_dir: str
+class MetadataContext:
+    """Container for metadata analysis data with enhanced context tracking."""
     metadata_path: str
-    kallisto_index_dir: str
-    organism: str = "human"  # default to human
-    output_dir: str = "output"
-    kallisto_index_path: Optional[str] = None
-    tx2gene_path: Optional[str] = None
-
-    # Runtime data that gets populated during analysis
     metadata_df: Optional[pd.DataFrame] = None
-    abundance_files: List[str] = None
+    # This will hold the final analysis column name (or merged version)
     merged_column: Optional[str] = None
-    contrast_groups: Dict[str, Dict[str, str]] = None
-    sample_mapping: Optional[pd.DataFrame] = None
-    deg_results_path: Optional[str] = None
-    contrasts: Optional[Contrasts] = None
-
-    # Additional fields for contrast handling
-    contrast_path: Optional[str] = None  # Path to the JSON file containing contrasts
-    contrast_matrix_df: Optional[pd.DataFrame] = None  # DataFrame representation of contrasts
-
-# Define a class to prepare contrasts
+    # Store the unique groups found in the analysis column
+    unique_groups: Optional[List[str]] = None
+    # To store designed contrasts if needed
+    contrast_details: Optional[Dict[str, Any]] = None
 
 
+# ----------------------------
+# Load environment variables and initialize OpenAI client
+# ----------------------------
+load_dotenv()
+openai_api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI()
+
+# ----------------------------
+# Define output schema for contrasts
+# ----------------------------
 class Contrast_format(BaseModel):
     """Schema for each contrast."""
     name: str
     expression: str
-
-
+    description: Optional[str] = Field(
+        description="Biological interpretation of the contrast")
+    justification: Optional[str] = Field(
+        description="Justification for the contrast design, in terms of value to the scientific community")
 class Contrasts(BaseModel):
     """Schema for the output of the candidate contrasts."""
     contrasts: List[Contrast_format]
-    summary: str = Field(
-        description="Summary of the designed contrasts and their biological significance, including commentary about why other columns were not included, and an evaluation of biological relevant, and any redundancy."
-    )
     model_config = ConfigDict(extra="allow")
 
+# Define a class to prepare contrast
 
 # Load environment variables from .env file
 load_dotenv()
@@ -141,11 +116,9 @@ client = OpenAI()
 # Create an RNAseq analysis agent
 # ----------------------------
 
-# Adding temporary rough information for the agent until I develop a proper way of implementing documentation
-
 # Read system prompt from file
-data_analysis_agent_system_prompt_path = "../script_development/prompt_development/data_analysis_agent_systemprompt.txt"
-metadata_prompt_path = "../script_development/prompt_development/metadata_processing_systemprompt.txt"
+data_analysis_agent_system_prompt_path = "./main_workflow/prompts/analysis.txt"
+metadata_prompt_path = "./main_workflow/prompts/metadata.txt"
 
 try:
     with open(data_analysis_agent_system_prompt_path, 'r') as f:
@@ -865,7 +838,7 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
         log_tool_result(result)
         return result
     except Exception as e:
-        return f"Error running Kallisto quantification: {str(e)}"
+        return f"Error preparing edgeR analysis: {str(e)}"
 
 
 @rnaseq_agent.tool
@@ -1004,94 +977,11 @@ def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
     s = re.sub(r'[^\w]', '', s)
     return s
 
-
-# ----------------------------
-# Imports
-# ----------------------------
-
-# ----------------------------
-# Configure logging
-# ----------------------------
-
-
-class LogLevel:
-    MINIMAL = 0   # Only critical information
-    NORMAL = 1    # Default level
-    VERBOSE = 2   # Detailed information
-    DEBUG = 3     # Maximum debugging information
-
-
-CURRENT_LOG_LEVEL = LogLevel.NORMAL
-console = Console()
-
-
-def log(message, level=LogLevel.NORMAL, style=""):
-    if CURRENT_LOG_LEVEL >= level:
-        console.print(message, style=style if style else None)
-
-
-def log_tool_header(tool_name, params=None):
-    if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
-        console.print(f"TOOL: {tool_name}", style="bold blue")
-        if params:
-            console.print(f"Parameters: {params}")
-
-
-def log_tool_result(result):
-    if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
-        console.print(result)
-
-# ----------------------------
-# Dependency Class
-# ----------------------------
-
-
-@dataclass
-class MetadataContext:
-    """Container for metadata analysis data with enhanced context tracking."""
-    metadata_path: str
-    metadata_df: Optional[pd.DataFrame] = None
-    # This will hold the final analysis column name (or merged version)
-    merged_column: Optional[str] = None
-    # Store the unique groups found in the analysis column
-    unique_groups: Optional[List[str]] = None
-    # To store designed contrasts if needed
-    contrast_details: Optional[Dict[str, Any]] = None
-
-
-# ----------------------------
-# Load environment variables and initialize OpenAI client
-# ----------------------------
-load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
-client = OpenAI()
-
-# ----------------------------
-# Define output schema for contrasts
-# ----------------------------
-
-
-class Contrast_format(BaseModel):
-    """Schema for each contrast."""
-    name: str
-    expression: str
-    description: Optional[str] = Field(
-        description="Biological interpretation of the contrast")
-    justification: Optional[str] = Field(
-        description="Justification for the contrast design, in terms of value to the scientific community")
-
-
-class Contrasts(BaseModel):
-    """Schema for the output of the candidate contrasts."""
-    contrasts: List[Contrast_format]
-    model_config = ConfigDict(extra="allow")
-
-
 # ----------------------------
 # Create RNAseq metadata analysis agent
 # ----------------------------
 # Try reading your system prompt, otherwise use the fallback prompt
-system_prompt_path = "../script_development/prompt_development/metadata_processing_systemprompt.txt"
+system_prompt_path = "./main_workflow/prompts/analysis.txt"
 try:
     with open(system_prompt_path, 'r') as f:
         system_prompt = f.read()
@@ -1128,7 +1018,7 @@ except Exception as e:
     print("Using fallback system prompt instead.")
 
 metadata_agent = Agent(
-    'openai:gpt-4o',         # Use a powerful model
+    'openai:o4-mini',         # Use a powerful model
     deps_type=MetadataContext,
     system_prompt=system_prompt
 )
@@ -1470,83 +1360,9 @@ Designed contrasts:
         log_tool_result(error_msg)
         return error_msg
 
-
-# ----------------------------
-# Main Execution
-# ----------------------------
-if __name__ == "__main__":
-    # Parse command-line arguments for the RNAseq analysis data
-    parser = argparse.ArgumentParser(
-        description="RNAseq analysis pipeline parameters for testing")
-    parser.add_argument("--fastq_dir", type=str, default="./TestRNAseqData_SETBP1/GSE262710/fastq",
-                        help="Directory where FASTQ files are stored")
-    parser.add_argument("--metadata_path", type=str, default="./TestRNAseqData_SETBP1/GSE262710/GSE262710_metadata.csv",
-                        help="Path to the metadata CSV file")
-    parser.add_argument("--kallisto_index_dir", type=str, default="../../../data/kallisto_indices",
-                        help="Directory where Kallisto index files are stored")
-    parser.add_argument("--organism", type=str,
-                        default="human", help="Organism name")
-    parser.add_argument("--output_dir", type=str, default="./analysis_output/GSE262710",
-                        help="Directory to save analysis output")
-    args = parser.parse_args()
-
-    # Ensure the output directory exists
-    os.makedirs(args.output_dir, exist_ok=True)
-    # Create a dedicated logs folder inside the output directory
-    logs_dir = os.path.join(args.output_dir, "logs")
-    os.makedirs(logs_dir, exist_ok=True)
-    # Generate a timestamp string formatted as YYYYMMDD_HHMMSS
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Create the log file name with the timestamp embedded
-    log_file_path = os.path.join(logs_dir, f"log_{timestamp}.txt")
-    log_file = open(log_file_path, "a")
-
-    # Define a Tee class to duplicate output to both STDOUT and the log file
-    class Tee:
-        def __init__(self, *streams):
-            self.streams = streams
-
-        def write(self, data):
-            for s in self.streams:
-                s.write(data)
-
-        def flush(self):
-            for s in self.streams:
-                s.flush()
-
-    import sys
-    import datetime
-    sys.stdout = Tee(sys.stdout, log_file)
-
-    # Create an RNAseqData instance (renamed to analysis_data)
-    analysis_data = RNAseqData(
-        fastq_dir=args.fastq_dir,
-        metadata_path=args.metadata_path,
-        kallisto_index_dir=args.kallisto_index_dir,
-        organism=args.organism,
-        output_dir=args.output_dir
-
-    )
-
-    # Initialize conversation with analysis steps (using your testing prompt)
-    initial_prompt = """
-    Use the provided tools to perform an RNAseq analysis. This should encompass:
-        1. Kallisto quantification, after identifying appropriate files and indices. Note that the index files, FASTQ files, and metadata are already provided, and you should not need to perform additional tasks to generate these - instead, locate them using the provided tools, using your judgement to determine if it is appropriate.
-        2. Processing of the metadata - you should use the dedicated metadata agent to do this.
-        3. Preparing the edgeR analysis
-        4. Running edgeR analysis for differential expression, including contrasts and results.
-        5. For the moment, do NOT perform a GSEA.
+async def run_agent_async(prompt: str, deps: RNAseqData, usage=None):
     """
-
-    # Run the agent
-    try:
-        # Run the agent synchronously using the new dependency instance
-        result = rnaseq_agent.run_sync(
-            initial_prompt, deps=analysis_data)
-        console.print(
-            Panel("Analysis completed successfully!", style="bold green"))
-        console.print("\n[bold yellow]Agent response:[/bold yellow]")
-        console.print(result.output)
-    except Exception as e:
-        console.print(
-            Panel(f"Error during analysis: {str(e)}", style="bold red"))
+    Thin wrapper used by master.py (async all the way).
+    Pass `usage` through so token accounting is aggregated.
+    """
+    return await rnaseq_agent.run(prompt, deps=deps, usage=usage)

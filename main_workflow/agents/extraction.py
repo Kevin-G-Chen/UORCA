@@ -10,20 +10,19 @@ see the files immediately.
 from __future__ import annotations
 import asyncio, subprocess, re, pathlib, shutil, sys, os, pandas as pd
 from typing import List
-from dotenv import load_dotenv, find_dotenv
+from dotenv import load_dotenv
 import GEOparse as gp
 from pydantic_ai import Agent, RunContext
 from shared import RNAseqData
 
-load_dotenv(find_dotenv())          # one call is enough   [oai_citation_attribution:9‡PyPI](https://pypi.org/project/python-dotenv/?utm_source=chatgpt.com)
+load_dotenv()
 
-extract_agent: Agent[RNAseqData, str] = Agent(
-    "openai:gpt-4o-mini",
+extract_agent = Agent(
+    "openai:o4-mini",
     deps_type=RNAseqData,
-    system_prompt=open("prompts/extraction_system.txt").read()
+    system_prompt=open("./main_workflow/prompts/extraction.txt").read()
                   if pathlib.Path("prompts/extraction_system.txt").exists()
-                  else "You handle data extraction tasks.",
-    instrument=True,
+                  else "You handle data extraction tasks."
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -66,7 +65,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqData], accession: str) -> str
     meta_dir   = out_root / "metadata"
     meta_dir.mkdir(parents=True, exist_ok=True)
 
-    gse = gp.get_GEO(accession, destdir=str(meta_dir), silent=True)         ## GEOparse  [oai_citation_attribution:10‡Anandology](https://anandology.com/python-for-bioinformatics/cookbook/geoparse.html?utm_source=chatgpt.com)
+    gse = gp.get_GEO(accession, destdir=str(meta_dir), silent=True)
     gsms = gse.gsms
     re_srx, re_srr = re.compile(r"(SR[XP]\d+)"), re.compile(r"(SRR\d+)")
 
@@ -105,7 +104,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqData], accession: str) -> str
         srx = srx_from_rel(g.metadata.get("relation"))
         if not srx:
             continue
-        for srr in srrs_from_srx(srx):                                     ## Entrez Direct  [oai_citation_attribution:11‡NCBI](https://www.ncbi.nlm.nih.gov/dbvar/content/tools/entrez/?utm_source=chatgpt.com)
+        for srr in srrs_from_srx(srx):
             long_rows.append({"GSM": gsm, "SRX": srx, "SRR": srr})
 
     meta_long = pd.DataFrame(long_rows)
@@ -161,7 +160,7 @@ async def download_fastqs(
     Notes
     -----
     The implementation follows the **official SRA-Toolkit recommendation**
-    (*prefetch* ➜ *fasterq-dump*).  [oai_citation_attribution:12‡GitHub](https://github.com/ncbi/sra-tools/wiki/08.-prefetch-and-fasterq-dump?utm_source=chatgpt.com) [oai_citation_attribution:13‡GitHub](https://github.com/ncbi/sra-tools/wiki/08.-prefetch-and-fasterq-dump/633360aa302b9f2b6e8ceda7c99dde07f4f20e2e?utm_source=chatgpt.com)
+    (*prefetch* ➜ *fasterq-dump*)
     """
     if ctx.deps.metadata_df is None or "SRR" not in ctx.deps.metadata_df.columns:
         raise ValueError("metadata_df with SRR column required. "
@@ -210,8 +209,7 @@ async def download_fastqs(
         cmd = [ "fasterq-dump", str(sra),
                 "--threads", str(threads),
                 "--split-files",
-                "-O", str(fastq_dir),
-                "--temp", "/tmp" ]
+                "-O", str(fastq_dir)]
         if max_spots:
             cmd += ["-X", str(max_spots)]
         proc = await asyncio.create_subprocess_exec(*cmd)
