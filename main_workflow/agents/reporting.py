@@ -76,7 +76,7 @@ Return a summary of each step.
 """
 
 reporting_agent = Agent(
-    'openai:gpt-4o',  # Using a powerful model.
+    'openai:o4-mini',  # Using a powerful model.
     deps_type=ReportContext,
     system_prompt=system_prompt
 )
@@ -287,74 +287,5 @@ async def build_report(ctx: RunContext[ReportContext]) -> str:
         logging.error(f"[build_report] {err_msg}")
         return err_msg
 
-# -----------------------------------------------------------
-# Main Execution
-# -----------------------------------------------------------
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Reporting Agent: Convert PNG files to an RST report (with static figure captions) and build a Sphinx HTML report."
-    )
-    parser.add_argument("--png_dir", required=True,
-                        help="Input directory where PNG files are stored.")
-    parser.add_argument("--output_dir", required=True,
-                        help="Base output directory for all outputs (RST, report, and log).")
-    args = parser.parse_args()
-
-    base_output_dir = os.path.abspath(args.output_dir)
-    # RST files (and local copied images) will be saved in <output_dir>/rst.
-    rst_dir = os.path.join(base_output_dir, "rst")
-    os.makedirs(rst_dir, exist_ok=True)
-
-    # Create a timestamped subfolder within output_dir to host the Sphinx project and log.
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_dir = os.path.join(base_output_dir, timestamp)
-    os.makedirs(report_dir, exist_ok=True)
-
-    # The Sphinx project and HTML output will be placed in this timestamped folder.
-    sphinx_project_dir = report_dir
-    # The Sphinx build log file is saved in the timestamped folder.
-    log_file_path = os.path.join(report_dir, "sphinx_build.log")
-
-    # Set up logging to the console.
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.StreamHandler()]
-    )
-
-    logging.info("=== Reporting Agent Started ===")
-    logging.info(f"PNG input directory: {args.png_dir}")
-    logging.info(f"Base output directory: {base_output_dir}")
-    logging.info(f"RST output directory: {rst_dir}")
-    logging.info(f"Sphinx project directory: {sphinx_project_dir}")
-    logging.info(f"Log file: {log_file_path}")
-
-    deps = ReportContext(
-        png_dir=os.path.abspath(args.png_dir),
-        rst_folder=rst_dir,
-        sphinx_output_folder=sphinx_project_dir,
-        log_path=log_file_path
-    )
-
-    initial_prompt = """
-    Please perform the following tasks:
-    1. Identify the PNG files available in the provided png_dir.
-    2. Copy those PNG files to an 'images' subfolder within the RST folder and generate an RST document that embeds these images using the figure directive with the static caption 'Figure: Placeholder Caption'.
-    3. Build Sphinx HTML documentation from the generated RST file(s).
-    Return a summary of each step.
-    """
-
-    try:
-        result = reporting_agent.run_sync(initial_prompt, deps=deps)
-        logging.info("=== Reporting Agent Completed ===")
-        print("Agent Response:")
-        print(result.data)
-    except Exception as e:
-        logging.error(f"Error during reporting: {str(e)}")
-        print(f"Error during reporting: {str(e)}")
-
-
-if __name__ == "__main__":
-    main()
+async def run_agent_async(prompt: str, deps: ReportContext, usage=None):
+    return await reporting_agent.run(prompt, deps=deps, usage=usage)

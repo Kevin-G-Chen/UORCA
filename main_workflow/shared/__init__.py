@@ -9,7 +9,9 @@ class RNAseqData:
     metadata_path: str | None = None
     kallisto_index_dir: str | None = None
     output_dir: str | None = None
-    organism: str = "human"
+    organism: str = "mouse"
+    tx2gene_path: str | None = None
+    kallisto_index_path: str | None = None
 
     # Runtime artefacts (populated by agents)
     metadata_df: Optional[pd.DataFrame] = None
