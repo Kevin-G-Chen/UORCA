@@ -49,8 +49,25 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
 
 @master.tool
 async def report(ctx: RunContext[ReportingContext]) -> str:
+    if not ctx.deps.png_dir:
+        # Look for plot directories in standard locations created by analysis agent
+        plot_dir = f"{ctx.deps.output_dir}/plots"
+        ctx.deps.png_dir = plot_dir
+
+    if not ctx.deps.rst_folder:
+        ctx.deps.rst_folder = f"{ctx.deps.output_dir}/report/rst"
+
+    if not ctx.deps.sphinx_output_folder:
+        ctx.deps.sphinx_output_folder = f"{ctx.deps.output_dir}/report/sphinx"
+
+    if not ctx.deps.log_path:
+        ctx.deps.log_path = f"{ctx.deps.output_dir}/report/sphinx_build.log"
+
+    os.makedirs(ctx.deps.rst_folder, exist_ok=True)
+    os.makedirs(os.path.dirname(ctx.deps.log_path), exist_ok=True)
+
     r = await reporting.run_agent_async(
-        "Generate publication-ready report", deps=ctx.deps, usage=ctx.usage
+        "Generate a report", deps=ctx.deps, usage=ctx.usage
     )
     return r.output
 

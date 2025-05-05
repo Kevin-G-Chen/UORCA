@@ -263,4 +263,5 @@ async def build_report(ctx: RunContext[ReportingContext]) -> str:
         return err_msg
 
 async def run_agent_async(prompt: str, deps: ReportingContext, usage=None):
+    logger.info("📝 Reporting agent invoked by master – prompt: %s", prompt)
     return await reporting_agent.run(prompt, deps=deps, usage=usage)
