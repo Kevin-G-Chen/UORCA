@@ -15,7 +15,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import GEOparse as gp
 from pydantic_ai import Agent, RunContext
-from shared import RNAseqData
+from shared import RNAseqCoreContext
 
 # ── logging setup ────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -30,7 +30,7 @@ load_dotenv()
 
 extract_agent = Agent(
     "openai:o4-mini",
-    deps_type=RNAseqData,
+    deps_type=RNAseqCoreContext,
     system_prompt=(
         pathlib.Path("./main_workflow/prompts/extraction.txt").read_text()
         if pathlib.Path("prompts/extraction_system.txt").exists()
@@ -40,7 +40,7 @@ extract_agent = Agent(
 
 # ─────────────────────────────────────────────────────────────────────────────
 @extract_agent.tool
-async def fetch_geo_metadata(ctx: RunContext[RNAseqData], accession: str) -> str:
+async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str) -> str:
     """Retrieve sample‑level metadata and SRR run IDs for a GEO series."""
     logger.info("🔍  fetch_geo_metadata() called for %s", accession)
 
@@ -124,7 +124,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqData], accession: str) -> str
 # ─────────────────────────────────────────────────────────────────────────────
 @extract_agent.tool
 async def download_fastqs(
-    ctx: RunContext[RNAseqData],
+    ctx: RunContext[RNAseqCoreContext],
     threads: int = 6,
     max_spots: int | None = None
 ) -> str:
@@ -210,7 +210,7 @@ async def download_fastqs(
     )
 
 # ─────────────────────────────────────────────────────────────────────────────
-async def run_agent_async(prompt: str, deps: RNAseqData, usage=None):
+async def run_agent_async(prompt: str, deps: RNAseqCoreContext, usage=None):
     """Thin wrapper used by master.py (async all‑the‑way)."""
     logger.info("🛠️  Extraction agent invoked by master – prompt: %s", prompt)
     return await extract_agent.run(prompt, deps=deps, usage=usage)

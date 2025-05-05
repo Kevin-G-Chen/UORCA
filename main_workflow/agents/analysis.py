@@ -12,12 +12,13 @@ from dotenv import load_dotenv
 from rich.console import Console
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
-from shared import RNAseqData
+from shared import AnalysisContext, AnalysisContext
 import gseapy
 from unidecode import unidecode
 from openai import OpenAI
 import matplotlib.pyplot as plt
 import nest_asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── configure python‑logging ────────────────────────────────────────────────
 logging.basicConfig(
@@ -100,7 +101,7 @@ except Exception as e:
 
 rnaseq_agent = Agent(
     "openai:o4-mini",
-    deps_type=RNAseqData,
+    deps_type=AnalysisContext,
     system_prompt=system_prompt
 )
 
@@ -179,23 +180,23 @@ except Exception as e:
 
 rnaseq_agent = Agent(
     'openai:gpt-4o',  # Change to more powerful model
-    deps_type=RNAseqData,
+    deps_type=AnalysisContext,
     system_prompt=system_prompt
 )
 
 
 @rnaseq_agent.tool
-async def run_gsea_analysis(ctx: RunContext[RNAseqData], deg_file: str) -> str:
+async def run_gsea_analysis(ctx: RunContext[AnalysisContext], deg_file: str) -> str:
     """
     Run Gene Set Enrichment Analysis (GSEA) on the normalized expression data using the provided DEG file.
 
     Inputs:
-      - ctx: RunContext[RNAseqData]
+      - ctx: RunContext[AnalysisContext]
       - deg_file (str): The file path to the DEG results CSV file.
 
     Inputs:
-      - ctx: RunContext[RNAseqData]
-          The execution context containing an RNAseqData dependency instance. This object carries paths and runtime
+      - ctx: RunContext[AnalysisContext]
+          The execution context containing an AnalysisContext dependency instance. This object carries paths and runtime
           attributes such as:
             • fastq_dir: Directory for FASTQ files.
             • metadata_path: Path to the metadata CSV.
@@ -321,7 +322,7 @@ GSEA plots saved to directory: {this_gsea_out_dir}
 
 
 @rnaseq_agent.tool
-async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
+async def list_fastq_files(ctx: RunContext[AnalysisContext]) -> str:
     """
     List all FASTQ files in the fastq_dir directory from the context.
     This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
@@ -355,13 +356,13 @@ async def list_fastq_files(ctx: RunContext[RNAseqData]) -> str:
 
 
 @rnaseq_agent.tool
-async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[str, List[str]]) -> List[str]:
+async def find_files(ctx: RunContext[AnalysisContext], directory: str, suffix: Union[str, List[str]]) -> List[str]:
     """
     Recursively search for and return a sorted list of files within the specified directory that have the given suffix.
 
     Inputs:
-      - ctx: RunContext[RNAseqData]
-          Contains the dependency context (RNAseqData) that holds directory information and other runtime parameters.
+      - ctx: RunContext[AnalysisContext]
+          Contains the dependency context (AnalysisContext) that holds directory information and other runtime parameters.
       - directory (str):
           The root directory path in which to search for files. This can be either an absolute or relative path.
       - suffix (Union[str, List[str]]):
@@ -438,7 +439,7 @@ async def find_files(ctx: RunContext[RNAseqData], directory: str, suffix: Union[
 
 
 @rnaseq_agent.tool
-async def print_dependency_paths(ctx: RunContext[RNAseqData]) -> str:
+async def print_dependency_paths(ctx: RunContext[AnalysisContext]) -> str:
     """Print out all paths and settings in the dependency object."""
     log_tool_header("print_dependency_paths")
     result = f"""
@@ -459,12 +460,12 @@ async def print_dependency_paths(ctx: RunContext[RNAseqData]) -> str:
 
 
 @rnaseq_agent.tool
-async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
+async def find_kallisto_index(ctx: RunContext[AnalysisContext]) -> str:
     """
-    Search for and return the file path of an appropriate Kallisto index based on the organism specified in RNAseqData.
+    Search for and return the file path of an appropriate Kallisto index based on the organism specified in AnalysisContext.
 
     Inputs:
-      - ctx: RunContext[RNAseqData]
+      - ctx: RunContext[AnalysisContext]
           Contains:
             • kallisto_index_dir: The directory where Kallisto index (.idx) files are stored.
             • organism: The organism name (e.g., "human") which the tool uses to filter the available index files.
@@ -520,12 +521,12 @@ async def find_kallisto_index(ctx: RunContext[RNAseqData]) -> str:
 
 
 @rnaseq_agent.tool
-async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
+async def run_kallisto_quantification(ctx: RunContext[AnalysisContext]) -> str:
     """
     Run Kallisto quantification on paired-end FASTQ files and record the resulting abundance files.
 
     Inputs:
-      - ctx: RunContext[RNAseqData]
+      - ctx: RunContext[AnalysisContext]
           Must include:
              • fastq_dir: The directory where FASTQ files are stored.
              • kallisto_index_dir: The directory containing the Kallisto index files.
@@ -601,30 +602,62 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
             logger.error(msg)
             return msg
 
-        abundance_files = []
-        for sample, (r1, r2) in pairs.items():
+        total_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
+        num_samples = len(pairs)
+        desired_parallel = min(num_samples, total_cpus)
+        threads_per_job = max(total_cpus // desired_parallel, 1)
+
+        logger.info("Running Kallisto for %d samples using %d jobs in parallel, %d threads/job",
+                    num_samples, desired_parallel, threads_per_job)
+
+        def run_kallisto_job(sample, r1, r2):
             sample_out = os.path.join(output_dir, sample)
             os.makedirs(sample_out, exist_ok=True)
             cmd = [
                 "kallisto", "quant", "--rf-stranded",
                 "-i", index_path,
                 "-o", sample_out,
-                "-t", "24",
+                "-t", str(threads_per_job),
                 "--plaintext", r1, r2
             ]
-            cmd_str = " ".join(cmd)
-            logger.info("Kallisto command: %s", cmd_str)
-            process = subprocess.run(cmd, capture_output=True, text=True)
-            if process.returncode == 0:
-                logger.info("Kallisto completed for %s", sample)
-            else:
-                logger.error("Kallisto failed for %s (return=%d)\nSTDERR:\n%s", sample, process.returncode, process.stderr)
-            abundance_path = os.path.join(sample_out, "abundance.tsv")
-            if os.path.exists(abundance_path):
-                abundance_files.append(abundance_path)
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            return {
+                "sample": sample,
+                "returncode": result.returncode,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "abundance_path": os.path.join(sample_out, "abundance.tsv") if result.returncode == 0 else None
+            }
+
+        # Use ProcessPoolExecutor to launch jobs in parallel
+        results = []
+        abundance_files = []
+        with ThreadPoolExecutor(max_workers=desired_parallel) as pool:
+            future_to_sample = {
+                pool.submit(run_kallisto_job, sample, pair[0], pair[1]): sample
+                for sample, pair in pairs.items()
+            }
+            for fut in as_completed(future_to_sample):
+                res = fut.result()
+                sample = res["sample"]
+                if res["returncode"] == 0 and os.path.exists(res["abundance_path"]):
+                    abundance_files.append(res["abundance_path"])
+                    logger.info(f"Kallisto completed for {sample}")
+                else:
+                    logger.error(f"Kallisto failed for {sample}. STDERR: {res['stderr']}")
+                results.append(res)
+
         ctx.deps.abundance_files = abundance_files
         logger.info("Stored %d abundance files in ctx.deps", len(abundance_files))
-        return f"Kallisto quantification finished – {len(abundance_files)} abundance files ready."
+        out_lines = [f"Kallisto quant: {r['sample']} (code:{r['returncode']})" for r in results]
+        return f"""
+Parallel Kallisto quantification finished – {len(abundance_files)} abundance files ready.
+
+Job info:
+{chr(10).join(out_lines)}
+
+Each job used {threads_per_job} threads; {desired_parallel} jobs run in parallel.
+"""
     except Exception as e:
         logger.exception("run_kallisto_quantification crashed: %s", e)
         return f"Error running Kallisto quantification: {e}"
@@ -635,13 +668,13 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
 
 
 @rnaseq_agent.tool
-async def prepare_edgeR_analysis(ctx: RunContext[RNAseqData]) -> str:
+async def prepare_edgeR_analysis(ctx: RunContext[AnalysisContext]) -> str:
     """
     Prepare a sample mapping table for downstream edgeR differential expression analysis
     by matching Kallisto abundance files with sample metadata.
 
     Inputs:
-      - ctx: RunContext[RNAseqData]
+      - ctx: RunContext[AnalysisContext]
           Must include:
              • abundance_files: A list of abundance file paths from the Kallisto quantification step.
              • metadata_df: The loaded metadata DataFrame.
@@ -820,7 +853,7 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 
 
 @rnaseq_agent.tool
-async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
+async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext]) -> str:
     """
     Run edgeR/limma analysis using the metadata agent's contrasts.
 
@@ -1232,7 +1265,7 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
 
 
 @rnaseq_agent.tool
-async def process_metadata_with_agent(ctx: RunContext[RNAseqData]) -> str:
+async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
     """
     Process metadata using a specialized metadata agent.
 
@@ -1248,7 +1281,7 @@ async def process_metadata_with_agent(ctx: RunContext[RNAseqData]) -> str:
         log(f"Preparing to process metadata at: {ctx.deps.metadata_path}",
             level=LogLevel.NORMAL)
 
-        # Create a RNAseqData instance specifically for the metadata agent
+        # Create a AnalysisContext instance specifically for the metadata agent
         metadata_deps = MetadataContext(metadata_path=ctx.deps.metadata_path)
 
         # Prompt for the metadata agent
@@ -1328,6 +1361,6 @@ Designed contrasts:
         log_tool_result(error_msg)
         return error_msg
 
-async def run_agent_async(prompt: str, deps: RNAseqData, usage=None):
+async def run_agent_async(prompt: str, deps: AnalysisContext, usage=None):
     logger.info("🚀 Analysis agent invoked – prompt: %s", prompt)
     return await rnaseq_agent.run(prompt, deps=deps, usage=usage)

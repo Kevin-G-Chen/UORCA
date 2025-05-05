@@ -31,7 +31,7 @@ import datetime
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
 from dotenv import load_dotenv
-from shared import ReportContext
+from shared import ReportingContext
 
 # Load environment variables
 load_dotenv()
@@ -53,13 +53,12 @@ Return a summary of each step.
 
 reporting_agent = Agent(
     'openai:o4-mini',  # Using a powerful model.
-    deps_type=ReportContext,
+    deps_type=ReportingContext,
     system_prompt=system_prompt
 )
 
-
 @reporting_agent.tool
-async def identify_png_files(ctx: RunContext[ReportContext]) -> str:
+async def identify_png_files(ctx: RunContext[ReportingContext]) -> str:
     """
     Identify and list all PNG files in the folder specified by ctx.deps.png_dir.
     Logs the directory being scanned and the files found.
@@ -91,7 +90,7 @@ async def identify_png_files(ctx: RunContext[ReportContext]) -> str:
 
 
 @reporting_agent.tool
-async def generate_rst_from_pngs(ctx: RunContext[ReportContext]) -> str:
+async def generate_rst_from_pngs(ctx: RunContext[ReportingContext]) -> str:
     """
     Copy PNG files into an 'images' subfolder in the rst_folder,
     then generate an RST file that embeds these images using the .. figure:: directive
@@ -168,7 +167,7 @@ async def generate_rst_from_pngs(ctx: RunContext[ReportContext]) -> str:
 
 
 @reporting_agent.tool
-async def build_report(ctx: RunContext[ReportContext]) -> str:
+async def build_report(ctx: RunContext[ReportingContext]) -> str:
     """
     Build Sphinx HTML documentation from the RST file in rst_folder.
     Initialize a Sphinx project in sphinx_output_folder, copy the RST file (and associated images),
@@ -263,5 +262,5 @@ async def build_report(ctx: RunContext[ReportContext]) -> str:
         logging.error(f"[build_report] {err_msg}")
         return err_msg
 
-async def run_agent_async(prompt: str, deps: ReportContext, usage=None):
+async def run_agent_async(prompt: str, deps: ReportingContext, usage=None):
     return await reporting_agent.run(prompt, deps=deps, usage=usage)
