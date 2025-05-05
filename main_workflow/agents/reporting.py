@@ -31,35 +31,11 @@ import datetime
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
 from dotenv import load_dotenv
+from shared import ReportContext
 
 # Load environment variables
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
-
-# -----------------------------------------------------------
-# Dependency Class for Reporting Agent
-# -----------------------------------------------------------
-
-
-class ReportContext(BaseModel):
-    """
-    Holds configuration for the reporting agent.
-
-    - png_dir: Input directory for PNG files.
-    - rst_folder: Directory (inside output_dir/rst) where the RST file and copied images are saved.
-    - sphinx_output_folder: Timestamped folder (inside output_dir) where the Sphinx project and HTML output are stored.
-    - log_path: Full path to the Sphinx build log file.
-    """
-    png_dir: str = Field(...,
-                         description="Directory where the PNG files are located.")
-    rst_folder: str = Field(...,
-                            description="Directory to store the generated RST file and images.")
-    sphinx_output_folder: str = Field(
-        ..., description="Directory for the Sphinx project and HTML output.")
-    log_path: str = Field(...,
-                          description="Path to save the Sphinx build log file.")
-    model_config = ConfigDict(extra="allow")
-
 
 # -----------------------------------------------------------
 # Reporting Agent Tools (with static captions and logging)

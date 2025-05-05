@@ -1,59 +1,51 @@
-
 #############################
-# SECTION: Logging and Utilities
+# SECTION: Logging and Utilities (updated)
 #############################
+from __future__ import annotations
+import logging, os, re, subprocess, json, glob, argparse, asyncio, pathlib, datetime
+from typing import List, Optional, Dict, Any, Union, Tuple, Literal
 
-# (Removed logfire as it isn’t used)
-from typing import List, Optional, Dict, Any, Union
-from shared import RNAseqData
-from pydantic_ai import Agent, RunContext
-import argparse
-import os
-import glob
-import re
-import subprocess
 import pandas as pd
 import numpy as np
-import json
-from dotenv import load_dotenv
-import matplotlib.pyplot as plt
-import datetime
-from datetime import date
-from rich.console import Console
-from rich.panel import Panel
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Union, Tuple, Any, Literal
-from unidecode import unidecode
+from dotenv import load_dotenv
+from rich.console import Console
 from pydantic import BaseModel, Field, ConfigDict
+from pydantic_ai import Agent, RunContext
+from shared import RNAseqData
+import gseapy
+from unidecode import unidecode
+from openai import OpenAI
 import matplotlib.pyplot as plt
 import nest_asyncio
-import gseapy
-from openai import OpenAI
+
+# ── configure python‑logging ────────────────────────────────────────────────
+logging.basicConfig(
+    format="%(asctime)s  %(levelname)-8s  %(name)s ▶  %(message)s",
+    level=logging.INFO,
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger(__name__)
+
 console = Console()
-# logfire.configure(token=os.environ.get("LOGFIRE_KEY"))
-# logfire.instrument_openai()
 
-
-# Configure logging levels
+#############################
+# SECTION: Custom console log helpers (unchanged)
+#############################
 class LogLevel:
     MINIMAL = 0   # Only critical information
-    NORMAL = 1    # Default level - tool calls, parameters, and results
+    NORMAL  = 1   # Default level – tool calls, parameters, and results
     VERBOSE = 2   # Detailed information including context for each call
-    DEBUG = 3     # Maximum information for debugging
+    DEBUG   = 3   # Maximum information for debugging
 
-
-# Set the current log level (change this to adjust verbosity)
 CURRENT_LOG_LEVEL = LogLevel.NORMAL
 
-
 def log(message, level=LogLevel.NORMAL, style=""):
-    """Log a message if the current log level is equal to or greater than the specified level"""
     if CURRENT_LOG_LEVEL >= level:
         if style:
             console.print(message, style=style)
         else:
             console.print(message)
-
 
 def log_tool_header(tool_name, params=None):
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
@@ -61,23 +53,56 @@ def log_tool_header(tool_name, params=None):
         if params:
             console.print(f"Parameters: {params}")
 
-
 def log_tool_result(result):
     if CURRENT_LOG_LEVEL >= LogLevel.NORMAL:
         console.print(result)
 
+#############################
+# SECTION: Data classes and env
+#############################
 @dataclass
 class MetadataContext:
-    """Container for metadata analysis data with enhanced context tracking."""
     metadata_path: str
     metadata_df: Optional[pd.DataFrame] = None
-    # This will hold the final analysis column name (or merged version)
     merged_column: Optional[str] = None
-    # Store the unique groups found in the analysis column
     unique_groups: Optional[List[str]] = None
-    # To store designed contrasts if needed
     contrast_details: Optional[Dict[str, Any]] = None
 
+load_dotenv()
+openai_api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI()
+
+#############################
+# SECTION: Pydantic schemas
+#############################
+class Contrast_format(BaseModel):
+    name: str
+    expression: str
+    description: Optional[str] = Field(description="Biological interpretation of the contrast")
+    justification: Optional[str] = Field(description="Justification for the contrast design, in terms of value to the scientific community")
+class Contrasts(BaseModel):
+    contrasts: List[Contrast_format]
+    model_config = ConfigDict(extra="allow")
+
+#############################
+# SECTION: Agent definitions
+#############################
+# ––– RNA‑seq analysis agent –––
+analysis_prompt_path = "./main_workflow/prompts/analysis.txt"
+try:
+    system_prompt = pathlib.Path(analysis_prompt_path).read_text()
+except Exception as e:
+    logger.warning("Could not read analysis system prompt: %s – using fallback", e)
+    system_prompt = """
+    # RNA‑seq Data Analysis Expert (fallback)
+    You are an expert RNA‑seq data analyst. Analyse RNA‑seq data using standard bioinformatics workflows while logging each major step.
+    """
+
+rnaseq_agent = Agent(
+    "openai:o4-mini",
+    deps_type=RNAseqData,
+    system_prompt=system_prompt
+)
 
 # ----------------------------
 # Load environment variables and initialize OpenAI client
@@ -531,125 +556,78 @@ async def run_kallisto_quantification(ctx: RunContext[RNAseqData]) -> str:
       transcript abundance estimates, which are later used for differential expression analysis.
     """
     try:
-        console.log(
-            f"[bold cyan]Fastq Directory from context:[/] {ctx.deps.fastq_dir}")
-        console.log(
-            f"[bold blue]Full context.deps details:[/]\n{vars(ctx.deps)}")
+        logger.info("🧬 run_kallisto_quantification started – fastq_dir=%s", ctx.deps.fastq_dir)
 
-        # Find paired FASTQ files using the fastq_dir from the dependency
         fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
         if not fastq_files:
-            return f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
+            msg = f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
+            logger.error(msg)
+            return msg
 
-        # Find the Kallisto index
         index_result = await find_kallisto_index(ctx)
         if "Error" in index_result:
+            logger.error(index_result)
             return index_result
 
-        # Extract the index path from the result
+        # Extract .idx path from index_result
         index_path = None
-        for line in index_result.splitlines():
-            if '.idx' in line:
-                # Extract the path, which should be after the colon
-                if ':' in line:
-                    index_path = line.split(':', 1)[1].strip()
-                else:
-                    # If no colon, look for a path with .idx
-                    words = line.split()
-                    for word in words:
-                        if '.idx' in word:
-                            index_path = word
-                            break
+        for tok in index_result.split():
+            if tok.endswith('.idx'):
+                index_path = tok
+                break
+        if not index_path or not os.path.exists(index_path):
+            msg = "Error: Could not determine Kallisto index path"
+            logger.error(msg)
+            return msg
 
-        if not index_path:
-            return "Error: Could not determine Kallisto index path"
-
-        # Create output directory
         output_dir = ctx.deps.output_dir
         os.makedirs(output_dir, exist_ok=True)
 
-        # Organize FASTQ files into pairs based on naming conventions
-        paired_files = {}
+        # Identify paired files (R1/R2)
+        r1_pat = re.compile(r'.*_(R1|1)\.fastq\.gz$')
+        r2_pat = re.compile(r'.*_(R2|2)\.fastq\.gz$')
+        pairs: Dict[str, Tuple[str,str]] = {}
+        for f in fastq_files:
+            base = os.path.basename(f)
+            if r1_pat.match(base):
+                mate = base.replace('_R1', '_R2').replace('_1.fastq', '_2.fastq')
+                mate_path = os.path.join(os.path.dirname(f), mate)
+                if mate_path in fastq_files:
+                    sample = base.split('_R1')[0].split('_1.fastq')[0]
+                    pairs[sample] = (f, mate_path)
+        logger.info("Identified %d paired samples", len(pairs))
+        if not pairs:
+            msg = "Error: No paired FASTQ files found"
+            logger.error(msg)
+            return msg
 
-        # Identify pairs using common naming patterns
-        r1_pattern = re.compile(r'.*_(R1|1)\.fastq\.gz$')
-        r2_pattern = re.compile(r'.*_(R2|2)\.fastq\.gz$')
-
-        r1_files = [f for f in fastq_files if r1_pattern.match(f)]
-        r2_files = [f for f in fastq_files if r2_pattern.match(f)]
-
-        # Match R1 with R2 files
-        for r1_file in r1_files:
-            # Convert R1 to R2 in the filename
-            expected_r2 = r1_file.replace(
-                '_R1', '_R2').replace('_1.fastq', '_2.fastq')
-            if expected_r2 in r2_files:
-                # Extract sample name from filename
-                sample_name = os.path.basename(r1_file).split('_R1')[
-                    0].split('_1.fastq')[0]
-                paired_files[sample_name] = (r1_file, expected_r2)
-
-        console.log(
-            f"[bold yellow]Progress:[/] Identified {len(paired_files)} paired FASTQ file groups.")
-        if not paired_files:
-            # If no pairs found, check if files are single-end
-            single_end = all(not r1_pattern.match(
-                f) and not r2_pattern.match(f) for f in fastq_files)
-            if single_end:
-                return "Error: Single-end reads detected. Kallisto requires paired-end reads or additional parameters for single-end analysis."
-            else:
-                return "Error: Could not identify paired FASTQ files"
-
-        # Run Kallisto for each pair
-        results = []
-        for sample_name, (r1, r2) in paired_files.items():
-            sample_output_dir = os.path.join(output_dir, sample_name)
-            os.makedirs(sample_output_dir, exist_ok=True)
-
-            # Build Kallisto command
-            cmd = [
-                "kallisto", "quant",
-                "--rf-stranded",  # Temporary hardcode until I implement determination of strandedness
-                "-i", index_path,
-                "-o", sample_output_dir,
-                "-t", "24",  # Use 4 threads
-                "--plaintext",  # Output plaintext instead of HDF5
-                r1, r2
-            ]
-
-            console.log(
-                f"[bold yellow]Progress:[/] Running Kallisto quantification for sample: {sample_name}")
-            process = subprocess.run(cmd, capture_output=True, text=True)
-
-            console.log(
-                f"[bold yellow]Progress:[/] Completed Kallisto run for sample: {sample_name} (return code: {process.returncode})")
-            if process.returncode == 0:
-                results.append(f"Successfully processed {sample_name}")
-            else:
-                results.append(
-                    f"Error processing {sample_name}: {process.stderr}")
-
-        # Collect paths to abundance files
         abundance_files = []
-        for sample_name in paired_files.keys():
-            abundance_file = os.path.join(
-                output_dir, sample_name, "abundance.tsv")
-            if os.path.exists(abundance_file):
-                abundance_files.append(abundance_file)
-
-        # Store the abundance file paths
+        for sample, (r1, r2) in pairs.items():
+            sample_out = os.path.join(output_dir, sample)
+            os.makedirs(sample_out, exist_ok=True)
+            cmd = [
+                "kallisto", "quant", "--rf-stranded",
+                "-i", index_path,
+                "-o", sample_out,
+                "-t", "24",
+                "--plaintext", r1, r2
+            ]
+            cmd_str = " ".join(cmd)
+            logger.info("Kallisto command: %s", cmd_str)
+            process = subprocess.run(cmd, capture_output=True, text=True)
+            if process.returncode == 0:
+                logger.info("Kallisto completed for %s", sample)
+            else:
+                logger.error("Kallisto failed for %s (return=%d)\nSTDERR:\n%s", sample, process.returncode, process.stderr)
+            abundance_path = os.path.join(sample_out, "abundance.tsv")
+            if os.path.exists(abundance_path):
+                abundance_files.append(abundance_path)
         ctx.deps.abundance_files = abundance_files
-
-        return f"""
-Kallisto quantification completed for {len(results)} sample pairs.
-
-Results:
-{chr(10).join(results)}
-
-Found {len(abundance_files)} abundance files for downstream analysis.
-        """
+        logger.info("Stored %d abundance files in ctx.deps", len(abundance_files))
+        return f"Kallisto quantification finished – {len(abundance_files)} abundance files ready."
     except Exception as e:
-        return f"Error running Kallisto quantification: {str(e)}"
+        logger.exception("run_kallisto_quantification crashed: %s", e)
+        return f"Error running Kallisto quantification: {e}"
 
 #############################
 # Section: Differential Expression Analysis Tools
@@ -903,7 +881,7 @@ async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
             ctx.deps.tx2gene_path) else "NA"
 
         # Use the main script
-        main_r_script_path = "../script_development/data_analysis_agent/RNAseq.R"
+        main_r_script_path = "./main_workflow/additional_scripts/RNAseq.R"
 
         # Check if the R script exists
         if not os.path.exists(main_r_script_path):
@@ -919,6 +897,11 @@ async def run_edger_limma_analysis(ctx: RunContext[RNAseqData]) -> str:
         # Add the contrasts CSV file as the fifth argument if it exists
         if ctx.deps.contrast_path and os.path.exists(ctx.deps.contrast_path):
             cmd.append(ctx.deps.contrast_path)
+
+        # Check for None values in the command
+        for i, arg in enumerate(cmd):
+            if arg is None:
+                print(f"WARNING: cmd[{i}] is None!")
 
         log(f"Running R script: {' '.join(cmd)}", level=LogLevel.NORMAL)
         process = subprocess.run(cmd, capture_output=True, text=True)
@@ -963,23 +946,6 @@ Differential expression results saved to {deg_dir}
 #############################
 # SECTION: Metadata Parsing Agent tools
 #############################
-
-def clean_string(ctx: RunContext[RNAseqData], s: str) -> str:
-    """
-    (Copied from MetadataAgent)
-    Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
-    """
-    if pd.isna(s):
-        return "NA"
-    s = str(s).strip()
-    s = unidecode(s)
-    s = s.replace(" ", "_")
-    s = re.sub(r'[^\w]', '', s)
-    return s
-
-# ----------------------------
-# Create RNAseq metadata analysis agent
-# ----------------------------
 # Try reading your system prompt, otherwise use the fallback prompt
 system_prompt_path = "./main_workflow/prompts/analysis.txt"
 try:
@@ -988,7 +954,7 @@ try:
 
     # Print the first and last few lines for verification
     lines = system_prompt.split('\n')
-    print(f"\n--- SYSTEM PROMPT FILE LOADED ---")
+    print(f"\n--- METADATA AGENT SYSTEM PROMPT FILE LOADED ---")
     print("First 3 lines:")
     for line in lines[:3]:
         print(f"> {line}")
@@ -1071,6 +1037,8 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
         else:
             df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
 
+        # Print message of metadata dimensions
+        log(f"Loaded metadata with {df.shape[0]} rows and {df.shape[1]} columns")
         # Remove Run and Experiment columns - these are added in a previous metadata processing step, so these are removed to more accurately emulate the original metadata
         # df = df.loc[:, ~df.columns.str.contains('Run|Experiment', case=False)]
         # Remove duplicate rows
@@ -1298,7 +1266,7 @@ async def process_metadata_with_agent(ctx: RunContext[RNAseqData]) -> str:
 
         # Run the metadata agent with the Contrasts result type
         log("Running metadata agent...", level=LogLevel.NORMAL)
-        metadata_result = metadata_agent.run_sync(
+        metadata_result = await metadata_agent.run(
             metadata_prompt,
             deps=metadata_deps,
             output_type=Contrasts
@@ -1361,8 +1329,5 @@ Designed contrasts:
         return error_msg
 
 async def run_agent_async(prompt: str, deps: RNAseqData, usage=None):
-    """
-    Thin wrapper used by master.py (async all the way).
-    Pass `usage` through so token accounting is aggregated.
-    """
+    logger.info("🚀 Analysis agent invoked – prompt: %s", prompt)
     return await rnaseq_agent.run(prompt, deps=deps, usage=usage)
