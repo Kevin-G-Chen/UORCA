@@ -32,7 +32,7 @@ class AnalysisContext(RNAseqCoreContext):
 
 # --- Reporting context ---
 class ReportingContext(RNAseqCoreContext):
-    png_dir: str
-    rst_folder: str
-    sphinx_output_folder: str
-    log_path: str
+    png_dir: Optional[str] = None
+    rst_folder: Optional[str] = None
+    sphinx_output_folder: Optional[str] = None
+    log_path: Optional[str] = None

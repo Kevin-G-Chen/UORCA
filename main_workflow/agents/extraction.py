@@ -15,7 +15,7 @@ import pandas as pd
 from dotenv import load_dotenv
 import GEOparse as gp
 from pydantic_ai import Agent, RunContext
-from shared import RNAseqCoreContext
+from shared import ExtractionContext, RNAseqCoreContext
 
 # ── logging setup ────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -210,7 +210,7 @@ async def download_fastqs(
     )
 
 # ─────────────────────────────────────────────────────────────────────────────
-async def run_agent_async(prompt: str, deps: RNAseqCoreContext, usage=None):
+async def run_agent_async(prompt: str, deps: ExtractionContext, usage=None):
     """Thin wrapper used by master.py (async all‑the‑way)."""
     logger.info("🛠️  Extraction agent invoked by master – prompt: %s", prompt)
     return await extract_agent.run(prompt, deps=deps, usage=usage)
