@@ -16,13 +16,14 @@ from dotenv import load_dotenv
 import GEOparse as gp
 from pydantic_ai import Agent, RunContext
 from shared import ExtractionContext, RNAseqCoreContext
+from shared.workflow_logging import log_tool
 
 # ── logging setup ────────────────────────────────────────────────────────────
-logging.basicConfig(
-    format="%(asctime)s  %(levelname)-8s  %(name)s ▶  %(message)s",
-    level=logging.INFO,
-    datefmt="%H:%M:%S"
-)
+#logging.basicConfig(
+#    format="%(asctime)s  %(levelname)-8s  %(name)s ▶  %(message)s",
+#    level=logging.INFO,
+#    datefmt="%H:%M:%S"
+#)
 logger = logging.getLogger(__name__)
 
 # ── env + agent definition ──────────────────────────────────────────────────
@@ -40,9 +41,10 @@ extract_agent = Agent(
 
 # ─────────────────────────────────────────────────────────────────────────────
 @extract_agent.tool
+@log_tool
 async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str) -> str:
     """Retrieve sample‑level metadata and SRR run IDs for a GEO series."""
-    logger.info("🔍  fetch_geo_metadata() called for %s", accession)
+    logger.info("🔍 fetch_geo_metadata() called for %s", accession)
 
     out_root = pathlib.Path(ctx.deps.output_dir or ".").resolve()
     meta_dir = out_root / "metadata"
@@ -123,6 +125,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
 
 # ─────────────────────────────────────────────────────────────────────────────
 @extract_agent.tool
+@log_tool
 async def download_fastqs(
     ctx: RunContext[RNAseqCoreContext],
     threads: int = 6,
@@ -130,7 +133,7 @@ async def download_fastqs(
 ) -> str:
     """Convert SRR accessions → **paired FASTQ.gz** using SRA‑Toolkit."""
 
-    logger.info("📥  download_fastqs() called – %d threads, max_spots=%s",
+    logger.info("📥 download_fastqs() called – %d threads, max_spots=%s",
                 threads, max_spots)
 
     if ctx.deps.metadata_df is None or "SRR" not in ctx.deps.metadata_df.columns:
@@ -210,7 +213,8 @@ async def download_fastqs(
     )
 
 # ─────────────────────────────────────────────────────────────────────────────
+@log_tool
 async def run_agent_async(prompt: str, deps: ExtractionContext, usage=None):
     """Thin wrapper used by master.py (async all‑the‑way)."""
-    logger.info("🛠️  Extraction agent invoked by master – prompt: %s", prompt)
+    logger.info("🛠️ Extraction agent invoked by master – prompt: %s", prompt)
     return await extract_agent.run(prompt, deps=deps, usage=usage)
