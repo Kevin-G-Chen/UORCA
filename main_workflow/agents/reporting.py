@@ -37,6 +37,13 @@ from shared import ReportingContext
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
+logging.basicConfig(
+    format="%(asctime)s  %(levelname)-8s  %(name)s ▶  %(message)s",
+    level=logging.INFO,
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger(__name__)
+
 # -----------------------------------------------------------
 # Reporting Agent Tools (with static captions and logging)
 # -----------------------------------------------------------

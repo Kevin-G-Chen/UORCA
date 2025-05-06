@@ -49,6 +49,8 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
 
 @master.tool
 async def report(ctx: RunContext[ReportingContext]) -> str:
+    if not isinstance(ctx.deps, ReportingContext):
+        ctx.deps = ReportingContext(**ctx.deps.dict())  # copies all existing attrs
     if not ctx.deps.png_dir:
         # Look for plot directories in standard locations created by analysis agent
         plot_dir = f"{ctx.deps.output_dir}/plots"
