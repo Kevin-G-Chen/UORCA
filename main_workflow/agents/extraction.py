@@ -215,6 +215,19 @@ async def download_fastqs(
 # ─────────────────────────────────────────────────────────────────────────────
 @log_tool
 async def run_agent_async(prompt: str, deps: ExtractionContext, usage=None):
-    """Thin wrapper used by master.py (async all‑the‑way)."""
-    logger.info("🛠️ Extraction agent invoked by Master Agent – prompt: %s", prompt)
-    return await extract_agent.run(prompt, deps=deps, usage=usage)
+    """Thin wrapper used by master.py."""
+    logger.info("🛠️ Extraction agent invoked by master – prompt: %s", prompt)
+    result = await extract_agent.run(prompt, deps=deps, usage=usage)
+
+    # Log the agent's output
+    logger.info("📄 Extraction agent output: %s", result.output)
+
+    # If you want to log usage statistics
+    if hasattr(result, 'usage') and result.usage:
+        try:
+            usage_stats = result.usage()
+            logger.info("📊 Extraction agent usage: %s", usage_stats)
+        except Exception as e:
+            logger.debug("Could not get usage stats: %s", e)
+
+    return result

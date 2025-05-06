@@ -14,6 +14,8 @@ from unidecode import unidecode
 from openai import OpenAI
 import matplotlib.pyplot as plt
 
+logger = logging.getLogger(__name__)
+
 @dataclass
 class MetadataContext:
     metadata_path: str
@@ -332,3 +334,25 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
         error_msg = f"Error extracting unique values: {str(e)}"
         logger.error("❌ %s", error_msg, exc_info=True)
         return {"success": False, "message": error_msg, "unique_values": []}
+
+@log_tool
+async def run_agent_async(prompt: str, deps: MetadataContext, usage=None):
+    logger.info("📋 Metadata agent invoked – prompt: %s", prompt)
+    result = await metadata_agent.run(prompt, deps=deps, usage=usage, output_type=output_type)
+
+    # Log the agent's output
+    logger.info("📄 Metadata agent output: %s", result.output)
+
+    # Log any contrasts generated (if available)
+    if hasattr(result, 'output') and hasattr(result.output, 'contrasts'):
+        logger.info("📊 Metadata agent generated %d contrasts", len(result.output.contrasts))
+
+    # If you want to log usage statistics
+    if hasattr(result, 'usage') and result.usage:
+        try:
+            usage_stats = result.usage()
+            logger.info("📊 Metadata agent usage: %s", usage_stats)
+        except Exception as e:
+            logger.debug("Could not get usage stats: %s", e)
+
+    return result
