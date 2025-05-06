@@ -1,9 +1,10 @@
+from shared.workflow_logging import setup_logging
+
 from pydantic_ai import Agent, RunContext
 from dotenv import load_dotenv, find_dotenv
 import os, pathlib
 import datetime
 from shared import ExtractionContext, AnalysisContext, ReportingContext, RNAseqCoreContext
-from agents import extraction, analysis, reporting
 import argparse
 
 # ── load env once ───────────────────────────
@@ -82,9 +83,22 @@ def main():
     ap.add_argument("--tx2gene", default=None)
     args = ap.parse_args()
 
+    # -------- create & remember the chosen run folder -----------------------
     output_dir = args.output_dir or f"./analysis/{args.accession}"
+    os.makedirs(output_dir, exist_ok=True)
 
-    # Prepare a generic context (Core), enriched as the pipeline runs.
+    # -------- configure logging *inside* that folder ------------------------
+    log_dir = pathlib.Path(output_dir) / "logs"
+    log_path = setup_logging(log_dir)
+    print(f"[master] Logging to {log_path}")
+
+    import importlib, sys
+
+    globals()["extraction"] = importlib.import_module("agents.extraction")
+    globals()["analysis"]   = importlib.import_module("agents.analysis")
+    globals()["reporting"]  = importlib.import_module("agents.reporting")
+
+    # -------- build the initial CoreContext and run the orchestrator --------
     ctx = RNAseqCoreContext(
         accession=args.accession,
         output_dir=output_dir,
@@ -95,17 +109,13 @@ def main():
         tx2gene_path=args.tx2gene
     )
 
-    # START THE AGENTIC PIPELINE: Let agent decide what tools to call!
     initial_prompt = (
         f"Analyse {args.accession} by first extracting the data, "
         f"performing an analysis on it, then finally generating a report. "
         f"Skip any steps if the data already exists and is up to date. "
         f"Document each tool invocation and output."
     )
-    run = master.run_sync(
-        initial_prompt,
-        deps=ctx
-    )
+    run = master.run_sync(initial_prompt, deps=ctx)
 
     print(run.output)
     try:
