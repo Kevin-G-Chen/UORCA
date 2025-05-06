@@ -261,4 +261,17 @@ async def build_report(ctx: RunContext[ReportingContext]) -> str:
 async def run_agent_async(prompt: str, deps: ReportingContext, usage=None):
     """Thin wrapper used by master.py to invoke the reporting agent asynchronously."""
     logger.info("📝 Reporting agent invoked by master – prompt: %s", prompt)
-    return await reporting_agent.run(prompt, deps=deps, usage=usage)
+    result = await reporting_agent.run(prompt, deps=deps, usage=usage)
+
+    # Log the agent's output
+    logger.info("📄 Reporting agent output: %s", result.output)
+
+    # If you want to log usage statistics
+    if hasattr(result, 'usage') and result.usage:
+        try:
+            usage_stats = result.usage()
+            logger.info("📊 Reporting agent usage: %s", usage_stats)
+        except Exception as e:
+            logger.debug("Could not get usage stats: %s", e)
+
+    return result

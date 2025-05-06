@@ -1,5 +1,6 @@
 from shared.workflow_logging import setup_logging
 
+import logging
 from pydantic_ai import Agent, RunContext
 from dotenv import load_dotenv, find_dotenv
 import os, pathlib
@@ -12,17 +13,21 @@ load_dotenv(find_dotenv())
 assert os.getenv("OPENAI_API_KEY"), "API key missing"
 
 # ── master agent definition ─────────────────
+
+# read in system prompt
+
+master_prompt_path = "./main_workflow/prompts/master.txt"
+try:
+    master_prompt = pathlib.Path(master_prompt_path).read_text()
+except Exception as e:
+    logger.warning("Could not read analysis system prompt: %s – using fallback", e)
+    master_prompt = """
+    You are a bioinformatics expert who oversees the execution of a bioinformatic analysis. You will not need to perform any of the analysis yourself, but instead have an expert team of specialised agents who will perform the analysis for you.
+    """
+
 master = Agent(
     "openai:o4-mini",
-    system_prompt=(
-        "You are the pipeline orchestrator.\n"
-        "Available tools:\n"
-        "• extract(acc) – download/locate data\n"
-        "• meta()       – process metadata + contrasts\n"
-        "• analyse()    – quant + DEG\n"
-        "• report()     – final HTML/PDF\n\n"
-        "Plan which tools to call – skip ones that aren't needed."
-    ),
+    system_prompt=master_prompt,
     instrument=True,
 )
 
@@ -90,13 +95,16 @@ def main():
     # -------- configure logging *inside* that folder ------------------------
     log_dir = pathlib.Path(output_dir) / "logs"
     log_path = setup_logging(log_dir)
-    print(f"[master] Logging to {log_path}")
+    logger = logging.getLogger(__name__)  # Add this line to get a logger
+    logger.info("🚀 Starting UORCA master agent - logging to %s", log_path)
 
     import importlib, sys
 
+    logger.info("📚 Importing agent modules")
     globals()["extraction"] = importlib.import_module("agents.extraction")
     globals()["analysis"]   = importlib.import_module("agents.analysis")
     globals()["reporting"]  = importlib.import_module("agents.reporting")
+    logger.info("✅ All agent modules imported successfully")
 
     # -------- build the initial CoreContext and run the orchestrator --------
     ctx = RNAseqCoreContext(
@@ -109,19 +117,27 @@ def main():
         tx2gene_path=args.tx2gene
     )
 
+    logger.info("🧩 Built initial context with accession: %s", args.accession)
+
     initial_prompt = (
         f"Analyse {args.accession} by first extracting the data, "
         f"performing an analysis on it, then finally generating a report. "
         f"Skip any steps if the data already exists and is up to date. "
         f"Document each tool invocation and output."
     )
+
+    logger.info("🤖 Running master agent with prompt: %s", initial_prompt)
     run = master.run_sync(initial_prompt, deps=ctx)
 
-    print(run.output)
+    logger.info("✅ Master agent completed execution")
+    logger.info("📝 Final output: %s", run.output)
+
     try:
-        print("Token usage:", run.usage())
-    except Exception:
-        pass
+        usage_stats = run.usage()
+        logger.info("📊 Token usage: %s", usage_stats)
+    except Exception as e:
+        logger.warning("⚠️ Could not get token usage: %s", e)
+
 
 if __name__ == "__main__":
     main()

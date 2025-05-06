@@ -24,11 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # ── configure python‑logging ────────────────────────────────────────────────
-logging.basicConfig(
-    format="%(asctime)s  %(levelname)-8s  %(name)s ▶  %(message)s",
-    level=logging.INFO,
-    datefmt="%H:%M:%S"
-)
+
 logger = logging.getLogger(__name__)
 
 
@@ -515,13 +511,13 @@ async def prepare_edgeR_analysis(ctx: RunContext[AnalysisContext]) -> str:
 
         # Check if we have metadata
         if ctx.deps.metadata_df is None:
-            error_msg = "Error: Metadata not loaded. Please run load_metadata first."
+            error_msg = "Error: Metadata not loaded. Please use the metadata agent."
             logger.error("❌ %s", error_msg)
             return error_msg
 
         # Check if we have merged column
         if ctx.deps.merged_column is None:
-            error_msg = "Error: Analysis column not identified. Please run identify_analysis_columns first."
+            error_msg = "Error: Analysis column not identified. Please use the metadata agent."
             logger.error("❌ %s", error_msg)
             return error_msg
 
@@ -812,15 +808,15 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
 
         # Import the metadata agent module
         try:
-            from agents.metadata import metadata_agent, MetadataContext
-            logger.info("✅ Successfully imported metadata_agent module")
+            from agents import metadata
+            logger.info("✅ Successfully imported metadata module")
         except ImportError as e:
             error_msg = f"Error importing metadata_agent: {str(e)}"
             logger.error("❌ %s", error_msg, exc_info=True)
             return error_msg
 
         # Create a MetadataContext instance specifically for the metadata agent
-        metadata_deps = MetadataContext(metadata_path=ctx.deps.metadata_path)
+        metadata_deps = metadata.MetadataContext(metadata_path=ctx.deps.metadata_path)
 
         # Prompt for the metadata agent
         metadata_prompt = """
@@ -837,8 +833,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
 
         # Run the metadata agent with the Contrasts result type
         logger.info("🤖 Running metadata agent...")
-        from agents.metadata import Contrasts
-        metadata_result = await metadata_agent.run(
+        metadata_result = await metadata.run_agent_async(
             metadata_prompt,
             deps=metadata_deps,
             output_type=Contrasts
@@ -909,5 +904,18 @@ Designed contrasts:
 
 @log_tool
 async def run_agent_async(prompt: str, deps: AnalysisContext, usage=None):
-    logger.info("🚀 Analysis agent invoked by Master Agent – prompt: %s", prompt)
-    return await rnaseq_agent.run(prompt, deps=deps, usage=usage)
+    logger.info("🚀 Analysis agent invoked – prompt: %s", prompt)
+    result = await rnaseq_agent.run(prompt, deps=deps, usage=usage)
+
+    # Log the agent's output
+    logger.info("📄 Analysis agent output: %s", result.output)
+
+    # If you want to log usage statistics
+    if hasattr(result, 'usage') and result.usage:
+        try:
+            usage_stats = result.usage()
+            logger.info("📊 Analysis agent usage: %s", usage_stats)
+        except Exception as e:
+            logger.debug("Could not get usage stats: %s", e)
+
+    return result
