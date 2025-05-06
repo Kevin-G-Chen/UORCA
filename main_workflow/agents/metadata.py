@@ -336,7 +336,7 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
         return {"success": False, "message": error_msg, "unique_values": []}
 
 @log_tool
-async def run_agent_async(prompt: str, deps: MetadataContext, usage=None):
+async def run_agent_async(prompt: str, deps: MetadataContext, usage=None, output_type=None):
     logger.info("📋 Metadata agent invoked – prompt: %s", prompt)
     result = await metadata_agent.run(prompt, deps=deps, usage=usage, output_type=output_type)
 
