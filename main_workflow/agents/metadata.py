@@ -6,17 +6,13 @@ import pandas as pd
 import numpy as np
 from dataclasses import dataclass
 from dotenv import load_dotenv
-from rich.console import Console
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
-from shared import AnalysisContext, AnalysisContext
+from shared import AnalysisContext
 from shared.workflow_logging import log_tool
-import gseapy
 from unidecode import unidecode
 from openai import OpenAI
 import matplotlib.pyplot as plt
-import nest_asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 @dataclass
 class MetadataContext:
@@ -49,6 +45,7 @@ try:
     for line in lines[-3:]:
         print(f"> {line}")
     print(f"--- END OF PREVIEW ({len(lines)} total lines) ---\n")
+
 except Exception as e:
     system_prompt = """
     #### Integrated Prompt for Metadata Processing and Grouping Variable Selection
@@ -67,6 +64,8 @@ except Exception as e:
     """
     print("Using fallback system prompt instead.")
 
+load_dotenv()
+
 metadata_agent = Agent(
     'openai:o4-mini',         # Use a powerful model
     deps_type=MetadataContext,
@@ -79,22 +78,25 @@ metadata_agent = Agent(
 
 
 @metadata_agent.tool
+@log_tool
 def clean_string(ctx: RunContext[MetadataContext], s: str) -> str:
     """
     Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
     """
+    logger.info("🧹 Cleaning string: %s", s[:20] + "..." if len(str(s)) > 20 else s)
     if pd.isna(s):
+        logger.debug("🧹 Input is NaN, returning 'NA'")
         return "NA"
     s = str(s).strip()
     s = unidecode(s)
     s = s.replace(" ", "_")
     s = re.sub(r'[^\w]', '', s)
+    logger.debug("🧹 Cleaned result: %s", s)
     return s
 
 # ----------------------------
 # Tool 1: Process metadata
 # ----------------------------
-
 
 @metadata_agent.tool
 async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
@@ -110,8 +112,7 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
     Returns information about the processed data.
     """
     try:
-        log_tool_header("process_metadata", {
-                        "metadata_path": ctx.deps.metadata_path})
+        logger.info("📋 Processing metadata from %s", ctx.deps.metadata_path)
 
         # Load metadata based on file extension
         if ctx.deps.metadata_path.endswith('.csv'):
@@ -122,27 +123,34 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
             df = pd.read_csv(ctx.deps.metadata_path, sep=None, engine='python')
 
         # Print message of metadata dimensions
-        log(f"Loaded metadata with {df.shape[0]} rows and {df.shape[1]} columns")
-        # Remove Run and Experiment columns - these are added in a previous metadata processing step, so these are removed to more accurately emulate the original metadata
-        # df = df.loc[:, ~df.columns.str.contains('Run|Experiment', case=False)]
+        logger.info("📊 Loaded metadata with %d rows and %d columns", df.shape[0], df.shape[1])
+
         # Remove duplicate rows
+        initial_rows = df.shape[0]
         df = df.drop_duplicates()
+        if df.shape[0] < initial_rows:
+            logger.info("🧹 Removed %d duplicate rows", initial_rows - df.shape[0])
+
         # Remove columns where all values are identical
+        initial_cols = df.shape[1]
         df = df.loc[:, df.nunique() > 1]
-        # Remove columns where all values are different (i.e. all values are unique)
-        # df = df.loc[:, df.nunique() < df.shape[0]]
+        if df.shape[1] < initial_cols:
+            logger.info("🧹 Removed %d columns with identical values", initial_cols - df.shape[1])
 
         # Clean column names
         new_columns = {col: clean_string(ctx, col) for col in df.columns}
         df.rename(columns=new_columns, inplace=True)
+        logger.info("✅ Cleaned column names")
 
         # Clean each cell value
+        logger.info("🧹 Cleaning cell values...")
         for col in df.columns:
             df[col] = df[col].apply(
                 lambda x: clean_string(ctx, x) if pd.notna(x) else x)
 
         # Store cleaned metadata in context
         ctx.deps.metadata_df = df
+        logger.info("💾 Stored cleaned metadata in context")
 
         # Count unique values for each column
         column_stats = {}
@@ -153,10 +161,8 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
                 "values": list(unique_vals) if len(unique_vals) < 20 else list(unique_vals[:20])
             }
 
-        summary = f"""Metadata processed: {df.shape[0]} rows and {df.shape[1]} columns.
-Columns: {', '.join(df.columns)}
-"""
-        log_tool_result(summary)
+        summary = f"Metadata processed: {df.shape[0]} rows and {df.shape[1]} columns.\nColumns: {', '.join(df.columns)}"
+        logger.info("✅ %s", summary)
 
         # Return information about the processed data
         return {
@@ -167,8 +173,7 @@ Columns: {', '.join(df.columns)}
         }
     except Exception as e:
         error_msg = f"Error processing metadata: {str(e)}"
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
+        logger.error("❌ %s", error_msg, exc_info=True)
         return {"message": error_msg, "error": True}
 
 # ----------------------------
@@ -177,6 +182,7 @@ Columns: {', '.join(df.columns)}
 
 
 @metadata_agent.tool
+@log_tool
 async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input: Union[str, List[str], dict] = None) -> dict:
     """
     Merge specified columns into a single analysis column.
@@ -192,6 +198,8 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
     The result is stored in ctx.deps.merged_column.
     """
     try:
+        logger.info("🔀 Merging analysis columns from input: %s", columns_input)
+
         # Handle different input formats flexibly
         candidate_cols = []
 
@@ -207,22 +215,26 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
                 else:
                     # Treat as a single column name
                     candidate_cols = [columns_input]
+                logger.info("📋 Parsed JSON input to: %s", candidate_cols)
             except json.JSONDecodeError:
                 # Not JSON, treat as a single column name
                 candidate_cols = [columns_input]
+                logger.info("📋 Using input as single column name: %s", candidate_cols)
 
         # Case 2: List input
         elif isinstance(columns_input, list):
             candidate_cols = columns_input
+            logger.info("📋 Using list input directly: %s", candidate_cols)
 
         # Case 3: Dict input with "columns" key
         elif isinstance(columns_input, dict) and "columns" in columns_input:
             candidate_cols = columns_input["columns"]
+            logger.info("📋 Extracted columns from dict input: %s", candidate_cols)
 
         # Validate we have something to work with
         if not candidate_cols:
             msg = "No columns provided for merging."
-            log_tool_result(msg)
+            logger.warning("⚠️ %s", msg)
             return {"message": msg, "success": False, "merged_column": None}
 
         df = ctx.deps.metadata_df.copy()
@@ -231,13 +243,14 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
         valid_cols = [col for col in candidate_cols if col in df.columns]
         if not valid_cols:
             msg = f"None of the specified columns {candidate_cols} exist in the metadata."
-            log_tool_result(msg)
+            logger.warning("⚠️ %s", msg)
             return {"message": msg, "success": False, "merged_column": None}
 
         if len(valid_cols) == 1:
             # Single column; use it directly
             ctx.deps.merged_column = valid_cols[0]
             msg = f"Single column '{valid_cols[0]}' selected as the analysis column."
+            logger.info("✅ %s", msg)
         else:
             # Multiple columns; merge them
             merged_col = "merged_analysis_group"
@@ -246,14 +259,14 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
             ctx.deps.metadata_df = df  # update the DataFrame
             ctx.deps.merged_column = merged_col
             msg = f"Multiple columns {', '.join(valid_cols)} merged into column '{merged_col}'."
+            logger.info("✅ %s", msg)
 
             # Show a preview of the merged values
             unique_merged = df[merged_col].unique().tolist()
-            preview = unique_merged[:5] if len(
-                unique_merged) > 5 else unique_merged
+            preview = unique_merged[:5] if len(unique_merged) > 5 else unique_merged
+            logger.info("📊 Merged values preview: %s", preview)
             msg += f"\nMerged values (preview): {preview}"
 
-        log_tool_result(msg)
         return {
             "message": msg,
             "success": True,
@@ -262,9 +275,10 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
         }
     except Exception as e:
         error_msg = f"Error in merge_analysis_columns: {str(e)}"
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
+        logger.error("❌ %s", error_msg, exc_info=True)
         return {"message": error_msg, "success": False, "merged_column": None}
+
+
 
 # ----------------------------
 # Tool 3: Extract Unique Values
@@ -272,6 +286,7 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
 
 
 @metadata_agent.tool
+@log_tool
 async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
     """
     Simply extracts and returns the unique values from the selected analysis column.
@@ -284,22 +299,26 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
     No additional analysis or contrast generation is performed.
     """
     try:
+        logger.info("🔍 Extracting unique values from analysis column")
+
         if ctx.deps.metadata_df is None:
-            return {"success": False, "message": "Error: Metadata has not been processed.", "unique_values": []}
+            error_msg = "Error: Metadata has not been processed."
+            logger.error("❌ %s", error_msg)
+            return {"success": False, "message": error_msg, "unique_values": []}
 
         if not ctx.deps.merged_column:
-            return {"success": False, "message": "Error: Analysis column not defined. Please run merge_analysis_columns first.", "unique_values": []}
+            error_msg = "Error: Analysis column not defined. Please run merge_analysis_columns first."
+            logger.error("❌ %s", error_msg)
+            return {"success": False, "message": error_msg, "unique_values": []}
 
         df = ctx.deps.metadata_df
         analysis_col = ctx.deps.merged_column
+        logger.info("📊 Using analysis column: %s", analysis_col)
 
         # Extract unique values from the analysis column
         unique_values = sorted(df[analysis_col].dropna().unique().tolist())
         ctx.deps.unique_groups = unique_values
-
-        # Log the unique values found
-        log_tool_result(
-            f"Extracted {len(unique_values)} unique values from column '{analysis_col}'")
+        logger.info("✅ Extracted %d unique values: %s", len(unique_values), unique_values)
 
         # Return only the unique values with basic metadata
         return {
@@ -311,101 +330,5 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
 
     except Exception as e:
         error_msg = f"Error extracting unique values: {str(e)}"
-        log(error_msg, style="bold red")
+        logger.error("❌ %s", error_msg, exc_info=True)
         return {"success": False, "message": error_msg, "unique_values": []}
-
-async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
-    """
-    Process metadata using a specialized metadata agent.
-
-    This tool creates a dedicated MetadataAgent to analyze the metadata file,
-    identify biologically relevant columns, merge columns if needed, extract unique values,
-    and generate appropriate contrasts for differential expression analysis.
-
-    The results are stored back in the main RNAseq context for downstream analysis.
-    The contrasts are also saved to a CSV file and converted to a DataFrame for use in edgeR/limma analysis.
-    """
-    try:
-        log_tool_header("process_metadata_with_agent")
-        log(f"Preparing to process metadata at: {ctx.deps.metadata_path}",
-            level=LogLevel.NORMAL)
-
-        # Create a AnalysisContext instance specifically for the metadata agent
-        metadata_deps = MetadataContext(metadata_path=ctx.deps.metadata_path)
-
-        # Prompt for the metadata agent
-        metadata_prompt = """
-        Please analyze the RNAseq metadata file and perform the following tasks:
-        1. Process and clean the metadata
-        2. Identify biologically relevant columns for analysis
-        3. Create a final grouping variable (merging columns if needed)
-        4. Extract the unique values found in the analysis column
-        5. Design appropriate contrasts for differential expression analysis based on these unique values
-
-        You should handle any errors or special cases in the data, and make appropriate decisions
-        about which steps to take based on the data characteristics.
-        """
-
-        # Run the metadata agent with the Contrasts result type
-        log("Running metadata agent...", level=LogLevel.NORMAL)
-        metadata_result = await metadata_agent.run(
-            metadata_prompt,
-            deps=metadata_deps,
-            output_type=Contrasts
-        )
-
-        # Transfer the key information from the metadata agent back to the main agent context
-        ctx.deps.metadata_df = metadata_deps.metadata_df
-        ctx.deps.merged_column = metadata_deps.merged_column
-        ctx.deps.unique_groups = metadata_deps.unique_groups
-        ctx.deps.contrasts = metadata_result
-
-        # Create a contrast DataFrame from the agent's output
-        contrast_data = []
-        for contrast in metadata_result.output.contrasts:
-            contrast_data.append({
-                'name': contrast.name,
-                'expression': contrast.expression,
-                'description': contrast.description if hasattr(contrast, 'description') else "",
-                'justification': contrast.justification if hasattr(contrast, 'justification') else ""
-            })
-
-        # Convert to DataFrame and store in the context
-        if contrast_data:
-            ctx.deps.contrast_matrix_df = pd.DataFrame(contrast_data)
-
-            # Save contrasts to a CSV file for later use
-            os.makedirs(ctx.deps.output_dir, exist_ok=True)
-            contrast_path = os.path.join(ctx.deps.output_dir, "contrasts.csv")
-            pd.DataFrame(contrast_data).to_csv(contrast_path, index=False)
-            ctx.deps.contrast_path = contrast_path
-            log(f"Saved contrasts to {contrast_path}", level=LogLevel.NORMAL)
-        else:
-            log("No contrasts were generated by the metadata agent", level=LogLevel.NORMAL, style="bold yellow")
-
-        # Generate a summary for the main agent
-        summary = f"""
-Metadata processing completed successfully.
-
-Selected analysis column: {ctx.deps.merged_column}
-Unique groups identified: {ctx.deps.unique_groups}
-
-Designed contrasts:
-"""
-        for contrast in metadata_result.output.contrasts:
-            summary += f"- {contrast.name}: {contrast.expression}\n"
-
-        if hasattr(metadata_result.output, 'summary'):
-            summary += f"\nSummary:\n{metadata_result.output.summary}\n"
-
-        if ctx.deps.contrast_path:
-            summary += f"\nContrasts saved to: {ctx.deps.contrast_path}\n"
-
-        log_tool_result(summary)
-        return summary
-
-    except Exception as e:
-        error_msg = f"Error processing metadata with agent: {str(e)}"
-        log(error_msg, style="bold red")
-        log_tool_result(error_msg)
-        return error_msg

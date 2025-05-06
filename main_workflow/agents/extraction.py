@@ -216,5 +216,5 @@ async def download_fastqs(
 @log_tool
 async def run_agent_async(prompt: str, deps: ExtractionContext, usage=None):
     """Thin wrapper used by master.py (async all‑the‑way)."""
-    logger.info("🛠️ Extraction agent invoked by master – prompt: %s", prompt)
+    logger.info("🛠️ Extraction agent invoked by Master Agent – prompt: %s", prompt)
     return await extract_agent.run(prompt, deps=deps, usage=usage)
