@@ -1,51 +1,20 @@
-#!/usr/bin/env python3
-"""
-reporting_agent_two_parameters_logging.py
+from __future__ import annotations
+import os, glob, shutil, subprocess, logging, datetime
+from typing import List, Optional, Dict, Any, Union
 
-A reporting agent that:
-  1. Identifies PNG files in a user-specified PNG input folder.
-  2. Copies these PNG files to an "images" subfolder within the output RST folder.
-  3. Generates a reStructuredText (RST) file that embeds these copied PNG images
-     (using a static caption for every figure).
-  4. Builds Sphinx HTML documentation from the generated RST file(s).
-
-Output structure:
-  - RST files are saved in <output_dir>/rst.
-  - A timestamped subfolder is created inside <output_dir> to host the Sphinx project and build log.
-  - The Sphinx build log (sphinx_build.log) is saved in the timestamped folder.
-  - All images are copied to <output_dir>/rst/images, and the RST file references those copies.
-
-Usage:
-  python reporting_agent_two_parameters_logging.py --png_dir path/to/png_folder --output_dir path/to/output_dir
-
-Make sure your .env file (with OPENAI_API_KEY, etc.) is available.
-"""
-
-import os
-import glob
-import shutil
-import subprocess
-import argparse
-import logging
-import datetime
-from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
 from dotenv import load_dotenv
 from shared import ReportingContext
+from shared.workflow_logging import log_tool
+
+# Setup logging
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
-
-logging.basicConfig(
-    format="%(asctime)s  %(levelname)-8s  %(name)s ▶  %(message)s",
-    level=logging.INFO,
-    datefmt="%H:%M:%S"
-)
-logger = logging.getLogger(__name__)
 
 # -----------------------------------------------------------
-# Reporting Agent Tools (with static captions and logging)
+# Reporting Agent Definition
 # -----------------------------------------------------------
 system_prompt = """
 You are a reporting agent tasked with converting PNG images into a reStructuredText document and then building a Sphinx HTML report.
@@ -59,24 +28,27 @@ Return a summary of each step.
 """
 
 reporting_agent = Agent(
-    'openai:o4-mini',  # Using a powerful model.
+    'openai:o4-mini',
     deps_type=ReportingContext,
     system_prompt=system_prompt
 )
 
+# -----------------------------------------------------------
+# Reporting Agent Tools
+# -----------------------------------------------------------
 @reporting_agent.tool
+@log_tool
 async def identify_png_files(ctx: RunContext[ReportingContext]) -> str:
     """
     Identify and list all PNG files in the folder specified by ctx.deps.png_dir.
-    Logs the directory being scanned and the files found.
     """
     png_dir = ctx.deps.png_dir
-    logging.info(f"[identify_png_files] Scanning PNG input folder: {png_dir}")
+    logger.info("🔍 Scanning PNG input folder: %s", png_dir)
 
     if not os.path.isdir(png_dir):
-        err_msg = f"Error: PNG input folder '{png_dir}' does not exist."
-        logging.error(err_msg)
-        return err_msg
+        error_msg = f"Error: PNG input folder '{png_dir}' does not exist."
+        logger.error("❌ %s", error_msg)
+        return error_msg
 
     png_files = []
     for root, _, files in os.walk(png_dir):
@@ -87,16 +59,20 @@ async def identify_png_files(ctx: RunContext[ReportingContext]) -> str:
 
     if not png_files:
         msg = f"No PNG files found in {png_dir}."
-        logging.warning(msg)
+        logger.warning("⚠️ %s", msg)
         return msg
 
-    result = f"Found {len(png_files)} PNG file(s) in {png_dir}:\n" + \
-        "\n".join(png_files)
-    logging.info(f"[identify_png_files] " + result)
+    result = f"Found {len(png_files)} PNG file(s) in {png_dir}"
+    if len(png_files) <= 5:
+        logger.info("✅ %s: %s", result, png_files)
+    else:
+        logger.info("✅ %s (first 5): %s...", result, png_files[:5])
+
     return result
 
 
 @reporting_agent.tool
+@log_tool
 async def generate_rst_from_pngs(ctx: RunContext[ReportingContext]) -> str:
     """
     Copy PNG files into an 'images' subfolder in the rst_folder,
@@ -106,38 +82,38 @@ async def generate_rst_from_pngs(ctx: RunContext[ReportingContext]) -> str:
     png_dir = ctx.deps.png_dir
     rst_folder = ctx.deps.rst_folder
     images_dir = os.path.join(rst_folder, "images")
-    logging.info(f"[generate_rst_from_pngs] Using PNG folder: {png_dir}")
-    logging.info(f"[generate_rst_from_pngs] RST folder: {rst_folder}")
+    logger.info("🖼️ Preparing to generate RST from PNGs - source: %s, destination: %s", png_dir, rst_folder)
 
     if not os.path.isdir(png_dir):
-        err_msg = f"Error: PNG input folder '{png_dir}' does not exist."
-        logging.error(err_msg)
-        return err_msg
+        error_msg = f"Error: PNG input folder '{png_dir}' does not exist."
+        logger.error("❌ %s", error_msg)
+        return error_msg
 
     os.makedirs(rst_folder, exist_ok=True)
     os.makedirs(images_dir, exist_ok=True)
+    logger.info("📁 Created output directories: %s, %s", rst_folder, images_dir)
 
     # Find PNG files
     png_files = glob.glob(os.path.join(png_dir, "**", "*.png"), recursive=True)
     png_files = sorted(png_files)
 
     if not png_files:
-        err_msg = f"Error: No PNG files found in {png_dir}."
-        logging.error(err_msg)
-        return err_msg
+        error_msg = f"Error: No PNG files found in {png_dir}."
+        logger.error("❌ %s", error_msg)
+        return error_msg
 
     # Copy images into the local images directory
-    logging.info(
-        "[generate_rst_from_pngs] Copying PNG files into local images directory...")
+    logger.info("📋 Copying %d PNG files to local images directory", len(png_files))
     for png_path in png_files:
         try:
             dest_path = os.path.join(images_dir, os.path.basename(png_path))
             shutil.copy(png_path, dest_path)
-            logging.debug(f"Copied {png_path} to {dest_path}")
+            logger.debug("📄 Copied %s to %s", png_path, dest_path)
         except Exception as e:
-            logging.error(f"Error copying {png_path}: {str(e)}")
+            logger.error("❌ Error copying %s: %s", png_path, str(e), exc_info=True)
 
     # Generate RST content; reference images from the 'images' folder.
+    logger.info("📝 Generating RST content")
     rst_lines = [
         "Image Report",
         "============",
@@ -165,26 +141,26 @@ async def generate_rst_from_pngs(ctx: RunContext[ReportingContext]) -> str:
         with open(rst_file, "w") as f:
             f.write(rst_text)
         msg = f"RST file generated successfully: {rst_file}"
-        logging.info(f"[generate_rst_from_pngs] {msg}")
+        logger.info("✅ %s", msg)
         return msg
     except Exception as e:
-        err_msg = f"Error writing RST file: {str(e)}"
-        logging.error(f"[generate_rst_from_pngs] {err_msg}")
-        return err_msg
+        error_msg = f"Error writing RST file: {str(e)}"
+        logger.error("❌ %s", error_msg, exc_info=True)
+        return error_msg
 
 
 @reporting_agent.tool
+@log_tool
 async def build_report(ctx: RunContext[ReportingContext]) -> str:
     """
     Build Sphinx HTML documentation from the RST file in rst_folder.
     Initialize a Sphinx project in sphinx_output_folder, copy the RST file (and associated images),
-    generate an index.rst, and run sphinx-build. Logs each step.
+    generate an index.rst, and run sphinx-build.
     """
     rst_folder = ctx.deps.rst_folder
     sphinx_project = ctx.deps.sphinx_output_folder
     log_path = ctx.deps.log_path
-    logging.info(
-        f"[build_report] Initializing Sphinx project in: {sphinx_project}")
+    logger.info("🏗️ Initializing Sphinx project in: %s", sphinx_project)
 
     try:
         os.makedirs(sphinx_project, exist_ok=True)
@@ -196,32 +172,35 @@ async def build_report(ctx: RunContext[ReportingContext]) -> str:
             "--author", "Reporting Agent",
             "--sep"
         ]
-        subprocess.run(quickstart_cmd, check=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        logging.info("[build_report] Sphinx project created successfully.")
+        logger.info("⚙️ Running sphinx-quickstart: %s", " ".join(quickstart_cmd))
 
-        # The Sphinx source directory is inside the sphinx project folder.
+        result = subprocess.run(quickstart_cmd, check=True,
+                      stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logger.info("✅ Sphinx project created successfully")
+
+        # The Sphinx source directory is inside the sphinx project folder
         source_dir = os.path.join(sphinx_project, "source")
-        # Copy RST files from rst_folder (including report_images.rst) to source_dir.
+
+        # Copy RST files from rst_folder to source_dir
         rst_files = glob.glob(os.path.join(rst_folder, "*.rst"))
         if not rst_files:
-            err_msg = f"Error: No RST files found in {rst_folder}"
-            logging.error(f"[build_report] {err_msg}")
-            return err_msg
+            error_msg = f"Error: No RST files found in {rst_folder}"
+            logger.error("❌ %s", error_msg)
+            return error_msg
 
         for rst_file in rst_files:
             shutil.copy(rst_file, source_dir)
-            logging.debug(
-                f"[build_report] Copied RST file {rst_file} to source directory.")
-        # Also copy the local images folder if it exists.
+            logger.debug("📄 Copied RST file %s to source directory", rst_file)
+
+        # Copy the local images folder if it exists
         images_src = os.path.join(rst_folder, "images")
         images_dest = os.path.join(source_dir, "images")
         if os.path.isdir(images_src):
             shutil.copytree(images_src, images_dest, dirs_exist_ok=True)
-            logging.info(
-                f"[build_report] Copied images from {images_src} to {images_dest}.")
+            logger.info("📁 Copied images from %s to %s", images_src, images_dest)
 
-        # Generate an index.rst in the source directory.
+        # Generate an index.rst in the source directory
+        logger.info("📝 Generating index.rst")
         index_content = [
             "Image Report Documentation",
             "============================",
@@ -230,18 +209,20 @@ async def build_report(ctx: RunContext[ReportingContext]) -> str:
             "   :maxdepth: 1",
             ""
         ]
+
         for rst_file in glob.glob(os.path.join(source_dir, "*.rst")):
             basename = os.path.basename(rst_file)
             if basename != "index.rst":
                 doc_name = os.path.splitext(basename)[0]
                 index_content.append(f"   {doc_name}")
+
         index_text = "\n".join(index_content)
         index_path = os.path.join(source_dir, "index.rst")
         with open(index_path, "w") as f:
             f.write(index_text)
-        logging.info(f"[build_report] Generated index.rst at {index_path}")
+        logger.info("✅ Generated index.rst at %s", index_path)
 
-        # Build the HTML documentation using sphinx-build.
+        # Build the HTML documentation using sphinx-build
         build_dir = os.path.join(sphinx_project, "build", "html")
         build_cmd = [
             "sphinx-build",
@@ -249,26 +230,35 @@ async def build_report(ctx: RunContext[ReportingContext]) -> str:
             source_dir,
             build_dir
         ]
+
+        logger.info("🔨 Building Sphinx documentation: %s", " ".join(build_cmd))
         result = subprocess.run(build_cmd, check=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
         with open(log_path, "w") as log_file:
             log_file.write(result.stdout.decode())
             log_file.write("\n")
             log_file.write(result.stderr.decode())
+
         msg = f"Sphinx HTML documentation built successfully in {build_dir} (log: {log_path})"
-        logging.info(f"[build_report] {msg}")
+        logger.info("✅ %s", msg)
         return msg
+
     except subprocess.CalledProcessError as e:
         error_text = f"Sphinx build error: {str(e)}\nSTDOUT: {e.stdout.decode()}\nSTDERR: {e.stderr.decode()}"
         with open(log_path, "w") as log_file:
             log_file.write(error_text)
-        logging.error(f"[build_report] {error_text}")
+        logger.error("❌ %s", error_text, exc_info=True)
         return error_text
-    except Exception as e:
-        err_msg = f"Unexpected error during Sphinx build: {str(e)}"
-        logging.error(f"[build_report] {err_msg}")
-        return err_msg
 
+    except Exception as e:
+        error_msg = f"Unexpected error during Sphinx build: {str(e)}"
+        logger.error("❌ %s", error_msg, exc_info=True)
+        return error_msg
+
+
+@log_tool
 async def run_agent_async(prompt: str, deps: ReportingContext, usage=None):
+    """Thin wrapper used by master.py to invoke the reporting agent asynchronously."""
     logger.info("📝 Reporting agent invoked by master – prompt: %s", prompt)
     return await reporting_agent.run(prompt, deps=deps, usage=usage)
