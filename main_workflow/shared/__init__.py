@@ -5,13 +5,13 @@ from typing import Optional, List, Dict, Any
 
 # --- Core context; minimal fields shared everywhere ---
 class RNAseqCoreContext(BaseModel):
-    accession: str
-    output_dir: str
-    fastq_dir: Optional[str] = None
-    metadata_path: Optional[str] = None
-    kallisto_index_dir: Optional[str] = None
-    organism: str = "human"
-    tx2gene_path: Optional[str] = None
+    accession: str = Field(..., description="Accession ID for the run")
+    output_dir: str = Field(..., description="Output directory for the run")
+    fastq_dir: Optional[str] = Field(None, description="Directory for FASTQ files")
+    metadata_path: Optional[str] = Field(None, description="Path to metadata file")
+    organism: str = Field(..., description="Organism name")
+    resource_dir: Optional[str] = Field(None, description="Directory for resources")
+    files: Optional[List[str]] = Field(None, description="List of files to process")
 
     class Config:
         extra = "allow"  # allows enrichment by agents
@@ -22,17 +22,17 @@ class ExtractionContext(RNAseqCoreContext):
 
 # --- Analysis agent context, adds abundance and more ---
 class AnalysisContext(RNAseqCoreContext):
-    abundance_files: Optional[List[str]] = None
-    merged_column: Optional[str] = None
-    unique_groups: Optional[List[str]] = None
-    sample_mapping: Optional[Any] = None
-    contrast_matrix_df: Optional[Any] = None
-    contrasts: Optional[Any] = None
-    deg_results_path: Optional[str] = None
+    abundance_files: Optional[List[str]] = Field(None, description="List of abundance files")
+    merged_column: Optional[str] = Field(None, description="Column to merge on")
+    unique_groups: Optional[List[str]] = Field(None, description="Unique groups for analysis")
+    sample_mapping: Optional[Any] = Field(None, description="Sample mapping for analysis")
+    contrast_matrix_df: Optional[Any] = Field(None, description="Contrast matrix DataFrame")
+    contrasts: Optional[Any] = Field(None, description="Contrasts for analysis")
+    deg_results_path: Optional[str] = Field(None, description="Path to DEGs results")
 
 # --- Reporting context ---
 class ReportingContext(RNAseqCoreContext):
-    png_dir: Optional[str] = None
-    rst_folder: Optional[str] = None
-    sphinx_output_folder: Optional[str] = None
-    log_path: Optional[str] = None
+    png_dir: Optional[str] = Field(None, description="Directory for PNG files")
+    rst_folder: Optional[str] = Field(None, description="Directory for RST files")
+    sphinx_output_folder: Optional[str] = Field(None, description="Directory for Sphinx output")
+    log_path: Optional[str] = Field(None, description="Path to log file")
