@@ -40,8 +40,7 @@ async def extract(ctx: RunContext[ExtractionContext], accession: str) -> str:
     downloading, or both.
     """
     r = await extraction.run_agent_async(
-        f"Prepare raw data for {accession}. "
-        "If FASTQs exist, just fetch GEO metadata; otherwise download files.",
+        f"Prepare raw data for {accession}. This includes both the metadata as well as the FASTQ files.",
         deps=ctx.deps, usage=ctx.usage
     )
     return r.output
