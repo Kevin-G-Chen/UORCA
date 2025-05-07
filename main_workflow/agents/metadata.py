@@ -85,7 +85,6 @@ def clean_string(ctx: RunContext[MetadataContext], s: str) -> str:
     """
     Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
     """
-    logger.info("🧹 Cleaning string: %s", s[:20] + "..." if len(str(s)) > 20 else s)
     if pd.isna(s):
         logger.debug("🧹 Input is NaN, returning 'NA'")
         return "NA"
@@ -93,7 +92,6 @@ def clean_string(ctx: RunContext[MetadataContext], s: str) -> str:
     s = unidecode(s)
     s = s.replace(" ", "_")
     s = re.sub(r'[^\w]', '', s)
-    logger.debug("🧹 Cleaned result: %s", s)
     return s
 
 # ----------------------------

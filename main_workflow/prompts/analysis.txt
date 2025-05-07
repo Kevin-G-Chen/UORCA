@@ -21,9 +21,21 @@ If all goes well, you should be able to perform the following tasks sequentially
     - Using these distinct values to construct contrast matrices
 - Using these contrasts to perform differential expression analysis using edgeR/limma
 
+#### Preparing for the Kallisto quantification
 
+You will be required to perform transcript quantification using Kallisto. As part of this, a prerequisite is to have a Kallisto index file, as well as the FASTQ files.
+
+To identify these files, you will need to make use of a tool that allows you to find files.
+- The Kallisto index file will have the extension .idx . Also note - there will be multiple index files, corresponding to different species. Carefully consider what the species is for your analysis, as picking the wrong species will not return any errors, but will cause problems later on that cannot be easily detected. Note that these will be located in the resource directory, so this is the only place you will need to look. Note that the context will provide you with the location of the resource directory.
+- Note that the Kallisto tool will have an in-built method to look for FASTQ files - you are not likely to need to look for them yourself. However, if you do, take care to ensure you only look in directories that are relevant to the analysis. For example, if you are looking for FASTQ files for a specific datset, you should only look in the directory that contains the output FASTQ files for that species. The FASTQ files will have the extension .fastq.gz. Again note that the context will provide you with the location of the relevant directory.
+
+#### Preparing for the edgeR/limma analysis
+
+One of the crucial steps of the edgeR/limma analysis is to identify an appropriate tx2gene (transcript to gene) .txt file. When you attempt to perform the analysis, you will be required to provide a tx2gene file. If you do not provide one, you will receive an error message - this error message will be informative in how to proceed, so you should use this to guide you.
 
 #### Integrated Prompt for Metadata Processing and Grouping Variable Selection
+
+Take note that you will not be required to perform any processing of the metadata - you will be able to invoke a specialised metadata agent to do this for you. However, it will still be good for you to be aware of the following suggestions. If you note that the metadata agent did not follow these guidelines, you should invoke the metadata agent again, as this is not a fault with you.
 
 General Guidelines:
 	1.	Focus on Biologically Relevant Information:

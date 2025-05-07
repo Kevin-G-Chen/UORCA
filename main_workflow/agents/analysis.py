@@ -9,24 +9,20 @@ import pandas as pd
 import numpy as np
 from dataclasses import dataclass
 from dotenv import load_dotenv
-from rich.console import Console
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
 from shared import AnalysisContext
 from shared.workflow_logging import log_tool
 from agents.metadata import metadata_agent, MetadataContext
-import gseapy
 from unidecode import unidecode
 from openai import OpenAI
 import matplotlib.pyplot as plt
 import nest_asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
 # ── configure python‑logging ────────────────────────────────────────────────
 
 logger = logging.getLogger(__name__)
-
 
 #############################
 # SECTION: Data classes and env
@@ -35,18 +31,6 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI()
-
-#############################
-# SECTION: Pydantic schemas
-#############################
-class Contrast_format(BaseModel):
-    name: str
-    expression: str
-    description: Optional[str] = Field(description="Biological interpretation of the contrast")
-    justification: Optional[str] = Field(description="Justification for the contrast design, in terms of value to the scientific community")
-class Contrasts(BaseModel):
-    contrasts: List[Contrast_format]
-    model_config = ConfigDict(extra="allow")
 
 #############################
 # SECTION: Agent definitions
@@ -132,253 +116,131 @@ rnaseq_agent = Agent(
 # ----------------------------
 # Utility Functions
 # ----------------------------
-
-
 @rnaseq_agent.tool
 @log_tool
-async def list_fastq_files(ctx: RunContext[AnalysisContext]) -> str:
+async def list_files(ctx: RunContext[AnalysisContext],
+                     directory: Optional[str] = None,
+                     pattern: Optional[str] = None,
+                     recursive: bool = True) -> List[str]:
     """
-    List all FASTQ files in the fastq_dir directory from the context.
-    This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
+    Search for and list files in a directory matching a specified pattern.
+    Found files are automatically added to ctx.deps.files for future reference.
+
+    Parameters:
+      - directory (str, optional):
+          The directory to search in. If not provided, uses the current directory.
+      - pattern (str, optional):
+          File pattern to match (e.g., "*.txt", "*.fastq.gz").
+          Can be a glob pattern or file extension.
+          If not provided, matches all files.
+      - recursive (bool, default=True):
+          Whether to search recursively through subdirectories.
+
+    Returns:
+      A list of file paths matching the criteria.
     """
-    """
-    List all FASTQ files in the fastq_dir directory from the context.
-    This tool automatically gets the fastq_dir from the context and searches for fastq.gz files.
-    """
-    logger.info("🔍 list_fastq_files started - searching in %s", ctx.deps.fastq_dir)
-    fastq_dir = ctx.deps.fastq_dir
+    # Resolve search scope
+    search_dir = directory or "."
+    pat = pattern or "*"
+
+    logger.info("🔍 Searching for '%s' in %s (recursive=%s)",
+                pat, os.path.abspath(search_dir), recursive)
 
     # Check if directory exists
-    if not os.path.exists(fastq_dir):
-        error_msg = f"Error: Directory '{fastq_dir}' does not exist"
-        logger.error("❌ %s", error_msg)
-        return error_msg
+    if not os.path.isdir(search_dir):
+        msg = f"Error: Directory '{search_dir}' does not exist"
+        logger.error("❌ %s", msg)
+        return [msg]
 
-    # Use find_files to find fastq.gz files
-    fastq_files = await find_files(ctx, fastq_dir, 'fastq.gz')
-
-    if not fastq_files:
-        error_msg = f"No fastq.gz files found in {fastq_dir}. Directory contents: {os.listdir(fastq_dir) if os.path.isdir(fastq_dir) else 'Not a directory'}"
-        logger.warning("⚠️ %s", error_msg)
-        return error_msg
-
-    result = f"Found {len(fastq_files)} fastq.gz files in {fastq_dir}"
-    if len(fastq_files) <= 5:
-        result += f": {', '.join(fastq_files)}"
-    else:
-        result += f" (first 5): {', '.join(fastq_files[:5])}..."
-    logger.info("✅ %s", result)
-    return result
-
-
-@rnaseq_agent.tool
-@log_tool
-async def find_files(ctx: RunContext[AnalysisContext], directory: str, suffix: Union[str, List[str]]) -> List[str]:
-    """
-    Recursively search for and return a sorted list of files within the specified directory that have the given suffix.
-
-    Inputs:
-      - ctx: RunContext[AnalysisContext]
-          Contains the dependency context (AnalysisContext) that holds directory information and other runtime parameters.
-      - directory (str):
-          The root directory path in which to search for files. This can be either an absolute or relative path.
-      - suffix (Union[str, List[str]]):
-          The file suffix (for example "fastq.gz" for FASTQ files) or a list of suffixes that will be used to filter matching files.
-
-    Process:
-      1. Logs the current context details (only once per run, thanks to a flag in ctx.deps).
-      2. Uses os.walk to recursively traverse the directory structure and check every file name.
-      3. For each file that ends with the specified suffix, concatenates its full path and adds it to a list.
-      4. Returns the sorted list of matching file paths.
-      5. Reports progress by logging the number of files found.
-
-    Output:
-      A sorted list of absolute file path strings that match the file suffix provided. In case of errors
-      (e.g. directory not found), an error message string is returned inside a list.
-
-    Purpose in pipeline:
-      This tool locates critical input FASTQ files using the fastq.gz suffix (or other types based on suffix) from the file system,
-      enabling subsequent steps (such as quantification with Kallisto) to process the correct data.
-    """
+    # Find files matching pattern
     try:
-        logger.info("🔍 find_files started - searching for %s in %s", suffix, directory)
+        # Use glob to find files
+        glob_pattern = os.path.join(search_dir, "**", pat) if recursive else os.path.join(search_dir, pat)
+        matched_files = sorted(glob.glob(glob_pattern, recursive=recursive))
 
-        # Execute the actual file search
-        matched_files = []
-        for root, _, files in os.walk(directory):
-            for f in files:
-                if isinstance(suffix, str):
-                    condition = f.endswith(suffix)
-                else:
-                    condition = any(f.endswith(s) for s in suffix)
-                if condition:
-                    matched_files.append(os.path.join(root, f))
-
-        # Sort the files and prepare result
-        matched_files = sorted(matched_files)
-
-        # Log the result
+        # Update context with found files
         if matched_files:
-            if len(matched_files) <= 5:
-                logger.info("✅ Found %d files matching suffix '%s'. Files: %s",
-                           len(matched_files), suffix, matched_files)
-            else:
-                logger.info("✅ Found %d files matching suffix '%s'. First 5: %s...",
-                           len(matched_files), suffix, matched_files[:5])
+            # Initialize files list if it doesn't exist
+            if ctx.deps.files is None:
+                ctx.deps.files = []
+
+            # Add new files to the existing list (avoiding duplicates)
+            ctx.deps.files = list(set(ctx.deps.files).union(matched_files))
+
+            # Log results
+            logger.info("💾 Added %d files to context (total %d)",
+                        len(matched_files), len(ctx.deps.files))
+
+            # Show preview of found files
+            preview = matched_files[:5] if len(matched_files) > 5 else matched_files
+            logger.info("✅ Found %d files%s",
+                        len(matched_files),
+                        f": {preview}" if preview else "")
         else:
-            logger.warning("⚠️ No files matching suffix '%s' found in %s", suffix, directory)
+            logger.warning("⚠️ No files found for given pattern")
 
         return matched_files
 
-    except FileNotFoundError:
-        error_msg = f"Error: Directory '{directory}' not found."
+    except Exception as e:
+        error_msg = f"Error searching for files: {str(e)}"
         logger.error("❌ %s", error_msg)
         return [error_msg]
 
-    except Exception as e:
-        error_msg = f"Error in find_files: {str(e)}"
-        logger.error("❌ %s", error_msg, exc_info=True)
-        return [error_msg]
-
-
-#############################
-# Section: Kallisto Quantification Tools
-#############################
-
 
 @rnaseq_agent.tool
 @log_tool
-async def find_kallisto_index(ctx: RunContext[AnalysisContext]) -> str:
-    """
-    Search for and return the file path of an appropriate Kallisto index based on the organism specified in AnalysisContext.
-
-    Inputs:
-      - ctx: RunContext[AnalysisContext]
-          Contains:
-            • kallisto_index_dir: The directory where Kallisto index (.idx) files are stored.
-            • organism: The organism name (e.g., "human") which the tool uses to filter the available index files.
-
-    Process:
-      1. Logs the organism being used for the search.
-      2. Calls the find_files utility to locate files with the suffix ".idx" in the specified kallisto_index_dir.
-      3. Filters the list of index files to find those whose parent directory name matches the organism (case-insensitive).
-      4. If a matching index is found, selects it and further checks for a transcript-to-gene mapping file (.txt) in the same directory;
-         if found, sets ctx.deps.tx2gene_path accordingly.
-      5. If no organism-specific index is found, defaults to the first available index.
-
-    Output:
-      Returns a string message indicating the path to the found Kallisto index and, if applicable, that the transcript-to-gene mapping file was also set.
-
-    Purpose in pipeline:
-      Finding the correct Kallisto index is essential for running quantification of RNAseq data, ensuring that the
-      quantification step uses the appropriate reference for the organism under study.
-    """
-    try:
-        organism = ctx.deps.organism.lower()
-        index_dir = ctx.deps.kallisto_index_dir
-
-        logger.info("🔍 Searching for %s Kallisto index in %s", organism, index_dir)
-
-        # Look for index files in the specified directory
-        index_files = await find_files(ctx, ctx.deps.kallisto_index_dir, '.idx')
-
-        if not index_files:
-            error_msg = f"Error: No Kallisto index files found in {index_dir}"
-            logger.error("❌ %s", error_msg)
-            return error_msg
-
-        # Try to find an index matching the organism
-        matching_indices = [idx for idx in index_files if organism in os.path.basename(
-            os.path.dirname(idx)).lower()]
-
-        if matching_indices:
-            index_path = matching_indices[0]
-            logger.info("✅ Found organism-specific Kallisto index: %s", index_path)
-
-            # Also find the transcript-to-gene mapping file if available
-            tx2gene_files = await find_files(ctx, os.path.dirname(index_path), '.txt')
-            if tx2gene_files:
-                t2g_files = [f for f in tx2gene_files if any(
-                    x in os.path.basename(f).lower() for x in ['t2g', 'tx2gene'])]
-                if t2g_files:
-                    ctx.deps.tx2gene_path = t2g_files[0]
-                    logger.info("📄 Found transcript-to-gene mapping file: %s", ctx.deps.tx2gene_path)
-
-            return f"Found Kallisto index for {organism}: {index_path}"
-        else:
-            # If no organism-specific index found, return the first one
-            fallback_index = index_files[0]
-            logger.warning("⚠️ No organism-specific index for %s found, using fallback: %s", organism, fallback_index)
-            return f"No index specific to {organism} found. Using the first available index: {fallback_index}"
-
-    except Exception as e:
-        error_msg = f"Error finding Kallisto index: {str(e)}"
-        logger.error("❌ %s", error_msg, exc_info=True)
-        return error_msg
-
-
-@rnaseq_agent.tool
-@log_tool
-async def run_kallisto_quantification(ctx: RunContext[AnalysisContext]) -> str:
+async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
+                                     kallisto_index: Optional[str] = None) -> str:
     """
     Run Kallisto quantification on paired-end FASTQ files and record the resulting abundance files.
+
+    Uses the agent's intelligence to select an appropriate Kallisto index from previously
+    discovered files (ctx.deps.files) based on the organism, or accepts a direct path.
 
     Inputs:
       - ctx: RunContext[AnalysisContext]
           Must include:
              • fastq_dir: The directory where FASTQ files are stored.
-             • kallisto_index_dir: The directory containing the Kallisto index files.
+             • resource_dir: The directory containing resources.
              • output_dir: The directory to store Kallisto outputs.
-             • organism: Organism information to select the correct index.
-
-    Process:
-      1. Logs current FASTQ directory and full context details.
-      2. Uses find_files to search for FASTQ files with the suffix "fastq.gz" in the designated fastq_dir.
-      3. If no FASTQ files are found, returns an error message.
-      4. Calls find_kallisto_index to determine the correct index (and transcript-to-gene mapping if available).
-      5. Extracts the index path from the returned result.
-      6. Creates the output directory if it does not exist.
-      7. Searches for paired FASTQ files using regular expression patterns for R1 and R2.
-      8. Matches R1 with R2 files to form sample pairs.
-      9. For each paired sample, builds the Kallisto command and executes it via subprocess.
-      10. Logs progress before and after running quantification for each sample.
-      11. Collects the paths to generated abundance files (e.g., abundance.tsv) and stores them in ctx.deps.abundance_files.
-
-    Output:
-      A string summary reporting:
-         • The number of sample pairs processed.
-         • The result (success or error) for each sample.
-         • The total number of abundance files found for downstream analysis.
-
-    Purpose in pipeline:
-      This tool integrates the quantification step of the pipeline by using Kallisto to convert raw FASTQ reads into
-      transcript abundance estimates, which are later used for differential expression analysis.
+      - kallisto_index: Optional[str]
+          Direct path to the Kallisto index to use. If not provided, will intelligently
+          select an appropriate index from ctx.deps.files based on the organism.
     """
     try:
-        logger.info("🧬 run_kallisto_quantification started – fastq_dir=%s", ctx.deps.fastq_dir)
+        logger.info("🧬 run_kallisto_quantification started")
 
-        fastq_files = await find_files(ctx, ctx.deps.fastq_dir, 'fastq.gz')
-        if not fastq_files:
+        # Validate fastq_dir is set and exists
+        if not ctx.deps.fastq_dir:
+            msg = "Error: No FASTQ directory specified in ctx.deps.fastq_dir"
+            logger.error("❌ %s", msg)
+            return msg
+
+        if not os.path.isdir(ctx.deps.fastq_dir):
+            msg = f"Error: FASTQ directory {ctx.deps.fastq_dir} does not exist"
+            logger.error("❌ %s", msg)
+            return msg
+
+        # Always explicitly search in the fastq_dir for FASTQ files, ignoring any previously discovered files
+        logger.info("🔍 Searching for FASTQ files in: %s", ctx.deps.fastq_dir)
+        fastq_files = await list_files(ctx, directory=ctx.deps.fastq_dir, pattern="*.fastq.gz")
+
+        if not fastq_files or len(fastq_files) == 0 or (isinstance(fastq_files[0], str) and fastq_files[0].startswith("Error")):
             msg = f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
             logger.error("❌ %s", msg)
             return msg
 
-        index_result = await find_kallisto_index(ctx)
-        if "Error" in index_result:
-            logger.error("❌ %s", index_result)
-            return index_result
+        # Get Kallisto index - either provided directly or intelligently selected
+        index_path = kallisto_index
 
-        # Extract .idx path from index_result
-        index_path = None
-        for tok in index_result.split():
-            if tok.endswith('.idx'):
-                index_path = tok
-                break
         if not index_path or not os.path.exists(index_path):
-            msg = "Error: Could not determine Kallisto index path"
-            logger.error("❌ %s", msg)
+            msg = (
+                f"No Kallisto index provided. Please use list_files to find a suitable index file in {ctx.deps.resource_dir}. Note that the index file will end with the .idx suffix. Also note that you should use the index file that is appropriate for {ctx.deps.organism}."
+            )
+            logger.warning("⚠️ %s", msg.replace('\n', ' | '))
             return msg
 
+        # Rest of the Kallisto implementation remains unchanged
         output_dir = ctx.deps.output_dir
         os.makedirs(output_dir, exist_ok=True)
 
@@ -394,6 +256,7 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext]) -> str:
                 if mate_path in fastq_files:
                     sample = base.split('_R1')[0].split('_1.fastq')[0]
                     pairs[sample] = (f, mate_path)
+
         logger.info("🔍 Identified %d paired samples", len(pairs))
         if not pairs:
             msg = "Error: No paired FASTQ files found"
@@ -405,11 +268,12 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext]) -> str:
         desired_parallel = min(num_samples, total_cpus)
         threads_per_job = max(total_cpus // desired_parallel, 1)
 
-        logger.info("⚙️ Running Kallisto for %d samples using %d jobs in parallel, %d threads/job",
-                    num_samples, desired_parallel, threads_per_job)
+        logger.info("⚙️ Running Kallisto using index: %s", index_path)
+        logger.info("⚙️ Running %d Kallisto jobs in parallel, %d threads/job",
+                    desired_parallel, threads_per_job)
 
         def run_kallisto_job(sample, r1, r2):
-            sample_out = os.path.join(output_dir, sample)
+            sample_out = os.path.join(output_dir, "abundance", sample)
             os.makedirs(sample_out, exist_ok=True)
             cmd = [
                 "kallisto", "quant", "--rf-stranded",
@@ -445,8 +309,18 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext]) -> str:
                     logger.error("❌ Kallisto failed for %s. STDERR: %s", sample, res['stderr'])
                 results.append(res)
 
+        # Store abundance files
         ctx.deps.abundance_files = abundance_files
-        logger.info("💾 Stored %d abundance files in ctx.deps", len(abundance_files))
+
+        # Add abundance files to context files list
+        if not hasattr(ctx.deps, 'files') or ctx.deps.files is None:
+            ctx.deps.files = []
+
+        # Add abundance files to the files list, avoiding duplicates
+        existing_files = set(ctx.deps.files)
+        ctx.deps.files = list(existing_files.union(set(abundance_files)))
+        logger.info("💾 Stored %d abundance files in context", len(abundance_files))
+
         out_lines = [f"Kallisto quant: {r['sample']} (code:{r['returncode']})" for r in results]
         return f"""
 Parallel Kallisto quantification finished – {len(abundance_files)} abundance files ready.
@@ -455,6 +329,9 @@ Job info:
 {chr(10).join(out_lines)}
 
 Each job used {threads_per_job} threads; {desired_parallel} jobs run in parallel.
+
+Files used:
+- Kallisto index: {index_path}
 """
     except Exception as e:
         logger.exception("❌ run_kallisto_quantification crashed: %s", e)
@@ -463,7 +340,6 @@ Each job used {threads_per_job} threads; {desired_parallel} jobs run in parallel
 #############################
 # Section: Differential Expression Analysis Tools
 #############################
-
 
 @rnaseq_agent.tool
 @log_tool
@@ -652,7 +528,8 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 
 @rnaseq_agent.tool
 @log_tool
-async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext]) -> str:
+async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
+    tx2gene_path: Optional[str] = None) -> str:
     """
     Run edgeR/limma analysis using the metadata agent's contrasts.
 
@@ -706,10 +583,17 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext]) -> str:
 
         # Get the sample mapping path
         sample_mapping_path = ctx.deps.sample_mapping
+        if not sample_mapping_path or not os.path.exists(sample_mapping_path):
+            error_msg = "Error: Sample mapping file not found. Please run prepare_edgeR_analysis first."
+            logger.error("❌ %s", error_msg)
+            return error_msg
 
-        # Determine the tx2gene file argument; if not provided, pass "NA"
-        tx2gene_arg = ctx.deps.tx2gene_path if ctx.deps.tx2gene_path and os.path.exists(
-            ctx.deps.tx2gene_path) else "NA"
+        # Determine the tx2gene file argument; if not provided, return an error message
+        tx2gene_arg = tx2gene_path
+        if not tx2gene_arg or not os.path.exists(tx2gene_arg):
+            error_msg = f"Error: tx2gene file not found. Please use the list_files function, and specify the t2g.txt pattern in the {ctx.deps.resource_dir} directory to identify the possible tx2gene files. Ensure you select the correct file for the identified species: {ctx.deps.organism}."
+            logger.error("❌ %s", error_msg)
+            return error_msg
 
         # Use the main script
         main_r_script_path = "./main_workflow/additional_scripts/RNAseq.R"

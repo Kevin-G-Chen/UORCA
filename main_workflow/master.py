@@ -84,12 +84,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--accession", required=True)
     ap.add_argument("--output_dir", default=None)
-    ap.add_argument("--kallisto_index_dir", default="./resources/kallisto_indices")
-    ap.add_argument("--tx2gene", default=None)
+    ap.add_argument("--resource_dir", default=None)
+    ap.add_argument("--organism", default="human")
     args = ap.parse_args()
 
     # -------- create & remember the chosen run folder -----------------------
-    output_dir = args.output_dir or f"./analysis/{args.accession}"
+    output_dir = f"{args.output_dir}/{args.accession}" or f"./analysis/{args.accession}"
     os.makedirs(output_dir, exist_ok=True)
 
     # -------- configure logging *inside* that folder ------------------------
@@ -110,11 +110,8 @@ def main():
     ctx = RNAseqCoreContext(
         accession=args.accession,
         output_dir=output_dir,
-        fastq_dir=f"{output_dir}/fastq",
-        metadata_path=f"{output_dir}/metadata/meta_long.csv",
-        kallisto_index_dir=args.kallisto_index_dir,
-        organism="human",
-        tx2gene_path=args.tx2gene
+        organism=args.organism,
+        resource_dir=args.resource_dir,
     )
 
     logger.info("🧩 Built initial context with accession: %s", args.accession)

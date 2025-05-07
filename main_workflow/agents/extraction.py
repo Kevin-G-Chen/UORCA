@@ -18,12 +18,6 @@ from pydantic_ai import Agent, RunContext
 from shared import ExtractionContext, RNAseqCoreContext
 from shared.workflow_logging import log_tool
 
-# ── logging setup ────────────────────────────────────────────────────────────
-#logging.basicConfig(
-#    format="%(asctime)s  %(levelname)-8s  %(name)s ▶  %(message)s",
-#    level=logging.INFO,
-#    datefmt="%H:%M:%S"
-#)
 logger = logging.getLogger(__name__)
 
 # ── env + agent definition ──────────────────────────────────────────────────
@@ -39,7 +33,7 @@ extract_agent = Agent(
     )
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
 @extract_agent.tool
 @log_tool
 async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str) -> str:
