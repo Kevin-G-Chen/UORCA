@@ -133,6 +133,12 @@ async def download_fastqs(
     if ctx.deps.metadata_df is None or "SRR" not in ctx.deps.metadata_df.columns:
         raise ValueError("metadata_df with SRR column required. Run fetch_geo_metadata first.")
 
+    # Determine available CPUs from SLURM or system
+    slurm_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 8))
+    threads = max(1, min(slurm_cpus - 2, threads))  # Use provided threads but cap at available CPUs minus 2
+    logger.info("⚙️ Using %d threads based on system resources (SLURM_CPUS_PER_TASK=%s)",
+                threads, os.environ.get("SLURM_CPUS_PER_TASK", "not set"))
+
     out_root = pathlib.Path(ctx.deps.output_dir or ".").resolve()
     prefetch_dir = out_root / "sra"
     fastq_dir = out_root / "fastq"
@@ -147,9 +153,11 @@ async def download_fastqs(
         return hits[0] if hits else p
 
     def fastq_ready(srr: str):
-        return all((fastq_dir / f"{srr}_{r}.fastq.gz").is_file() and
-                    (fastq_dir / f"{srr}_{r}.fastq.gz").stat().st_size > 0
-                    for r in (1, 2))
+        # Check if the compressed FASTQ file exists
+        # Using "{srr}*.fastq.gz" to match any variation
+        fastq_files = list(fastq_dir.glob(f"{srr}*.fastq.gz"))
+        return len(fastq_files) > 0 and all(f.stat().st_size > 0 for f in fastq_files)
+
 
     srrs = ctx.deps.metadata_df["SRR"].dropna().astype(str).tolist()
     logger.info("Total SRRs listed: %d", len(srrs))
@@ -157,54 +165,163 @@ async def download_fastqs(
     need_prefetch = [s for s in srrs if not sra_path(s).exists()]
     logger.info("SRRs needing prefetch: %d", len(need_prefetch))
 
+    # Helper function for prefetching a single SRR
+    async def prefetch_single(srr: str):
+        cmd = f"prefetch {srr} -O {prefetch_dir} -t https --progress"
+        logger.debug("▶ Running command: %s", cmd)
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            logger.error("❌ Prefetch failed for %s: %s", srr, stderr.decode().strip())
+        elif stderr:
+            logger.debug("📤 Prefetch stderr for %s: %s", srr, stderr.decode().strip())
+        return {
+            "srr": srr,
+            "returncode": proc.returncode,
+            "stdout": stdout.decode() if stdout else "",
+            "stderr": stderr.decode() if stderr else ""
+        }
+
     if need_prefetch:
         lst = out_root / "srr_to_fetch.txt"
         lst.write_text("\n".join(need_prefetch) + "\n")
-        cmd = f"prefetch --option-file {lst} -O {prefetch_dir} -t http --progress"
-        logger.info("Running prefetch…")
-        proc = await asyncio.create_subprocess_shell(cmd)
-        await proc.communicate()
-        if proc.returncode != 0:
-            raise RuntimeError("prefetch failed")
 
+        # Use parallel prefetch if there are many SRRs
+        if len(need_prefetch) > 5:
+            logger.info("🔄 Prefetching %d SRRs in parallel batches", len(need_prefetch))
+            # Create batches of SRRs to avoid overwhelming the system
+            batch_size = min(10, max(1, len(need_prefetch) // 2))
+            batches = [need_prefetch[i:i+batch_size] for i in range(0, len(need_prefetch), batch_size)]
+
+            successful_prefetch = 0
+            for batch_num, batch in enumerate(batches, 1):
+                logger.info("🔄 Processing prefetch batch %d/%d with %d SRRs",
+                            batch_num, len(batches), len(batch))
+                tasks = [prefetch_single(srr) for srr in batch]
+                results = await asyncio.gather(*tasks)
+
+                # Log results
+                for res in results:
+                    if res["returncode"] == 0:
+                        successful_prefetch += 1
+                        logger.info("✅ Successfully prefetched %s", res["srr"])
+                    else:
+                        logger.error("❌ Failed to prefetch %s", res["srr"])
+
+            logger.info("✅ Prefetch completed - %d/%d successful", successful_prefetch, len(need_prefetch))
+        else:
+            # For small numbers, use the original command to maintain compatibility
+            cmd = f"prefetch --option-file {lst} -O {prefetch_dir} -t https --progress"
+            logger.info("▶ Running prefetch: %s", cmd)
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+            if stdout:
+                logger.info("📤 Prefetch stdout: %s", stdout.decode().strip())
+            if stderr:
+                logger.info("📤 Prefetch stderr: %s", stderr.decode().strip())
+            if proc.returncode != 0:
+                raise RuntimeError(f"prefetch failed with code {proc.returncode}")
+
+    # Check which SRRs we need to convert to FASTQ
+    need_conversion = [srr for srr in srrs if not fastq_ready(srr) and sra_path(srr).exists()]
+    logger.info("SRRs needing conversion to FASTQ: %d", len(need_conversion))
+
+    # Find pigz for faster compression
     pigz = shutil.which("pigz")
+    if pigz:
+        logger.info("🔧 Found pigz for faster parallel compression")
+    else:
+        logger.info("⚠️ pigz not found, falling back to standard gzip")
+
+    # Process conversions (fasterq-dump + compression)
     converted = 0
-    for srr in srrs:
-        if fastq_ready(srr):
-            logger.debug("%s already converted – skip", srr)
-            continue
+    for srr in need_conversion:
         sra = sra_path(srr)
         if not sra.exists():
             logger.warning("⚠ %s: .sra missing after prefetch – skip.", srr)
             continue
+
+        # Calculate threads for this conversion based on total available
+        conversion_threads = max(1, min(threads, 16))  # Cap at 16 threads per conversion
+
+        # Run fasterq-dump with proper logging
         cmd = [
             "fasterq-dump", str(sra),
-            "--threads", str(threads),
+            "--threads", str(conversion_threads),
             "--split-files",
+            "-v",
             "-O", str(fastq_dir)
         ]
         if max_spots:
             cmd += ["-X", str(max_spots)]
-        logger.info("Running fasterq-dump on %s", srr)
-        proc = await asyncio.create_subprocess_exec(*cmd)
-        await proc.communicate()
+
+        logger.info("▶ Running fasterq-dump on %s with %d threads", srr, conversion_threads)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+
+        # Log the stdout/stderr for debugging
+        if stdout:
+            logger.debug("📤 Fasterq-dump stdout for %s: %s", srr, stdout.decode().strip())
+        if stderr:
+            logger.info("📤 Fasterq-dump stderr for %s: %s", srr, stderr.decode().strip())
+
         if proc.returncode != 0:
-            logger.warning("⚠ fasterq-dump failed on %s", srr)
+            logger.warning("⚠ fasterq-dump failed on %s with code %d", srr, proc.returncode)
             continue
 
-        # gzip newly created FASTQs
-        for fq in fastq_dir.glob(f"{srr}_*.fastq"):
-            gz_cmd = [pigz or "gzip", "-f", str(fq)]
-            await asyncio.create_subprocess_exec(*gz_cmd)
-        converted += 1
+        # Compress the FASTQ files one by one (simpler approach)
+        fastqs = list(fastq_dir.glob(f"{srr}*.fastq"))
+        if fastqs:
+            logger.info("🔄 Compressing %d FASTQ files for %s", len(fastqs), srr)
+            for fq in fastqs:
+                if pigz:
+                    # Use pigz with multiple threads if available
+                    threads_per_file = max(1, slurm_cpus // 2)  # Use half of available CPUs for compression
+                    gz_cmd = [pigz, "-fv", "-p", str(threads_per_file), str(fq)]
+                else:
+                    # Fall back to standard gzip
+                    gz_cmd = ["gzip", "-fv", str(fq)]
 
+                logger.info("▶ Running compression: %s", " ".join(gz_cmd))
+                proc = await asyncio.create_subprocess_exec(
+                    *gz_cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode == 0:
+                    logger.info("✅ Compressed %s successfully", fq.name)
+                else:
+                    logger.warning("⚠ Compression failed for %s: %s", fq, stderr.decode().strip())
+
+
+
+        converted += 1
+        logger.info("✅ Completed processing for %s (%d/%d)",
+                    srr, converted, len(need_conversion))
+
+    # Update context for downstream agents
     ctx.deps.fastq_dir = str(fastq_dir)
-    logger.info("FASTQ conversion finished: %d new SRRs", converted)
+    logger.info("✅ FASTQ conversion finished: %d new SRRs converted", converted)
 
     return (
         "FASTQ download complete.\n"
-        f"Total SRRs: {len(srrs)}   Newly converted: {converted}"
+        f"Total SRRs: {len(srrs)}   Newly converted: {converted}\n"
+        f"FASTQ files saved to: {fastq_dir}"
     )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 @log_tool
