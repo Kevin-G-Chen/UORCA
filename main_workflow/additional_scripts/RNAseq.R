@@ -399,7 +399,6 @@ if (tx2gene_file != "NA" && file.exists(tx2gene_file)) {
     names(tx2gene) <- c("TXNAME", "GENEID")
     # Filter rows where GENEID is not NA and not empty (like dplyr::filter)
     tx2gene <- tx2gene[!is.na(tx2gene$GENEID) & tx2gene$GENEID != "", ]
-    str(tx2gene)
     use_tx2gene <- TRUE
 } else {
     cat("No valid tx2gene file provided. Proceeding without tx2gene mapping.\n")

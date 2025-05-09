@@ -146,11 +146,20 @@ async def download_fastqs(
         d.mkdir(parents=True, exist_ok=True)
 
     def sra_path(srr: str) -> pathlib.Path:
+        # First try the standard .sra extension
         p = prefetch_dir / srr / f"{srr}.sra"
         if p.exists():
             return p
-        hits = list(prefetch_dir.rglob(f"{srr}.sra"))
-        return hits[0] if hits else p
+
+        # Next try .sralite extension
+        p_lite = prefetch_dir / srr / f"{srr}.sralite"
+        if p_lite.exists():
+            return p_lite
+
+        # If neither exists at standard location, do recursive search for both
+        hits = list(prefetch_dir.rglob(f"{srr}.sra")) + list(prefetch_dir.rglob(f"{srr}.sralite"))
+        return hits[0] if hits else p  # Return first hit or original path if nothing found
+
 
     def fastq_ready(srr: str):
         # Check if the compressed FASTQ file exists
