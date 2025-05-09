@@ -23,7 +23,7 @@ except Exception:
         "contrasts."
     )
 
-llm_agent = Agent("openai:o4-mini", system_prompt=system_prompt_text,)
+# llm_agent = Agent("openai:o4-mini", system_prompt=system_prompt_text,)
 
 server = FastMCP("RNA-seq Metadata MCP")
 
@@ -94,16 +94,16 @@ async def fetch_geo_summary(accession: str) -> dict:
 class FullRun(BaseModel):
     metadata_path: str
 
-@server.tool(description="Run the complete five-step metadata workflow")
-async def analyse_metadata(req: FullRun) -> dict:
-    deps = RNAseqData(metadata_path=req.metadata_path)
-    prompt = (
-        "Please:\n"
-        "1. Process the metadata\n2. Pick relevant columns\n"
-        "3. Build a final grouping column\n4. List its unique values\n"
-        "5. Propose contrasts")
-    result = llm_agent.run_sync(prompt, deps=deps, output_type=Contrasts)
-    return json.loads(result.json())
+#@server.tool(description="Run the complete five-step metadata workflow")
+#async def analyse_metadata(req: FullRun) -> dict:
+#    deps = RNAseqData(metadata_path=req.metadata_path)
+#    prompt = (
+#        "Please:\n"
+#        "1. Process the metadata\n2. Pick relevant columns\n"
+#        "3. Build a final grouping column\n4. List its unique values\n"
+#        "5. Propose contrasts")
+#    result = llm_agent.run_sync(prompt, deps=deps, output_type=Contrasts)
+#    return json.loads(result.json())
 
 # ───────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
