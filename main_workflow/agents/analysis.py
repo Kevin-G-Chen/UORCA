@@ -538,15 +538,43 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
     2. The contrasts defined by the metadata agent
     3. An R script that handles the analysis
 
-    The analysis workflow includes:
-    - Loading quantification data via tximport
-    - Creating and normalizing a DGEList
-    - Building a design matrix using the grouping column
-    - Performing voom transformation and fitting a limma model
-    - Applying the contrasts defined by the metadata agent
-    - Saving results and generating plots
+    Parameters:
+    -----------
+    ctx : RunContext[AnalysisContext]
+        The context containing metadata, sample mapping, and contrasts information
 
-    Results are saved in the output directory specified in the context.
+    tx2gene_path : Optional[str]
+        Path to a transcript-to-gene mapping file that maps transcript IDs to gene IDs.
+        This file is essential for summarizing transcript-level Kallisto quantification
+        to gene-level counts for differential expression analysis.
+        Leave this option blank if you need help locating the file - once you are confident in where it is, you should specify it here.
+
+    Finding the tx2gene file:
+    ------------------------
+    If tx2gene_path is not provided or invalid, you must find the appropriate file:
+
+    1. DO NOT use the Kallisto index (.idx) file, or any other files that is NOT tx2gene file - this is incorrect and will cause errors
+    2. Use the list_files tool to search in the appropriate directory with pattern "*t2g.txt"
+    3. If you do not provide a tx2gene file, the error message will help you identify where specifically to look and what tool you should use.
+
+    Analysis workflow:
+    ----------------
+    1. Loads quantification data from Kallisto via tximport
+    2. Creates and normalizes a DGEList
+    3. Builds design matrix using the grouping column
+    4. Performs voom transformation and fits limma model
+    5. Applies contrasts defined by the metadata agent
+    6. Saves results and generates various plots
+
+    Returns:
+    -------
+    str: Summary of the analysis process including contrasts used and output locations
+
+    Note:
+    -----
+    If this function runs without tx2gene_path and returns an error message, examine
+    the error carefully as it often contains useful information about where to find
+    appropriate tx2gene files for your organism.
     """
     try:
         logger.info("📊 run_edger_limma_analysis started")
