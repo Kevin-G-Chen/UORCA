@@ -40,7 +40,21 @@ async def extract(ctx: RunContext[ExtractionContext], accession: str) -> str:
     downloading, or both.
     """
     r = await extraction.run_agent_async(
-        f"Prepare raw data for {accession}. This includes both the metadata as well as the FASTQ files.",
+        f"""
+        Prepare raw data for {accession} using the following steps:
+
+        1. First, fetch metadata from the GEO database using the fetch_geo_metadata tool:
+           - Download the GEO Series SOFT file
+           - Parse all GSM records
+           - Derive the chain GSM → SRX → SRR
+
+        2. Then, download FASTQ files using the download_fastqs tool:
+           - Use the prefetch → fasterq-dump pipeline
+           - Ensure proper thread allocation for SLURM jobs
+           - Compress output files using pigz if available
+
+        Be attentive to resource usage, logging, and error handling during this process.
+        """,
         deps=ctx.deps, usage=ctx.usage
     )
     return r.output
@@ -48,7 +62,33 @@ async def extract(ctx: RunContext[ExtractionContext], accession: str) -> str:
 @master.tool
 async def analyse(ctx: RunContext[AnalysisContext]) -> str:
     r = await analysis.run_agent_async(
-        "Run Kallisto and DEG (skip GSEA)", deps=ctx.deps, usage=ctx.usage
+        f"""
+        Perform RNA-seq analysis on data from organism: {ctx.deps.organism}
+
+        Follow these sequential steps:
+
+        1. Identify the appropriate Kallisto index file for {ctx.deps.organism} in the resource directory
+           - Ensure you select the correct species-specific index (.idx file)
+
+        2. Run Kallisto quantification:
+           - Use the FASTQ files from the extraction step
+           - Optimize threads for parallelization in the SLURM environment
+           - Generate abundance files
+
+        3. Process metadata:
+           - Use the metadata agent to identify biologically relevant columns
+           - Merge columns if necessary into a single grouping variable
+           - Extract unique values and construct appropriate contrast matrices
+
+        4. Perform differential expression analysis using edgeR/limma:
+           - Use the appropriate tx2gene file for {ctx.deps.organism}
+           - Follow best practices for normalization, filtering, and statistical analysis
+           - Generate visualizations (MDS plots, heatmaps, volcano plots)
+
+        Provide detailed explanations for each step and handle errors gracefully.
+        Skip GSEA analysis for this run.""",
+        deps=ctx.deps,
+        usage=ctx.usage
     )
     return r.output
 
@@ -116,10 +156,7 @@ def main():
     logger.info("🧩 Built initial context with accession: %s", args.accession)
 
     initial_prompt = (
-        f"Analyse {args.accession} by first extracting the data, "
-        f"performing an analysis on it, then finally generating a report. "
-        f"Skip any steps if the data already exists and is up to date. "
-        f"Document each tool invocation and output."
+        f"Analyse {args.accession}, an RNAseq dataset for looking at the {args.organism} species, by first extracting the data, performing an analysis on it, then finally generating a report. Skip any steps if the data already exists and is up to date. Document each tool invocation and output."
     )
 
     logger.info("🤖 Running master agent with prompt: %s", initial_prompt)

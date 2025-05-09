@@ -79,9 +79,7 @@ metadata_agent = Agent(
 # ----------------------------
 
 
-@metadata_agent.tool
-@log_tool
-def clean_string(ctx: RunContext[MetadataContext], s: str) -> str:
+def clean_string(s: str) -> str:
     """
     Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
     """
@@ -138,7 +136,7 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
             logger.info("🧹 Removed %d columns with identical values", initial_cols - df.shape[1])
 
         # Clean column names
-        new_columns = {col: clean_string(ctx, col) for col in df.columns}
+        new_columns = {col: clean_string(col) for col in df.columns}
         df.rename(columns=new_columns, inplace=True)
         logger.info("✅ Cleaned column names")
 
@@ -146,7 +144,7 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
         logger.info("🧹 Cleaning cell values...")
         for col in df.columns:
             df[col] = df[col].apply(
-                lambda x: clean_string(ctx, x) if pd.notna(x) else x)
+                lambda x: clean_string(x) if pd.notna(x) else x)
 
         # Store cleaned metadata in context
         ctx.deps.metadata_df = df
