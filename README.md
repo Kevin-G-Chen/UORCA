@@ -73,8 +73,6 @@ The user should then see:
 ## Internal collaboration opportunities
 - SampleExplorer: this would facilitate identification of relevant samples and datasets.
 - GeneInsight: I will get DEGs as part of the analysis of individual RNAseq datasets. GeneInsight could be used generate insights
-- LLM/KG mining: while I can't see using this as a sole validation method (LLM with LLM), this framework COULD help clarify any relationships between biological entities that I make. (I'd probably need to see more of it before concretely working out what would happen in reality)
-- IMPPROVE: as a variant prioritization method, if I find anything about variants (i.e. a reported insight that variant X is of importance to disease Y), I could look towards performing a similar spike-in experiment as part of a validation approach.
 
 ## Navigating this repository
 
