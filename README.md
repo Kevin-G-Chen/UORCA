@@ -76,61 +76,57 @@ The user should then see:
 - LLM/KG mining: while I can't see using this as a sole validation method (LLM with LLM), this framework COULD help clarify any relationships between biological entities that I make. (I'd probably need to see more of it before concretely working out what would happen in reality)
 - IMPPROVE: as a variant prioritization method, if I find anything about variants (i.e. a reported insight that variant X is of importance to disease Y), I could look towards performing a similar spike-in experiment as part of a validation approach.
 
-__(note everything below here is from before)__
-
-## Applications of work
-
-Keeping in line with the goal of improving child health, the **generic** goals of UORCA are two-fold - to consolidate what is known in the existing literature, and to pinpoint key directions in a novel dataset, given the consolidation of the existing literature.
-
-At time of writing this segement of the README, I am working on developing an automated pipeline that performs and RNAseq-based analysis. Once this "module" is complete, UORCA will be able to comprehensively evaluate what is known for a given research question. As a specific application I might be exploring, this will likely be "biomarkers associated with a specific cancer". Specific findings of interest would include:
-- Whether these biomarkers are generically present across the literature (i.e. similar datasets)
-- If not, what are factors affecting the presence/absence of these biomarkers
-- Molecular/phenotypic implications (e.g. altered pathways -> disease state?)
-- Drug/treatment strategies - what is proposed, do these align with the biomarkers we know from above?
-
-
 ## Navigating this repository
 
-The repository is now structured into several distinct sections:
+Everything you need for running UORCA lives under the `main_workflow/` folder.  The rest of the repo (this README, CI files, docs, etc.) is mainly for project bookkeeping— day-to-day work will be in `main_workflow/`.
 
-- **notebooks/**: Contains historical Jupyter notebooks used for exploratory work and prototyping.
-- **archive/**: Holds previous versions and benchmarking scripts (e.g. data extraction and analysis benchmarks).
-- **main/**: Will contain the core application code including web routes, services, and model definitions.
-- **script_development/**: This is the primary folder for current development. All new analysis modules, agent workflows, and integration of PydanticAI (as seen in DataAnalysisAgent.py) are actively being developed here.
-- **Other folders**: Such as SingleDatasetAnalysis and experiments provide additional supporting scripts or prototypes.
 
-Overall, while multiple directories contain useful legacy or auxiliary code, the **script_development/** directory is where the active workflow work is being done.
+### Agentic workflow
 
-## Intended workflow
+1. **Master agent (`master.py`)**
+   Reads your CLI inputs (accession, output folder, organism, resources) and then in turn invokes:
+   - `extract()` → Extraction agent
+   - `analyse()` → Analysis (and metadata) agents
+   - `report()` → Reporting agent
 
-The workflow will comprise a single master agent, which takes in some input (likely a research query - to be decided), and will delegate tasks to sub-agents. The four proposed sub-agents are as follows:
-- Dataset identification agent: responsible for identifying relevant datasets
-- Data extraction agent: responsible for extracting relevant data from these datasets
-- Data analysis agent: responsible for performing the analysis
-- Reporting agent: responsible for generating a report based on the analysis
+2. **Extraction agent (`agents/extraction.py`)**
+   Tools:
+   - `fetch_geo_metadata(accession)`
+     • Downloads GEO Series metadata, builds a GSM ↔ SRX ↔ SRR table
+   - `download_fastqs(threads, max_spots)`
+     • Uses SRA-Toolkit (`prefetch` + `fasterq-dump`) to get compressed FASTQ files
 
-Current progress is focussed on the DataAnalysisAgent
+3. **Metadata agent (`agents/metadata.py`)**
+   Tools:
+   - `process_metadata()`
+     • Cleans column names/values, drops uninformative columns
+   - `merge_analysis_columns(columns…)`
+     • Merges one or more biological columns into a single grouping factor
+   - `extract_unique_values()`
+     • Lists the distinct groups for downstream contrast design
 
-### Dataset analysis agent
+4. **Analysis agent (`agents/analysis.py`)**
+   Tools:
+   - `list_files(directory, pattern)`
+     • Utility for finding files (indices, FASTQs, txts)
+   - `run_kallisto_quantification(kallisto_index)`
+     • Runs Kallisto on paired FASTQs in parallel
+   - `prepare_edgeR_analysis()`
+     • Matches abundance files to metadata, builds sample mapping CSV
+   - `process_metadata_with_agent()`
+     • Proxies into the Metadata agent to pick/merge columns & build contrasts
+   - `run_edger_limma_analysis(tx2gene_path)`
+     • Calls the R script (`RNAseq.R`), runs edgeR/limma, generates plots and DEG tables
 
-The **DataAnalysisAgent** is a central component of the UORCA workflow, implemented using PydanticAI to drive an agentic, modular RNAseq analysis pipeline. Its design leverages dependency injection (through the `RNAseqData` model) to encapsulate paths, metadata, and runtime parameters, ensuring that each analytical step is executed consistently and reproducibly.
+5. **Reporting agent (`agents/reporting.py`)**
+   Tools:
+   - `identify_png_files()`
+     • Finds all `.png` plots in your output
+   - `generate_rst_from_pngs()`
+     • Copies images into a local `images/` folder and writes an RST with `.. figure::` directives
+   - `build_report()`
+     • Initializes a Sphinx project, injects your RST/images, runs `sphinx-build` → HTML
 
-Key features include:
+---
 
-- **Modular Tool Architecture:**
-  The agent is structured as a series of asynchronous tools (decorated with `@rnaseq_agent.tool`), each responsible for a specific task. These tools include:
-  - **File Discovery & Management:** Tools like `list_fastq_files` and `find_files` recursively locate required FASTQ files.
-  - **Data Cleaning & Metadata Processing:** Functions such as `clean_string` and `process_metadata` load, clean, and normalize metadata to ensure consistent grouping and merging of sample data.
-  - **Contrast Design:** The `design_contrasts` tool automates experimental contrast creation based on merged metadata columns.
-  - **Quantification & Differential Expression:**
-    - `run_kallisto_quantification` executes Kallisto for RNAseq abundance estimation.
-    - `prepare_edgeR_analysis` and `run_edger_limma_analysis` handle downstream differential expression analyses using established tools like edgeR and limma.
-  - **Gene Set Enrichment Analysis (GSEA):** Through the `run_gsea_analysis` tool, the agent also performs pathway enrichment analyses, integrating results into the overall workflow (NOT YET TESTED)
-
-- **Integrated Logging and Error Handling:**
-  Each tool logs its progress and any encountered errors using standardized log functions (e.g., `log_tool_header` and `log_tool_result`). This ensures full traceability of the workflow execution and facilitates troubleshooting.
-
-- **Extensibility & Future Enhancements:**
-  The structure is designed to easily accommodate additional analytical steps or modifications. Future updates may include enhanced data visualization, integration with external databases, or additional omics data considerations.
-
-Overall, the DataAnalysisAgent exemplifies a modern, agent-driven approach to complex RNAseq analyses, ensuring that as new datasets are identified, they can be seamlessly processed and integrated into the UORCA framework.
+By drilling down into **`main_workflow/`**, you’ll see the full LLM-driven pipeline.  All the business logic—data extraction, metadata wrangling, differential-expression analysis, and final reporting—is orchestrated there by a small team of specialised “agents,” each with its own clear responsibility.
