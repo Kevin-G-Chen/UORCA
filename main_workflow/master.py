@@ -61,8 +61,20 @@ async def extract(ctx: RunContext[ExtractionContext], accession: str) -> str:
 
 @master.tool
 async def analyse(ctx: RunContext[AnalysisContext]) -> str:
-    r = await analysis.run_agent_async(
-        f"""
+    """
+    Run RNA-seq analysis with reflection capabilities.
+
+    Performs multiple iterations of analysis, with each iteration having access to
+    the results of previous iterations to enable self-correction and improvement.
+    """
+    # Define the number of reflection iterations
+    num_iterations = 3
+
+    # Store all iteration outputs
+    iteration_results = []
+
+    # Base prompt that will be extended with previous results
+    base_prompt = f"""
         Perform RNA-seq analysis on data from organism: {ctx.deps.organism}
 
         Follow these sequential steps:
@@ -86,11 +98,63 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
            - Generate visualizations (MDS plots, heatmaps, volcano plots)
 
         Provide detailed explanations for each step and handle errors gracefully.
-        Skip GSEA analysis for this run.""",
-        deps=ctx.deps,
-        usage=ctx.usage
-    )
-    return r.output
+        Skip GSEA analysis for this run.
+    """
+
+    # Log the start of the reflection process
+    logger = logging.getLogger(__name__)
+    logger.info("🔄 Starting analysis with %d reflection iterations", num_iterations)
+
+    for iteration in range(1, num_iterations + 1):
+        # Create the prompt for this iteration
+        if iteration == 1:
+            current_prompt = base_prompt
+        else:
+            # Add reflection component for iterations after the first
+            reflection_prompt = f"""
+
+            This is reflection iteration {iteration} of {num_iterations}.
+
+            Below are the results and approach from your previous iteration.
+            Review this output carefully and consider:
+
+            1. Was the previous approach correct? If not, what should be changed? Pay special note to the files which were used - for example, was the species correct?
+            2. Were there any errors or misunderstandings you can fix in this iteration?
+            3. Can you improve upon the previous results?
+
+            Previous iteration output:
+            -------------------------
+            {iteration_results[-1]}
+            -------------------------
+
+            Now, proceed with your analysis again, either confirming the previous approach
+            if correct or making appropriate adjustments.
+            """
+            current_prompt = base_prompt + reflection_prompt
+
+        # Run the current iteration
+        logger.info("🔄 Running analysis iteration %d/%d", iteration, num_iterations)
+        result = await analysis.run_agent_async(
+            current_prompt,
+            deps=ctx.deps,
+            usage=ctx.usage
+        )
+
+        # Store the result of this iteration
+        iteration_results.append(result.output)
+        logger.info("✅ Completed analysis iteration %d/%d", iteration, num_iterations)
+
+    # Return final iteration result along with a summary
+    final_result = f"""
+    Analysis completed after {num_iterations} reflection iterations.
+
+    Final result from iteration {num_iterations}:
+
+    {iteration_results[-1]}
+    """
+
+    return final_result
+
 
 @master.tool
 async def report(ctx: RunContext[ReportingContext]) -> str:
