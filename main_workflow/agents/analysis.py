@@ -626,16 +626,7 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
         # Use the main script
         main_r_script_path = "./main_workflow/additional_scripts/RNAseq.R"
 
-        # Check if the R script exists
-        if not os.path.exists(main_r_script_path):
-            # Try an alternative path if the first one doesn't exist
-            main_r_script_path = "aim1/UORCA/script_development/experiments/sample_RNAseq.R"
-            if not os.path.exists(main_r_script_path):
-                error_msg = "Error: R script not found at expected paths. Please verify the R script location."
-                logger.error("❌ %s", error_msg)
-                return error_msg
-
-        # Execute the R script with the necessary arguments
+     # Execute the R script with the necessary arguments
         cmd = ['Rscript', main_r_script_path, sample_mapping_path,
                ctx.deps.merged_column, ctx.deps.output_dir, tx2gene_arg]
 
@@ -652,21 +643,29 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
         process = subprocess.run(cmd, capture_output=True, text=True)
 
         # Log the R script output at appropriate levels
-        if process.stdout:
-            logger.info("📜 R script stdout:\n%s", process.stdout)
+        stdout_output = process.stdout or ""
+        stderr_output = process.stderr or ""
 
-        if process.stderr:
+        # Store in context for later reference by the agent
+        ctx.deps.r_script_stdout = stdout_output
+        ctx.deps.r_script_stderr = stderr_output
+
+        if stdout_output:
+            logger.info("📜 R script stdout:\n%s", stdout_output)
+
+        if stderr_output:
             if process.returncode != 0:
-                logger.error("❌ R script stderr:\n%s", process.stderr)
+                logger.error("❌ R script stderr:\n%s", stderr_output)
             else:
                 # Some R packages output warnings to stderr even on success
-                logger.warning("⚠️ R script stderr:\n%s", process.stderr)
+                logger.warning("⚠️ R script stderr:\n%s", stderr_output)
 
         # Check the return code
         if process.returncode != 0:
             error_msg = f"edgeR/limma analysis failed with return code: {process.returncode}."
             logger.error("❌ %s", error_msg)
-            return f"{error_msg} See error output above."
+            return f"{error_msg} See error output above.\n\nSTDEERR:\n{stderr_output[:1000]}...(truncated)" if len(stderr_output) > 1000 else stderr_output
+
 
         # Find and record DEG result files
         deg_dir = os.path.join(ctx.deps.output_dir, "DEG")
@@ -688,6 +687,14 @@ Analysis performed using:
 
 Results saved to {ctx.deps.output_dir}
 Differential expression results saved to {deg_dir}
+
+==== R Script Output (truncated) ====
+{stdout_output[:1500]}
+{"..." if len(stdout_output) > 1500 else ""}
+
+==== R Script Warnings/Messages (if any) ====
+{stderr_output[:1000]}
+{"..." if len(stderr_output) > 1000 else ""}
 """
 
     except Exception as e:
