@@ -452,9 +452,6 @@ cat("Step 6: Generating design matrix using grouping column:", merged_group, "\n
 cat("Creating design matrix using grouping column:", merged_group, "\n")
 design <- model.matrix(as.formula(paste("~0 +", merged_group)), data = DGE.norm$samples)
 colnames(design) <- sub(merged_group, "", colnames(design))
-cat("Design matrix:\n")
-print(design)
-
 
 plot_mds(DGE.norm, output_dir, labels_column = "geo_accession")
 
@@ -480,26 +477,6 @@ if (!is.null(contrasts_file) && file.exists(contrasts_file)) {
         all(c("name", "expression") %in% colnames(contrasts_df))) {
 
         cat("Loaded", nrow(contrasts_df), "contrasts from CSV file\n")
-
-        # Print the full contrast details including justification if available
-        if ("justification" %in% colnames(contrasts_df) || "description" %in% colnames(contrasts_df)) {
-            cat("Contrast details:\n")
-            for (i in 1:nrow(contrasts_df)) {
-                cat("---\n")
-                cat("Name:", contrasts_df$name[i], "\n")
-                cat("Expression:", contrasts_df$expression[i], "\n")
-                if ("description" %in% colnames(contrasts_df) && !is.na(contrasts_df$description[i]) && contrasts_df$description[i] != "") {
-                    cat("Description:", contrasts_df$description[i], "\n")
-                }
-                if ("justification" %in% colnames(contrasts_df) && !is.na(contrasts_df$justification[i]) && contrasts_df$justification[i] != "") {
-                    cat("Justification:", contrasts_df$justification[i], "\n")
-                }
-            }
-            cat("---\n\n")
-        } else {
-            # Simple output if no additional information
-            print(contrasts_df[, c("name", "expression")])
-        }
 
         # Extract unique factor levels from expressions
         levels_df <- unique(unlist(strsplit(contrasts_df$expression, " - ")))
