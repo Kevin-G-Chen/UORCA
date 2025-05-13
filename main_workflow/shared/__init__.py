@@ -12,6 +12,7 @@ class RNAseqCoreContext(BaseModel):
     organism: str = Field(..., description="Organism name")
     resource_dir: Optional[str] = Field(None, description="Directory for resources")
     files: Optional[List[str]] = Field(None, description="List of files to process")
+    dataset_information: Optional[str] = Field(None, description="Dataset information from GEO metadata")
 
     class Config:
         extra = "allow"  # allows enrichment by agents

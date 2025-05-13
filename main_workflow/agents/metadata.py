@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
 from shared import AnalysisContext
-from shared.workflow_logging import log_tool
+from shared.workflow_logging import log_tool, log_agent_tool
 from unidecode import unidecode
 from openai import OpenAI
 import matplotlib.pyplot as plt
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 class MetadataContext:
     metadata_path: str
     metadata_df: Optional[pd.DataFrame] = None
+    analysis_metadata_df: Optional[pd.DataFrame] = None
     merged_column: Optional[str] = None
     unique_groups: Optional[List[str]] = None
     contrast_details: Optional[Dict[str, Any]] = None
@@ -102,10 +103,12 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
     Load metadata from ctx.deps.metadata_path, clean all column names and
     cell values using clean_string, and store the cleaned DataFrame in the context.
 
-    Basic preprocessing applied:
-    - Removes columns with identical values
-    - Removes columns with all unique values
-    - Cleans column names and values for consistency
+    Creates TWO versions of the metadata:
+    1. Full metadata (ctx.deps.metadata_df): Retains all columns including identifiers
+    2. Analysis metadata (ctx.deps.analysis_metadata_df): Specialized for column selection
+       - Removes GSM, SRX, SRR columns
+       - Deduplicates rows
+       - Removes columns where all values are unique
 
     Returns information about the processed data.
     """
@@ -146,33 +149,72 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
             df[col] = df[col].apply(
                 lambda x: clean_string(x) if pd.notna(x) else x)
 
-        # Store cleaned metadata in context
-        ctx.deps.metadata_df = df
-        logger.info("💾 Stored cleaned metadata in context")
+        # Store the complete cleaned metadata in context (VERSION 1)
+        ctx.deps.metadata_df = df.copy()
+        logger.info("💾 Stored complete cleaned metadata in context")
 
-        # Count unique values for each column
+        # Create a specialized version for column/contrast determination (VERSION 2)
+        analysis_df = df.copy()
+
+        # 1. Remove identifier columns: GSM, SRX, SRR
+        id_columns = ['GSM', 'SRX', 'SRR']
+        dropped_ids = [col for col in id_columns if col in analysis_df.columns]
+        if dropped_ids:
+            analysis_df = analysis_df.drop(columns=dropped_ids)
+            logger.info("🧹 Removed identifier columns from analysis metadata: %s", dropped_ids)
+
+        # 2. Deduplicate rows (again, after removing ID columns)
+        initial_rows = analysis_df.shape[0]
+        analysis_df = analysis_df.drop_duplicates()
+        if analysis_df.shape[0] < initial_rows:
+            logger.info("🧹 Removed %d duplicate rows from analysis metadata", initial_rows - analysis_df.shape[0])
+
+        # 3. Remove columns where all values are unique (likely another form of ID)
+        unique_cols = [col for col in analysis_df.columns
+                       if analysis_df[col].nunique() == len(analysis_df)]
+        if unique_cols:
+            analysis_df = analysis_df.drop(columns=unique_cols)
+            logger.info("🧹 Removed columns with all unique values from analysis metadata: %s", unique_cols)
+
+        # Store the analysis-specific metadata
+        ctx.deps.analysis_metadata_df = analysis_df
+        logger.info("💾 Stored analysis-specific metadata (without IDs, unique columns) in context")
+
+        # Count unique values for each column in the analysis df
         column_stats = {}
-        for col in df.columns:
-            unique_vals = df[col].unique()
+        for col in analysis_df.columns:
+            unique_vals = analysis_df[col].unique()
             column_stats[col] = {
                 "unique_count": len(unique_vals),
                 "values": list(unique_vals) if len(unique_vals) < 20 else list(unique_vals[:20])
             }
 
-        summary = f"Metadata processed: {df.shape[0]} rows and {df.shape[1]} columns.\nColumns: {', '.join(df.columns)}"
+        summary = f"""
+Metadata processed into two versions:
+
+1. Complete metadata: {ctx.deps.metadata_df.shape[0]} rows and {ctx.deps.metadata_df.shape[1]} columns
+   - All columns retained including identifiers: {', '.join(ctx.deps.metadata_df.columns)}
+
+2. Analysis metadata: {ctx.deps.analysis_metadata_df.shape[0]} rows and {ctx.deps.analysis_metadata_df.shape[1]} columns
+   - Removed ID columns: {', '.join(dropped_ids) if dropped_ids else 'None'}
+   - Removed unique-value columns: {', '.join(unique_cols) if unique_cols else 'None'}
+   - Remaining columns: {', '.join(ctx.deps.analysis_metadata_df.columns)}
+"""
         logger.info("✅ %s", summary)
 
         # Return information about the processed data
         return {
             "message": summary,
-            "columns": list(df.columns),
-            "column_stats": column_stats,
-            "shape": df.shape
+            "complete_metadata_shape": ctx.deps.metadata_df.shape,
+            "analysis_metadata_shape": ctx.deps.analysis_metadata_df.shape,
+            "columns_for_analysis": list(ctx.deps.analysis_metadata_df.columns),
+            "column_stats": column_stats
         }
     except Exception as e:
         error_msg = f"Error processing metadata: {str(e)}"
         logger.error("❌ %s", error_msg, exc_info=True)
         return {"message": error_msg, "error": True}
+
 
 # ----------------------------
 # Tool 2: Merge Analysis Columns
@@ -192,6 +234,9 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
 
     If only one column is provided, it's set as the analysis column.
     If multiple columns are provided, they are merged by joining values with an underscore.
+
+    Uses the analysis_metadata_df (without ID columns) for column selection,
+    but applies the merging to both metadata versions.
 
     The result is stored in ctx.deps.merged_column.
     """
@@ -235,15 +280,23 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
             logger.warning("⚠️ %s", msg)
             return {"message": msg, "success": False, "merged_column": None}
 
-        df = ctx.deps.metadata_df.copy()
+        # Check if we have the analysis metadata
+        if ctx.deps.analysis_metadata_df is None:
+            error_msg = "Error: Analysis metadata not available. Please process metadata first."
+            logger.error("❌ %s", error_msg)
+            return {"message": error_msg, "success": False, "merged_column": None}
 
-        # Filter to ensure columns actually exist in the dataframe
-        valid_cols = [col for col in candidate_cols if col in df.columns]
+        # Use the analysis_metadata_df for column selection
+        analysis_df = ctx.deps.analysis_metadata_df.copy()
+
+        # Filter to ensure columns actually exist in the analysis dataframe
+        valid_cols = [col for col in candidate_cols if col in analysis_df.columns]
         if not valid_cols:
-            msg = f"None of the specified columns {candidate_cols} exist in the metadata."
+            msg = f"None of the specified columns {candidate_cols} exist in the analysis metadata."
             logger.warning("⚠️ %s", msg)
             return {"message": msg, "success": False, "merged_column": None}
 
+        # Create the merged column in both dataframes
         if len(valid_cols) == 1:
             # Single column; use it directly
             ctx.deps.merged_column = valid_cols[0]
@@ -252,15 +305,32 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
         else:
             # Multiple columns; merge them
             merged_col = "merged_analysis_group"
-            df[merged_col] = df[valid_cols].astype(str).apply(
+
+            # Apply merging to the analysis metadata
+            analysis_df[merged_col] = analysis_df[valid_cols].astype(str).apply(
                 lambda row: "_".join(row.values), axis=1)
-            ctx.deps.metadata_df = df  # update the DataFrame
+            ctx.deps.analysis_metadata_df = analysis_df  # update the analysis DataFrame
+
+            # Also apply the same merging to the full metadata
+            if ctx.deps.metadata_df is not None:
+                full_df = ctx.deps.metadata_df.copy()
+                # Ensure all columns exist in the full metadata before merging
+                columns_in_full = [col for col in valid_cols if col in full_df.columns]
+                if len(columns_in_full) == len(valid_cols):
+                    full_df[merged_col] = full_df[valid_cols].astype(str).apply(
+                        lambda row: "_".join(row.values), axis=1)
+                    ctx.deps.metadata_df = full_df  # update the full DataFrame
+                    logger.info("✅ Added merged column to both metadata versions")
+                else:
+                    logger.warning("⚠️ Not all selected columns exist in full metadata: %s",
+                                  set(valid_cols) - set(columns_in_full))
+
             ctx.deps.merged_column = merged_col
             msg = f"Multiple columns {', '.join(valid_cols)} merged into column '{merged_col}'."
             logger.info("✅ %s", msg)
 
             # Show a preview of the merged values
-            unique_merged = df[merged_col].unique().tolist()
+            unique_merged = analysis_df[merged_col].unique().tolist()
             preview = unique_merged[:5] if len(unique_merged) > 5 else unique_merged
             logger.info("📊 Merged values preview: %s", preview)
             msg += f"\nMerged values (preview): {preview}"
@@ -277,11 +347,9 @@ async def merge_analysis_columns(ctx: RunContext[MetadataContext], columns_input
         return {"message": error_msg, "success": False, "merged_column": None}
 
 
-
 # ----------------------------
 # Tool 3: Extract Unique Values
 # ----------------------------
-
 
 @metadata_agent.tool
 @log_tool
@@ -289,8 +357,8 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
     """
     Simply extracts and returns the unique values from the selected analysis column.
 
-    This tool only:
-    1. Identifies unique values in the selected analysis column
+    This tool:
+    1. Identifies unique values in the selected analysis column from analysis_metadata_df
     2. Stores these values in ctx.deps.unique_groups
     3. Returns a dictionary with the unique values
 
@@ -299,8 +367,8 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
     try:
         logger.info("🔍 Extracting unique values from analysis column")
 
-        if ctx.deps.metadata_df is None:
-            error_msg = "Error: Metadata has not been processed."
+        if ctx.deps.analysis_metadata_df is None:
+            error_msg = "Error: Analysis metadata has not been processed."
             logger.error("❌ %s", error_msg)
             return {"success": False, "message": error_msg, "unique_values": []}
 
@@ -309,7 +377,7 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
             logger.error("❌ %s", error_msg)
             return {"success": False, "message": error_msg, "unique_values": []}
 
-        df = ctx.deps.metadata_df
+        df = ctx.deps.analysis_metadata_df
         analysis_col = ctx.deps.merged_column
         logger.info("📊 Using analysis column: %s", analysis_col)
 
@@ -331,9 +399,10 @@ async def extract_unique_values(ctx: RunContext[MetadataContext]) -> dict:
         logger.error("❌ %s", error_msg, exc_info=True)
         return {"success": False, "message": error_msg, "unique_values": []}
 
-@log_tool
+
+@log_agent_tool
 async def run_agent_async(prompt: str, deps: MetadataContext, usage=None, output_type=None):
-    logger.info("📋 Metadata agent invoked – prompt: %s", prompt)
+    logger.info("📋 Metadata agent invoked with prompt: %s", prompt)
     result = await metadata_agent.run(prompt, deps=deps, usage=usage, output_type=output_type)
 
     # Log the agent's output
