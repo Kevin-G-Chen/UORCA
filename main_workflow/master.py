@@ -52,8 +52,6 @@ async def extract(ctx: RunContext[ExtractionContext], accession: str) -> str:
            - Use the prefetch → fasterq-dump pipeline
            - Ensure proper thread allocation for SLURM jobs
            - Compress output files using pigz if available
-
-        Be attentive to resource usage, logging, and error handling during this process.
         """,
         deps=ctx.deps, usage=ctx.usage
     )
@@ -73,9 +71,16 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
     # Store all iteration outputs
     iteration_results = []
 
+    logger = logging.getLogger(__name__)
+
     # Initialize analysis_history if it doesn't exist
     if not hasattr(ctx.deps, 'analysis_history'):
         ctx.deps.analysis_history = []
+
+    # Ensure dataset_information is carried over from extraction to analysis if available
+    if hasattr(ctx.deps, 'dataset_information') and ctx.deps.dataset_information:
+        logger.info("📊 Adding dataset information to analysis context")
+        # Dataset information is already in ctx.deps, no need to do anything else
 
     # Base prompt that will be extended with previous results
     base_prompt = f"""
@@ -83,18 +88,18 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
 
         Follow these sequential steps:
 
-        1. Identify the appropriate Kallisto index file for {ctx.deps.organism} in the resource directory
-           - Ensure you select the correct species-specific index (.idx file)
-
-        2. Run Kallisto quantification:
-           - Use the FASTQ files from the extraction step
-           - Optimize threads for parallelization in the SLURM environment
-           - Generate abundance files
-
-        3. Process metadata:
+        1. Process metadata:
            - Use the metadata agent to identify biologically relevant columns
            - Merge columns if necessary into a single grouping variable
            - Extract unique values and construct appropriate contrast matrices
+
+        2. Identify the appropriate Kallisto index file for {ctx.deps.organism} in the resource directory
+           - Ensure you select the correct species-specific index (.idx file)
+
+        3. Run Kallisto quantification:
+           - Use the FASTQ files from the extraction step
+           - Optimize threads for parallelization in the SLURM environment
+           - Generate abundance files
 
         4. Perform differential expression analysis using edgeR/limma:
            - Use the appropriate tx2gene file for {ctx.deps.organism}
@@ -106,7 +111,6 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
     """
 
     # Log the start of the reflection process
-    logger = logging.getLogger(__name__)
     logger.info("🔄 Starting analysis with %d reflection iterations", num_iterations)
 
     for iteration in range(1, num_iterations + 1):
@@ -236,7 +240,7 @@ def main():
     )
 
     logger.info("🤖 Running master agent with prompt: %s", initial_prompt)
-    run = master.run_sync(initial_prompt, deps=ctx)
+    run = master.run_sync(initial_prompt, deps=ctx, request_limit = 100)
 
     logger.info("✅ Master agent completed execution")
     logger.info("📝 Final output: %s", run.output)

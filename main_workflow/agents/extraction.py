@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 import GEOparse as gp
 from pydantic_ai import Agent, RunContext
 from shared import ExtractionContext, RNAseqCoreContext
-from shared.workflow_logging import log_tool
+from shared.workflow_logging import log_tool, log_agent_tool
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,37 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     gse = gp.get_GEO(accession, destdir=str(meta_dir), silent=True)
     gsms = gse.gsms
     logger.info("Fetched %d GSM samples", len(gsms))
+
+    # Capture dataset information
+    dataset_info_parts = []
+
+    # Get title
+    if 'title' in gse.metadata and gse.metadata['title']:
+        title = gse.metadata['title'][0] if isinstance(gse.metadata['title'], list) else gse.metadata['title']
+        dataset_info_parts.append(f"Title: {title}")
+
+    # Get summary
+    if 'summary' in gse.metadata and gse.metadata['summary']:
+        summary = gse.metadata['summary'][0] if isinstance(gse.metadata['summary'], list) else gse.metadata['summary']
+        dataset_info_parts.append(f"Summary: {summary}")
+
+    # Get overall design
+    if 'overall_design' in gse.metadata and gse.metadata['overall_design']:
+        design = gse.metadata['overall_design'][0] if isinstance(gse.metadata['overall_design'], list) else gse.metadata['overall_design']
+        dataset_info_parts.append(f"Overall Design: {design}")
+
+    # Combine all information
+    dataset_information = "\n\n".join(dataset_info_parts)
+
+    # Store in context
+    ctx.deps.dataset_information = dataset_information
+    logger.info("📑 Captured dataset information from GEO metadata")
+
+    # Save to a file for reference
+    info_path = meta_dir / "dataset_info.txt"
+    with open(info_path, 'w') as f:
+        f.write(dataset_information)
+    logger.info("💾 Saved dataset information to %s", info_path)
 
     re_srx, re_srr = re.compile(r"(SR[XP]\d+)"), re.compile(r"(SRR\d+)")
 
@@ -333,7 +364,7 @@ async def download_fastqs(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-@log_tool
+@log_agent_tool
 async def run_agent_async(prompt: str, deps: ExtractionContext, usage=None):
     """Thin wrapper used by master.py."""
     logger.info("🛠️ Extraction agent invoked by master – prompt: %s", prompt)
