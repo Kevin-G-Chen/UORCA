@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
 from shared import AnalysisContext
-from shared.workflow_logging import log_tool
+from shared.workflow_logging import log_tool, log_agent_tool
 from agents.metadata import metadata_agent, MetadataContext
 from unidecode import unidecode
 from openai import OpenAI
@@ -716,7 +716,7 @@ Differential expression results saved to {deg_dir}
         return error_msg
 
 @rnaseq_agent.tool
-@log_tool
+@log_agent_tool
 async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
     """
     Process metadata using a specialized metadata agent that has access to analysis context.
@@ -757,9 +757,22 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         about which steps to take based on the data characteristics.
         """
 
+        # Include dataset information context if available
+        dataset_context = ""
+        if ctx.deps.dataset_information:
+            dataset_context = f"""
+
+            IMPORTANT DATASET CONTEXT: Below is information about the dataset you are analyzing:
+
+            {ctx.deps.dataset_information}
+
+            Please consider this information when selecting relevant columns and designing contrasts.
+            The biological context above may help you understand which experimental factors are most important.
+            """
+
         # Include analysis history context if available
         analysis_context = ""
-        if hasattr(ctx.deps, 'analysis_history') and ctx.deps.analysis_history:
+        if ctx.deps.analysis_history:
             # Find the most recent entry with a non-None output
             latest = None
             for entry in reversed(ctx.deps.analysis_history):
@@ -787,7 +800,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
                 appropriate columns for analysis to prevent downstream errors.
                 """
 
-            metadata_prompt = base_prompt + analysis_context
+            metadata_prompt = base_prompt + dataset_context + analysis_context
         else:
             metadata_prompt = base_prompt
 
@@ -864,7 +877,7 @@ Designed contrasts:
 
 @log_tool
 async def run_agent_async(prompt: str, deps: AnalysisContext, usage=None):
-    logger.info("🚀 Analysis agent invoked – prompt: %s", prompt)
+    logger.info("🚀 Analysis agent invoked with prompt: %s", prompt)
     result = await rnaseq_agent.run(prompt, deps=deps, usage=usage)
 
     # Log the agent's output
