@@ -144,6 +144,27 @@ async def list_files(ctx: RunContext[AnalysisContext],
     search_dir = directory or "."
     pat = pattern or "*"
 
+    # SAFETY CHECKS: Validate the search parameters before proceeding
+
+    # Check 1: Dangerous root directories
+    dangerous_dirs = ['/', '/etc', '/usr', '/bin', '/home']
+    if search_dir in dangerous_dirs:
+        error_msg = f"Safety Error: Searching in '{search_dir}' is not allowed for system safety. Please specify a subdirectory within your working environment."
+        logger.error("⚠️ %s", error_msg)
+        return [error_msg]
+
+    # Check 2: Home directory
+    if search_dir.startswith('~'):
+        error_msg = f"Safety Error: Searching in home directory '{search_dir}' is not allowed. Please specify a project-specific directory."
+        logger.error("⚠️ %s", error_msg)
+        return [error_msg]
+
+    # Check 4: Too generic pattern with wide search
+    if pat == "*" and (search_dir == "." or recursive):
+        error_msg = f"Safety Error: Too generic search pattern '{pat}' in {search_dir} with recursive={recursive}. Please specify a more specific pattern."
+        logger.error("⚠️ %s", error_msg)
+        return [error_msg]
+
     logger.info("🔍 Searching for '%s' in %s (recursive=%s)",
                 pat, os.path.abspath(search_dir), recursive)
 
@@ -186,6 +207,7 @@ async def list_files(ctx: RunContext[AnalysisContext],
         error_msg = f"Error searching for files: {str(e)}"
         logger.error("❌ %s", error_msg)
         return [error_msg]
+
 
 
 @rnaseq_agent.tool
