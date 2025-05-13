@@ -22,6 +22,8 @@ class ExtractionContext(RNAseqCoreContext):
 
 # --- Analysis agent context, adds abundance and more ---
 class AnalysisContext(RNAseqCoreContext):
+    analysis_history: Optional[List[Dict[str, str]]] = Field(default_factory=list,
+           description="History of analysis prompts and outputs for reflection")
     abundance_files: Optional[List[str]] = Field(None, description="List of abundance files")
     merged_column: Optional[str] = Field(None, description="Column to merge on")
     unique_groups: Optional[List[str]] = Field(None, description="Unique groups for analysis")
@@ -29,6 +31,7 @@ class AnalysisContext(RNAseqCoreContext):
     contrast_matrix_df: Optional[Any] = Field(None, description="Contrast matrix DataFrame")
     contrasts: Optional[Any] = Field(None, description="Contrasts for analysis")
     deg_results_path: Optional[str] = Field(None, description="Path to DEGs results")
+
 
 # --- Reporting context ---
 class ReportingContext(RNAseqCoreContext):

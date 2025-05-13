@@ -73,6 +73,10 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
     # Store all iteration outputs
     iteration_results = []
 
+    # Initialize analysis_history if it doesn't exist
+    if not hasattr(ctx.deps, 'analysis_history'):
+        ctx.deps.analysis_history = []
+
     # Base prompt that will be extended with previous results
     base_prompt = f"""
         Perform RNA-seq analysis on data from organism: {ctx.deps.organism}
@@ -132,6 +136,13 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
             """
             current_prompt = base_prompt + reflection_prompt
 
+        # Store the prompt in history BEFORE running the agent
+        ctx.deps.analysis_history.append({
+            "iteration": iteration,
+            "prompt": current_prompt,
+            "output": None  # Will be filled after running
+        })
+
         # Run the current iteration
         logger.info("🔄 Running analysis iteration %d/%d", iteration, num_iterations)
         result = await analysis.run_agent_async(
@@ -140,8 +151,10 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
             usage=ctx.usage
         )
 
-        # Store the result of this iteration
+        # Store the result and update the history with the output
         iteration_results.append(result.output)
+        ctx.deps.analysis_history[-1]["output"] = result.output
+
         logger.info("✅ Completed analysis iteration %d/%d", iteration, num_iterations)
 
     # Return final iteration result along with a summary
@@ -154,7 +167,6 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
     """
 
     return final_result
-
 
 @master.tool
 async def report(ctx: RunContext[ReportingContext]) -> str:
