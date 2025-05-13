@@ -125,6 +125,7 @@ async def list_files(ctx: RunContext[AnalysisContext],
     """
     Search for and list files in a directory matching a specified pattern.
     Found files are automatically added to ctx.deps.files for future reference.
+    In general, do not assume directory locations exist, unless they are explicitly specified in the context. Do not perform generic searches, such as in "/" or "~", or for the "*" pattern - these will be hugely problematic.
 
     Parameters:
       - directory (str, optional):
@@ -588,6 +589,18 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
             logger.warning("⚠️ %s", error_msg)
             return error_msg
 
+        # Check if sample_mapping exists and is valid
+        sample_mapping_path = ctx.deps.sample_mapping
+        if not sample_mapping_path:
+            error_msg = "Error: Sample mapping not defined. Please run prepare_edgeR_analysis first to create the sample metadata mapping."
+            logger.error("❌ %s", error_msg)
+            return error_msg
+
+        if not os.path.exists(sample_mapping_path):
+            error_msg = f"Error: Sample mapping file not found at {sample_mapping_path}. Please run prepare_edgeR_analysis to generate this file."
+            logger.error("❌ %s", error_msg)
+            return error_msg
+
         # If we have contrasts but they're not in DataFrame format, convert them
         if ctx.deps.contrast_matrix_df is None and ctx.deps.contrasts:
             logger.info("🔄 Converting contrasts from agent output to DataFrame format")
@@ -619,7 +632,7 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
         # Determine the tx2gene file argument; if not provided, return an error message
         tx2gene_arg = tx2gene_path
         if not tx2gene_arg or not os.path.exists(tx2gene_arg):
-            error_msg = f"Error: tx2gene file not found. Please use the list_files function, and specify the t2g.txt pattern in the {ctx.deps.resource_dir} directory to identify the possible tx2gene files. Ensure you select the correct file for the identified species: {ctx.deps.organism}."
+            error_msg = f"Error: tx2gene file not found. Please use the list_files function, and specify the t2g.txt pattern in the {ctx.deps.resource_dir} directory to identify the possible tx2gene files. Please note the file is called EXACTLY t2g.txt, though the directory it is in will vary. Doing this step will provide you with a list of candidate files, which are applicable for different species. Ensure you select the correct file for the identified species: {ctx.deps.organism}."
             logger.error("❌ %s", error_msg)
             return error_msg
 
@@ -706,14 +719,8 @@ Differential expression results saved to {deg_dir}
 @log_tool
 async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
     """
-    Process metadata using a specialized metadata agent.
-
-    This tool creates a dedicated MetadataAgent to analyze the metadata file,
-    identify biologically relevant columns, merge columns if needed, extract unique values,
-    and generate appropriate contrasts for differential expression analysis.
-
-    The results are stored back in the main RNAseq context for downstream analysis.
-    The contrasts are also saved to a CSV file and converted to a DataFrame for use in edgeR/limma analysis.
+    Process metadata using a specialized metadata agent that has access to analysis context.
+    The metadata agent will receive information about any previous analysis attempts and reflections.
     """
     try:
         logger.info("📋 process_metadata_with_agent started")
@@ -737,18 +744,52 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         # Create a MetadataContext instance specifically for the metadata agent
         metadata_deps = metadata.MetadataContext(metadata_path=ctx.deps.metadata_path)
 
-        # Prompt for the metadata agent
-        metadata_prompt = """
+        # Generate the metadata prompt, incorporating analysis history if available
+        base_prompt = """
         Please analyze the RNAseq metadata file and perform the following tasks:
         1. Process and clean the metadata
         2. Identify biologically relevant columns for analysis
         3. Create a final grouping variable (merging columns if needed)
         4. Extract the unique values found in the analysis column
-        5. Design appropriate contrasts for differential expression analysis based on these unique values
+        5. Design appropriate contrasts for differential expression analysis
 
         You should handle any errors or special cases in the data, and make appropriate decisions
         about which steps to take based on the data characteristics.
         """
+
+        # Include analysis history context if available
+        analysis_context = ""
+        if hasattr(ctx.deps, 'analysis_history') and ctx.deps.analysis_history:
+            # Find the most recent entry with a non-None output
+            latest = None
+            for entry in reversed(ctx.deps.analysis_history):
+                if entry.get("output") is not None:
+                    latest = entry
+                    break
+
+            # Add analysis context to prompt if we found valid output
+            if latest and latest.get("output"):
+                output_text = latest.get("output", "")
+                truncated_output = output_text[:2000] if output_text else ""
+
+                analysis_context = f"""
+
+                IMPORTANT CONTEXT: I am providing you with information about the ongoing analysis process.
+                The analysis agent is currently on iteration {latest.get('iteration', '?')} and has provided the following output:
+
+                ----- ANALYSIS AGENT OUTPUT -----
+                {truncated_output}
+                {"..." if output_text and len(output_text) > 2000 else ""}
+                ----- END ANALYSIS AGENT OUTPUT -----
+
+                If you see any errors or issues related to metadata processing in the analysis output,
+                please keep them in mind as you analyze the metadata. Your goal is to select the most
+                appropriate columns for analysis to prevent downstream errors.
+                """
+
+            metadata_prompt = base_prompt + analysis_context
+        else:
+            metadata_prompt = base_prompt
 
         # Run the metadata agent with the Contrasts result type
         logger.info("🤖 Running metadata agent...")

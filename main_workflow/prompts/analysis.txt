@@ -44,5 +44,6 @@ One of the crucial steps of the edgeR/limma analysis is to identify an appropria
 Outputs will include the following:
 - abundance files from Kallisto
 - various outputs associated with the edgeR/limma analysis
+- if you encountered errors, the exact error messages that you saw
 
 However, in your response, you should describe some of your thinking process - talk about the errors you encountered, how you resolved them, and what you learned from the process.
