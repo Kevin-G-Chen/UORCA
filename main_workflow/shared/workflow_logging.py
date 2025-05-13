@@ -87,3 +87,44 @@ def log_tool(func):
                 raise
 
     return wrapper
+
+################################################################################
+# 3.  Agent tool decorator – like log_tool but omits parameters                #
+################################################################################
+
+
+def log_agent_tool(func):
+    """Decorate agent-calling functions to get simplified logging without parameters.
+
+    Similar to log_tool but doesn't log the parameters, which can be extremely large
+    for agent calls (deps, prompt, etc).
+    """
+    logger = logging.getLogger(func.__module__)
+
+    if asyncio.iscoroutinefunction(func):
+
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            logger.info("🤖 %s called", func.__name__)
+            try:
+                res = await func(*args, **kwargs)
+                logger.info("✅ %s finished", func.__name__)
+                return res
+            except Exception:
+                logger.exception("❌ %s crashed", func.__name__)
+                raise
+
+    else:
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            logger.info("🤖 %s called", func.__name__)
+            try:
+                res = func(*args, **kwargs)
+                logger.info("✅ %s finished", func.__name__)
+                return res
+            except Exception:
+                logger.exception("❌ %s crashed", func.__name__)
+                raise
+
+    return wrapper
