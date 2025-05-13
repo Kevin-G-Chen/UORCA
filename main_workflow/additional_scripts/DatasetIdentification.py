@@ -1,252 +1,257 @@
 #!/usr/bin/env python3
-from __future__ import annotations
+"""
+Integrated GEO-to-SRA metadata extractor.
 
+This script combines two workflows:
+ 1. Identify relevant GEO datasets for a biological research query (uses OpenAI + NCBI Entrez).
+ 2. Fetch linked SRA runinfo metadata for each GEO accession
+
+The final output joins GEO dataset info with selected SRA run metadata fields.
+"""
+from __future__ import annotations
 import argparse
 import asyncio
 import json
 import os
+import statistics
 import time
-from collections import Counter
-from typing import List, Dict, Any
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
 
 import pandas as pd
 from Bio import Entrez
 from dotenv import load_dotenv
 from openai import OpenAI
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from tqdm import tqdm
-from pathlib import Path
+import xml.etree.ElementTree as ET
 
-# -----------------------------------------------------------------------------#
-# Environment
-# -----------------------------------------------------------------------------#
+# ----------------------
+# Environment & prompts
+# ----------------------
 load_dotenv()
 Entrez.email = os.getenv("ENTREZ_EMAIL")
 Entrez.api_key = os.getenv("ENTREZ_API_KEY")
-
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
     raise RuntimeError("OPENAI_API_KEY not set")
-
 client = OpenAI(api_key=openai_api_key)
+PROMPT_DIR = os.getenv("PROMPT_DIR", "./main_workflow/prompts/dataset_identification")
 
-# -----------------------------------------------------------------------------#
-# Pydantic models → JSON Schema
-# -----------------------------------------------------------------------------#
+def load_prompt(fname: str) -> str:
+    path = Path(PROMPT_DIR) / fname
+    return path.read_text().strip()
 
-
+# ----------------------
+# Pydantic models
+# ----------------------
 class ExtractedTerms(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    extracted_terms: List[str] = Field(
-        description="Biologically specific term(s) pulled directly from the query"
-    )
-    expanded_terms: List[str] = Field(
-        description="Related or synonymous terms helpful for search expansion"
-    )
-
+    extracted_terms: List[str]
+    expanded_terms: List[str]
 
 class Assessment(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    ID: str = Field(description="Dataset identifier (GDS/GSE/GSM)")
-    RelevanceScore: int = Field(description="0 = not relevant, 10 = highly relevant"
-    )
-    Justification: str = Field(
-        description="Reason for the score; ≤ 30 words"
-    )
-
+    ID: str
+    RelevanceScore: float
+    Justification: str
 
 class Assessments(BaseModel):
     model_config = ConfigDict(extra="forbid")
     assessments: List[Assessment]
 
-
 TERMS_SCHEMA = ExtractedTerms.model_json_schema()
-ASSESSMENTS_SCHEMA = Assessments.model_json_schema()
+ASSESS_SCHEMA = Assessments.model_json_schema()
 
-# -----------------------------------------------------------------------------#
-# OpenAI helpers
-# -----------------------------------------------------------------------------#
-
-
+# ----------------------
+# OpenAI JSON helper
+# ----------------------
 def call_openai_json(prompt: str, schema: Dict[str, Any], name: str) -> dict:
-    response = client.responses.create(
-        model="gpt-4o-mini",
+    resp = client.responses.create(
+        model="gpt-4.1-mini",
         input=prompt,
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": name,
-                "schema": schema,
-                "strict": True,
-            }
-        },
+        text={"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}},
     )
-    return json.loads(response.output_text)
+    return json.loads(resp.output_text)
 
-
-# -----------------------------------------------------------------------------#
-# Core steps
-# -----------------------------------------------------------------------------#
-
-
-def extract_terms(user_query: str) -> ExtractedTerms:
-    system_prompt = (
-        "You are an expert in biological text mining. "
-        "Extract biologically specific terms from the query and generate useful synonyms."
-    )
-    prompt = f"{system_prompt}\nQuery: {user_query}"
+# ----------------------
+# Step 1 & 2: GEO search
+# ----------------------
+def extract_terms(query: str) -> ExtractedTerms:
+    sys_prompt = load_prompt("extract_terms.txt")
+    prompt = f"{sys_prompt}\nQuery: {query}"
     data = call_openai_json(prompt, TERMS_SCHEMA, "extracted_terms")
     return ExtractedTerms.model_validate(data)
 
 
-def perform_search(term: str, retmax: int = 50) -> Dict[str, Any]:
-    with Entrez.esearch(db="gds", term=term, retmode="xml", retmax=retmax) as handle:
-        return Entrez.read(handle)
+
+def perform_search(term: str, retmax: int = 50) -> List[str]:
+    # Apply specific search filter
+    search = f"{term} AND (\"Expression profiling by high throughput sequencing\"[Filter])"
+    with Entrez.esearch(db="gds", term=search, retmode="xml", retmax=retmax) as h:
+        out = Entrez.read(h)
+    return out.get("IdList", [])
 
 
-def extract_geo_info_batch(geo_ids: List[str]) -> List[Dict[str, Any]]:
-    ids_str = ",".join(geo_ids)
-    with Entrez.esummary(db="gds", id=ids_str, retmode="xml") as handle:
-        summaries = Entrez.read(handle)
+def fetch_geo_summaries(ids: List[str]) -> pd.DataFrame:
+    rows = []
+    print("⬇️ Fetching GEO summaries …")
+    for batch in tqdm([ids[i:i+10] for i in range(0, len(ids), 10)], desc="GEO summaries"):
+        with Entrez.esummary(db="gds", id=','.join(batch), retmode="xml") as h:
+            summaries = Entrez.read(h)
+        for rec in summaries:
+            rows.append({
+                'ID': rec.get('Accession', ''),
+                'Title': rec.get('title', ''),
+                'Summary': rec.get('summary', ''),
+                'Accession': rec.get('Accession', ''),
+                'Species': rec.get('taxon', ''),
+                'Date': rec.get('PDAT', ''),
+            })
+        time.sleep(0.3)
+    return pd.DataFrame(rows)
 
-    data = []
-    for geo_id, s in zip(geo_ids, summaries):
-        if isinstance(s, dict):
-            data.append(
-                {
-                    "ID": geo_id,
-                    "Title": s.get("title", ""),
-                    "Summary": s.get("summary", ""),
-                    "Accession": s.get("Accession", ""),
-                    "Species": s.get("taxon", ""),
-                    "Date": s.get("PDAT", ""),
-                }
-            )
-        else:
-            data.append(
-                {
-                    "ID": geo_id,
-                    "Title": "Error",
-                    "Summary": "Unable to fetch",
-                    "Accession": "Error",
-                    "Species": "Error",
-                    "Date": "Error",
-                }
-            )
-    return data
-
-
-async def assess_relevance_async(
-    df: pd.DataFrame, query: str, batch_size: int = 20
-) -> List[Assessment]:
-    async def _single_batch(batch_df: pd.DataFrame) -> List[Assessment]:
-        dataset_json = batch_df.to_json(orient="records")
-        prompt = (
-            "You are a highly knowledgeable biologist.\n"
-            f"Research query: \"{query}\"\n\n"
-            "Assess the following datasets (as JSON list) and output a JSON object "
-            'with key "assessments" that satisfies the provided schema, one entry '
-            "per dataset."
-        )
-        full_input = f"{prompt}\n\nDatasets:\n{dataset_json}"
-        data = await asyncio.to_thread(
-            call_openai_json, full_input, ASSESSMENTS_SCHEMA, "assessments"
-        )
-        return [Assessment.model_validate(a) for a in data["assessments"]]
-
-    tasks = []
+# ----------------------
+# Step 3: Relevance scoring
+# ----------------------
+async def assess_batch(df: pd.DataFrame, query: str, batch_size: int=20) -> List[Assessment]:
+    sys_prompt = load_prompt("assess_relevance.txt")
+    out: List[Assessment] = []
     for i in range(0, len(df), batch_size):
-        tasks.append(_single_batch(df.iloc[i : i + batch_size]))
+        sub = df.iloc[i:i+batch_size]
+        prompt = f"{sys_prompt}\nResearch query: \"{query}\"\nDatasets:\n" + sub.to_json(orient='records')
+        data = await asyncio.to_thread(call_openai_json, prompt, ASSESS_SCHEMA, "assessments")
+        out += [Assessment.model_validate(a) for a in data['assessments']]
+    return out
 
-    results_nested = await asyncio.gather(*tasks)
-    # Flatten
-    return [ass for sub in results_nested for ass in sub]
-
-
-async def repeated_relevance(
-    df: pd.DataFrame, query: str, repeats: int = 3, batch_size: int = 20
-) -> List[Dict[str, Any]]:
-    all_runs = []
+async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int) -> pd.DataFrame:
+    print("📊 Scoring relevance …")
+    all_runs: List[List[Assessment]] = []
     for _ in range(repeats):
-        all_runs.append(await assess_relevance_async(df, query, batch_size=batch_size))
-
-    collated: Dict[str, Dict[str, Any]] = {}
+        all_runs.append(await assess_batch(df, query))
+    coll: Dict[str, Dict[str, Any]] = {}
     for run in all_runs:
-        for ass in run:
-            d = collated.setdefault(ass.ID, {"scores": [], "justifications": []})
-            d["scores"].append(ass.RelevanceScore)
-            d["justifications"].append(ass.Justification)
+        for a in run:
+            entry = coll.setdefault(a.ID, {'scores': [], 'justifications': []})
+            entry['scores'].append(a.RelevanceScore)
+            entry['justifications'].append(a.Justification)
+    records: List[Dict[str, Any]] = []
+    for id_, v in coll.items():
+        rec: Dict[str, Any] = {'ID': id_, 'RelevanceScore': round(statistics.mean(v['scores']), 2)}
+        for i, (score, just) in enumerate(zip(v['scores'], v['justifications'])):
+            rec[f'Run{i+1}Score'] = score
+            rec[f'Run{i+1}Justification'] = just
+        records.append(rec)
+    return pd.DataFrame(records)
 
-    majority = []
-    for id_, d in collated.items():
-        score_counts = Counter(d["scores"])
-        majority_score, _ = score_counts.most_common(1)[0]
-        record = {"ID": id_, "RelevanceScore": majority_score}
-        for i, (score, just) in enumerate(zip(d["scores"], d["justifications"])):
-            record[f"Run{i+1}Score"] = score
-            record[f"Run{i+1}Justification"] = just
-        majority.append(record)
-    return majority
+# ----------------------
+# SRA extraction utils
+# ----------------------
+def strip_ns(root):
+    for e in root.iter():
+        if isinstance(e.tag, str) and '}' in e.tag:
+            e.tag = e.tag.split('}',1)[1]
 
+def get_geo_uid(acc: str) -> str:
+    with Entrez.esearch(db="gds", term=acc) as h:
+        rec = Entrez.read(h)
+    return rec['IdList'][0]
 
-# -----------------------------------------------------------------------------#
-# CLI entry‑point
-# -----------------------------------------------------------------------------#
+def get_sra_uid(geo_uid: str) -> str:
+    with Entrez.elink(dbfrom="gds", db="sra", id=geo_uid) as h:
+        rec = Entrez.read(h)
+    return rec[0]['LinkSetDb'][0]['Link'][0]['Id']
 
+def fetch_sra_xml(uid: str) -> str:
+    with Entrez.efetch(db="sra", id=uid, rettype="xml", retmode="text") as h:
+        return h.read()
 
-def main() -> None:
-    p = argparse.ArgumentParser(
-        description="Identify relevant GEO datasets for a biological research query."
-    )
-    p.add_argument("-q", "--query", required=True, help="Research query")
-    p.add_argument("--num-queries", "-n", type=int, default=3, help="Relevance repeats")
-    p.add_argument("--retmax", type=int, default=50, help="Max GEO records per term")
-    p.add_argument("-o", "--output", default="results.csv", help="Output CSV")
+def parse_bioproject(xml_str: str) -> str:
+    root = ET.fromstring(xml_str)
+    strip_ns(root)
+    stud = root.find('.//STUDY')
+    if stud is not None and 'accession' in stud.attrib:
+        return stud.attrib['accession']
+    proj = root.find('.//PROJECT')
+    if proj is not None and 'accession' in proj.attrib:
+        return proj.attrib['accession']
+    raise ValueError('No BioProject accession found')
+
+def fetch_runinfo(proj_acc: str) -> pd.DataFrame:
+    with Entrez.esearch(db="sra", term=proj_acc) as h:
+        rec = Entrez.read(h)
+    uid = rec['IdList'][0]
+    with Entrez.efetch(db="sra", id=uid, rettype="runinfo", retmode="text") as h:
+        df = pd.read_csv(h, low_memory=False)
+    return df
+
+# ----------------------
+# Main
+# ----------------------
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('-q','--query', required=True)
+    p.add_argument('-n','--num-queries', type=int, default=3)
+    p.add_argument('--retmax', type=int, default=50)
+    p.add_argument('--max-assess', type=int, default=None, help="Maximum number of datasets to assess relevance")
+    p.add_argument('-o','--output', default='final_combined.csv')
     args = p.parse_args()
 
-    # 1. Extract biological terms
-    print("🧠 Extracting terms …")
+    # GEO identification
+    print("🧠 Extracting terms …")
     terms = extract_terms(args.query)
-    search_terms = sorted(set(terms.extracted_terms + terms.expanded_terms))
-    print("Search terms:", ", ".join(search_terms))
-
-    # 2. GEO search
-    print("🔍 Searching GEO …")
+    print("🔍 Searching GEO …")
+    search_terms = set(terms.extracted_terms + terms.expanded_terms)
     geo_ids: List[str] = []
-    for term in tqdm(search_terms, desc="Entrez search"):
-        out = perform_search(term, retmax=args.retmax)
-        geo_ids.extend(out.get("IdList", []))
-
-    if not geo_ids:
-        print("No GEO datasets found.")
-        return
-
-    # Deduplicate preserving order
+    for t in search_terms:
+        print(f"Searching for: {t}")
+        geo_ids += perform_search(t, args.retmax)
     geo_ids = list(dict.fromkeys(geo_ids))
+    if not geo_ids:
+        print('No GEO IDs found')
+        sys.exit(0)
 
-    # 3. Fetch summaries
-    print("⬇️ Fetching summaries …")
-    rows = []
-    for i in tqdm(range(0, len(geo_ids), 10), desc="Summaries"):
-        rows.extend(extract_geo_info_batch(geo_ids[i : i + 10]))
-        time.sleep(0.3)  # NCBI etiquette
+    geo_df = fetch_geo_summaries(geo_ids)
 
-    df = pd.DataFrame(rows)
+    # Optionally limit number of assessments
+    if args.max_assess is not None:
+        geo_df = geo_df.head(args.max_assess)
 
-    # 4. Relevance scoring
-    print("📊 Scoring relevance …")
-    relevance_records = asyncio.run(
-        repeated_relevance(df, args.query, repeats=args.num_queries)
-    )
-    rel_df = pd.DataFrame(relevance_records)
+    # Relevance scoring
+    rel_df = asyncio.run(repeated_relevance(geo_df, args.query, args.num_queries))
+    geo_full = geo_df.merge(rel_df, on='ID', how='left')
 
-    # 5. Merge & save
+    # SRA metadata extraction
+    print("🔗 Fetching SRA metadata …")
+    runs = []
+    for acc in tqdm(geo_full['Accession'].unique(), desc='Processing SRA'):
+        try:
+            g_uid = get_geo_uid(acc)
+            s_uid = get_sra_uid(g_uid)
+            xml = fetch_sra_xml(s_uid)
+            bp = parse_bioproject(xml)
+            df_run = fetch_runinfo(bp)
+            df_run.insert(0, 'GEO_Accession', acc)
+            runs.append(df_run)
+        except Exception as e:
+            print(f'Warning, skipping {acc}: {e}')
+    if not runs:
+        print('No SRA runs retrieved')
+        sys.exit(0)
+    sra_df = pd.concat(runs, ignore_index=True)
+
+    # Join and subset
+    final = geo_full.merge(sra_df, left_on='Accession', right_on='GEO_Accession', how='inner')
+    # Keep only original GEO-identification columns + chosen SRA fields
+    keep_cols = list(geo_full.columns) + ['LibrarySource', 'LibraryLayout', 'LibraryStrategy']
+    final = final[keep_cols]
+
+    # Save
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    final_df = df.merge(rel_df, on="ID", how="left")
-    final_df.to_csv(args.output, index=False)
-    print(f"✅ Saved {len(final_df)} rows to {args.output}")
+    final.to_csv(args.output, index=False)
+    print(f'Saved combined table to {args.output}')
 
-
-if __name__ == "__main__":
+if __name__=='__main__':
     main()
