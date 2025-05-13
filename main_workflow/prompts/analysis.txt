@@ -44,6 +44,8 @@ One of the crucial steps of the edgeR/limma analysis is to identify an appropria
 Outputs will include the following:
 - abundance files from Kallisto
 - various outputs associated with the edgeR/limma analysis
-- if you encountered errors, the exact error messages that you saw
 
-However, in your response, you should describe some of your thinking process - talk about the errors you encountered, how you resolved them, and what you learned from the process.
+In your response, please include the following:
+- If you were able to run Kallisto, the name of the index file you used
+- If you were able to run the edger/limma analysis, the name of the tx2gene file you used
+- If you encountered any error messages, include this error message, and the steps that you would attempt to take to rectify it.
