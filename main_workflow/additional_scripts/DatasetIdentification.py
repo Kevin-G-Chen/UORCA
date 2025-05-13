@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Integrated GEO-to-SRA metadata extractor.
+Integrated GEO-to-SRA metadata extractor with relevance filtering and validity flag.
 
 This script combines two workflows:
  1. Identify relevant GEO datasets for a biological research query (uses OpenAI + NCBI Entrez).
- 2. Fetch linked SRA runinfo metadata for each GEO accession
+ 2. Fetch linked SRA runinfo metadata for each GEO accession above a relevance threshold.
 
-The final output joins GEO dataset info with selected SRA run metadata fields.
+The final output joins GEO dataset info with selected SRA run metadata fields, includes all GEO datasets,
+ and marks runs as valid based on library properties.
 """
 from __future__ import annotations
 import argparse
@@ -14,8 +15,8 @@ import asyncio
 import json
 import os
 import statistics
-import time
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -23,7 +24,7 @@ import pandas as pd
 from Bio import Entrez
 from dotenv import load_dotenv
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from tqdm import tqdm
 import xml.etree.ElementTree as ET
 
@@ -84,10 +85,7 @@ def extract_terms(query: str) -> ExtractedTerms:
     data = call_openai_json(prompt, TERMS_SCHEMA, "extracted_terms")
     return ExtractedTerms.model_validate(data)
 
-
-
 def perform_search(term: str, retmax: int = 50) -> List[str]:
-    # Apply specific search filter
     search = f"{term} AND (\"Expression profiling by high throughput sequencing\"[Filter])"
     with Entrez.esearch(db="gds", term=search, retmode="xml", retmax=retmax) as h:
         out = Entrez.read(h)
@@ -95,7 +93,7 @@ def perform_search(term: str, retmax: int = 50) -> List[str]:
 
 
 def fetch_geo_summaries(ids: List[str]) -> pd.DataFrame:
-    rows = []
+    rows: List[Dict[str, Any]] = []
     print("⬇️ Fetching GEO summaries …")
     for batch in tqdm([ids[i:i+10] for i in range(0, len(ids), 10)], desc="GEO summaries"):
         with Entrez.esummary(db="gds", id=','.join(batch), retmode="xml") as h:
@@ -115,57 +113,65 @@ def fetch_geo_summaries(ids: List[str]) -> pd.DataFrame:
 # ----------------------
 # Step 3: Relevance scoring
 # ----------------------
-async def assess_batch(df: pd.DataFrame, query: str, batch_size: int=20) -> List[Assessment]:
-    sys_prompt = load_prompt("assess_relevance.txt")
-    out: List[Assessment] = []
-    for i in range(0, len(df), batch_size):
-        sub = df.iloc[i:i+batch_size]
-        prompt = f"{sys_prompt}\nResearch query: \"{query}\"\nDatasets:\n" + sub.to_json(orient='records')
-        data = await asyncio.to_thread(call_openai_json, prompt, ASSESS_SCHEMA, "assessments")
-        out += [Assessment.model_validate(a) for a in data['assessments']]
-    return out
+async def assess_subbatch(sub_df: pd.DataFrame, query: str, schema: Dict[str, Any], name: str, rep: int, batch_idx: int, sem: asyncio.Semaphore) -> List[Assessment]:
+    async with sem:
+        print(f"⏳ Relevance rep {rep+1}, batch {batch_idx+1}/{(len(sub_df.index) // args.batch_size) + 1}")
+        sys_prompt = load_prompt("assess_relevance.txt")
+        prompt = f"{sys_prompt}\nResearch query: \"{query}\"\nDatasets to assess (batch {batch_idx+1}):\n" + sub_df.to_json(orient='records')
+        data = await asyncio.to_thread(call_openai_json, prompt, schema, name)
+        return [Assessment.model_validate(a) for a in data['assessments']]
 
-async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int) -> pd.DataFrame:
-    print("📊 Scoring relevance …")
-    all_runs: List[List[Assessment]] = []
-    for _ in range(repeats):
-        all_runs.append(await assess_batch(df, query))
+async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int, batch_size: int, concurrency: int) -> pd.DataFrame:
+    print(f"📊 Starting relevance scoring: {repeats} repetitions, batch size {batch_size}, concurrency {concurrency}")
+    sem = asyncio.Semaphore(concurrency)
+    tasks = []
+    # create sub-batches
+    batches = [df.iloc[i:i+batch_size] for i in range(0, len(df), batch_size)]
+    for rep in range(repeats):
+        for idx, sub in enumerate(batches):
+            tasks.append(assess_subbatch(sub, query, ASSESS_SCHEMA, "assessments", rep, idx, sem))
+    all_results = await asyncio.gather(*tasks)
+    # flatten and aggregate
     coll: Dict[str, Dict[str, Any]] = {}
-    for run in all_runs:
-        for a in run:
+    for result in all_results:
+        for a in result:
             entry = coll.setdefault(a.ID, {'scores': [], 'justifications': []})
             entry['scores'].append(a.RelevanceScore)
             entry['justifications'].append(a.Justification)
     records: List[Dict[str, Any]] = []
     for id_, v in coll.items():
-        rec: Dict[str, Any] = {'ID': id_, 'RelevanceScore': round(statistics.mean(v['scores']), 2)}
-        for i, (score, just) in enumerate(zip(v['scores'], v['justifications'])):
-            rec[f'Run{i+1}Score'] = score
-            rec[f'Run{i+1}Justification'] = just
+        rec = {'ID': id_, 'RelevanceScore': round(statistics.mean(v['scores']), 2)}
+        for i, (score, just) in enumerate(zip(v['scores'], v['justifications']), 1):
+            rec[f'Run{i}Score'] = score
+            rec[f'Run{i}Justification'] = just
         records.append(rec)
     return pd.DataFrame(records)
 
 # ----------------------
 # SRA extraction utils
 # ----------------------
-def strip_ns(root):
+def strip_ns(root: ET.Element):
     for e in root.iter():
         if isinstance(e.tag, str) and '}' in e.tag:
-            e.tag = e.tag.split('}',1)[1]
+            e.tag = e.tag.split('}', 1)[1]
+
 
 def get_geo_uid(acc: str) -> str:
     with Entrez.esearch(db="gds", term=acc) as h:
         rec = Entrez.read(h)
     return rec['IdList'][0]
 
+
 def get_sra_uid(geo_uid: str) -> str:
     with Entrez.elink(dbfrom="gds", db="sra", id=geo_uid) as h:
         rec = Entrez.read(h)
     return rec[0]['LinkSetDb'][0]['Link'][0]['Id']
 
+
 def fetch_sra_xml(uid: str) -> str:
     with Entrez.efetch(db="sra", id=uid, rettype="xml", retmode="text") as h:
         return h.read()
+
 
 def parse_bioproject(xml_str: str) -> str:
     root = ET.fromstring(xml_str)
@@ -177,6 +183,7 @@ def parse_bioproject(xml_str: str) -> str:
     if proj is not None and 'accession' in proj.attrib:
         return proj.attrib['accession']
     raise ValueError('No BioProject accession found')
+
 
 def fetch_runinfo(proj_acc: str) -> pd.DataFrame:
     with Entrez.esearch(db="sra", term=proj_acc) as h:
@@ -190,42 +197,52 @@ def fetch_runinfo(proj_acc: str) -> pd.DataFrame:
 # Main
 # ----------------------
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument('-q','--query', required=True)
-    p.add_argument('-n','--num-queries', type=int, default=3)
-    p.add_argument('--retmax', type=int, default=50)
-    p.add_argument('--max-assess', type=int, default=None, help="Maximum number of datasets to assess relevance")
-    p.add_argument('-o','--output', default='final_combined.csv')
-    args = p.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-q', '--query', required=True)
+    parser.add_argument('-n', '--num-queries', type=int, default=3,
+                        help='Number of relevance scoring repeats')
+    parser.add_argument('--retmax', type=int, default=50,
+                        help='Max GEO results per term')
+    parser.add_argument('--max-assess', type=int, default=None,
+                        help='Max datasets to assess relevance')
+    parser.add_argument('-t', '--relevance-threshold', type=float, default=7.0,
+                        help='Minimum relevance score to fetch SRA metadata')
+    parser.add_argument('--batch-size', type=int, default=20,
+                        help='Number of datasets per relevance batch')
+    parser.add_argument('--concurrency', type=int, default=1,
+                        help='Max parallel relevance API calls')
+    parser.add_argument('-o', '--output', default='final_combined.csv',
+                        help='Output CSV path')
+    global args
+    args = parser.parse_args()
 
-    # GEO identification
     print("🧠 Extracting terms …")
     terms = extract_terms(args.query)
-    print("🔍 Searching GEO …")
     search_terms = set(terms.extracted_terms + terms.expanded_terms)
+
+    print("🔍 Searching GEO …")
     geo_ids: List[str] = []
-    for t in search_terms:
-        print(f"Searching for: {t}")
-        geo_ids += perform_search(t, args.retmax)
+    for term in search_terms:
+        print(f"Searching for: {term}")
+        geo_ids.extend(perform_search(term, args.retmax))
     geo_ids = list(dict.fromkeys(geo_ids))
     if not geo_ids:
         print('No GEO IDs found')
         sys.exit(0)
 
     geo_df = fetch_geo_summaries(geo_ids)
-
-    # Optionally limit number of assessments
     if args.max_assess is not None:
         geo_df = geo_df.head(args.max_assess)
 
-    # Relevance scoring
-    rel_df = asyncio.run(repeated_relevance(geo_df, args.query, args.num_queries))
+    rel_df = asyncio.run(repeated_relevance(geo_df, args.query, args.num_queries, args.batch_size, args.concurrency))
     geo_full = geo_df.merge(rel_df, on='ID', how='left')
 
-    # SRA metadata extraction
-    print("🔗 Fetching SRA metadata …")
-    runs = []
-    for acc in tqdm(geo_full['Accession'].unique(), desc='Processing SRA'):
+    # Filter for SRA fetch
+    to_fetch = geo_full[geo_full['RelevanceScore'] >= args.relevance_threshold]
+    print(f"🔗 Fetching SRA metadata for {len(to_fetch)} datasets (threshold >= {args.relevance_threshold}) …")
+
+    runs: List[pd.DataFrame] = []
+    for acc in tqdm(to_fetch['Accession'].unique(), desc='Processing SRA'):
         try:
             g_uid = get_geo_uid(acc)
             s_uid = get_sra_uid(g_uid)
@@ -236,16 +253,29 @@ def main():
             runs.append(df_run)
         except Exception as e:
             print(f'Warning, skipping {acc}: {e}')
-    if not runs:
-        print('No SRA runs retrieved')
-        sys.exit(0)
-    sra_df = pd.concat(runs, ignore_index=True)
 
-    # Join and subset
-    final = geo_full.merge(sra_df, left_on='Accession', right_on='GEO_Accession', how='inner')
-    # Keep only original GEO-identification columns + chosen SRA fields
-    keep_cols = list(geo_full.columns) + ['LibrarySource', 'LibraryLayout', 'LibraryStrategy']
-    final = final[keep_cols]
+    if runs:
+        sra_df = pd.concat(runs, ignore_index=True)
+    else:
+        sra_df = pd.DataFrame(columns=['GEO_Accession'])
+
+    # Merge all GEO datasets with fetched SRA info
+    merged = geo_full.merge(
+        sra_df,
+        left_on='Accession',
+        right_on='GEO_Accession',
+        how='left'
+    )
+
+    # Select and flag validity
+    cols_to_keep = list(geo_full.columns) + ['LibrarySource', 'LibraryLayout', 'LibraryStrategy']
+    final = merged[cols_to_keep].copy()
+    final['Valid'] = final.apply(
+        lambda row: 'Yes' if (row.get('LibraryLayout') == 'PAIRED' \
+                              and row.get('LibrarySource') == 'TRANSCRIPTOMIC') else 'No',
+        axis=1
+    )
+    final = final.drop_duplicates(subset=['Accession'])
 
     # Save
     output_path = Path(args.output)
@@ -253,5 +283,5 @@ def main():
     final.to_csv(args.output, index=False)
     print(f'Saved combined table to {args.output}')
 
-if __name__=='__main__':
+if __name__ == '__main__':
     main()
