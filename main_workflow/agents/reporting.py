@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any, Union
 from pydantic_ai import Agent, RunContext
 from dotenv import load_dotenv
 from shared import ReportingContext
-from shared.workflow_logging import log_tool
+from shared.workflow_logging import log_tool, log_agent_tool
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -257,7 +257,7 @@ async def build_report(ctx: RunContext[ReportingContext]) -> str:
         return error_msg
 
 
-@log_tool
+@log_agent_tool
 async def run_agent_async(prompt: str, deps: ReportingContext, usage=None):
     """Thin wrapper used by master.py to invoke the reporting agent asynchronously."""
     logger.info("📝 Reporting agent invoked by master – prompt: %s", prompt)
