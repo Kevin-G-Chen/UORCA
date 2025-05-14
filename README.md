@@ -129,7 +129,7 @@ Everything you need for running UORCA lives under the `main_workflow/` folder.  
 
 By drilling down into **`main_workflow/`**, you’ll see the full LLM-driven pipeline.  All the business logic—data extraction, metadata wrangling, differential-expression analysis, and final reporting—is orchestrated there by a small team of specialised “agents,” each with its own clear responsibility.
 
-Additional scripts and tools
+## Additional scripts and tools
 
 ### Dataset identification
 
