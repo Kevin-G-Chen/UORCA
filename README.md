@@ -128,3 +128,68 @@ Everything you need for running UORCA lives under the `main_workflow/` folder.  
 ---
 
 By drilling down into **`main_workflow/`**, you’ll see the full LLM-driven pipeline.  All the business logic—data extraction, metadata wrangling, differential-expression analysis, and final reporting—is orchestrated there by a small team of specialised “agents,” each with its own clear responsibility.
+
+Additional scripts and tools
+
+### Dataset identification
+
+The `DatasetIdentification.py` script automates the process of finding relevant GEO datasets for your biological research query and fetching their associated SRA metadata.
+
+#### Features:
+- Uses OpenAI to extract relevant search terms from your research query
+- Searches GEO database using NCBI Entrez API
+- Scores datasets for relevance to your research question
+- Fetches SRA metadata for relevant datasets
+- Flags valid RNA-seq runs based on library properties
+
+#### Usage:
+```bash
+python main_workflow/additional_scripts/DatasetIdentification.py \
+    -q "Your research query here" \
+    -n 3 \                  # Number of relevance scoring repeats
+    -t 7.0 \                # Minimum relevance score threshold
+    -o output_file.csv \    # Output file path
+    --generate-multi-csv    # Generate a CSV formatted for multi-dataset analysis
+```
+
+#### Key parameters:
+- `-q, --query`: Your biological research question (required)
+- `-n, --num-queries`: Number of times to repeat relevance scoring (default: 3)
+- `-t, --relevance-threshold`: Minimum score to fetch SRA metadata (default: 7.0)
+- `-o, --output`: Path for output CSV (default: final_combined.csv)
+- `--generate-multi-csv`: Create an additional CSV file for multi-dataset analysis
+
+### Multi-dataset processing
+
+The `submit_datasets.py` script allows you to process multiple datasets in parallel using SLURM.
+
+#### Usage:
+```bash
+uv run main_workflow/additional_scripts/submit_datasets.py \
+    --csv_file multi_dataset_input.csv \
+    --output_dir ../UORCA_results/output_directory \
+    --resource_dir ./data/kallisto_indices \
+    --max_parallel 10
+```
+
+#### Parameters:
+- `--csv_file`: Path to CSV file containing datasets to process (required)
+- `--output_dir`: Directory where all results will be stored (default: ../UORCA_results)
+- `--resource_dir`: Directory with Kallisto indices (default: ./data/kallisto_indices/)
+- `--max_parallel`: Maximum number of parallel SLURM jobs (default: 10)
+
+#### CSV file format:
+The CSV should contain at least two columns:
+1. `Accession`: GEO accession numbers (e.g., GSE123456)
+2. `organism`: Organism name (e.g., human, mouse)
+
+Additional columns can be included, but will be ignored by the script. The script will automatically generate a new CSV file with the following columns.
+
+Example CSV content:
+```
+Accession,organism,RelevanceScore,Valid
+GSE123456,human,8.5,Yes
+GSE789012,mouse,9.2,Yes
+```
+
+You can use the `--generate-multi-csv` option in the DatasetIdentification.py script to automatically generate this CSV file.
