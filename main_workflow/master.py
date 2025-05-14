@@ -208,7 +208,11 @@ def main():
     args = ap.parse_args()
 
     # -------- create & remember the chosen run folder -----------------------
-    output_dir = f"{args.output_dir}/{args.accession}" or f"./analysis/{args.accession}"
+    output_dir = (
+        f"{args.output_dir}/{args.accession}"
+        if args.output_dir
+        else f"./analysis/{args.accession}"
+    )
     os.makedirs(output_dir, exist_ok=True)
 
     # -------- configure logging *inside* that folder ------------------------

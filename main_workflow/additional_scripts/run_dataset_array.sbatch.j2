@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=96G
+#SBATCH --partition=tki_agpdev
+#SBATCH --constraint="zen"
+#SBATCH -t 0-6:00
+#SBATCH --array=0-{{ array_size }}%{{ max_parallel }}
+#SBATCH -o {{ logs_dir }}/run_%A_%a.out
+#SBATCH -e {{ logs_dir }}/run_%A_%a.err
+
+source ~/.bashrc
+module load R/4.1.2-gcc-blas-fullsupport
+
+echo "Current time: $(date)"
+echo "Array task $SLURM_ARRAY_TASK_ID processing dataset"
+
+CSV_FILE="{{ csv_file }}"
+
+# Skip header; SLURM_ARRAY_TASK_ID is zero‑based
+LINE=$(awk -F, "NR==${SLURM_ARRAY_TASK_ID}+2 {print \$0}" "$CSV_FILE")
+accession=$(echo "$LINE" | cut -d',' -f1)
+organism=$(echo "$LINE"  | cut -d',' -f2)
+
+echo "Running accession=$accession organism=$organism"
+
+export PYTHONPATH="{{ project_root }}:$PYTHONPATH"
+export R_LIBS_USER=~/R/library
+
+uv run {{ project_root }}/main_workflow/master.py \
+    --accession "$accession" \
+    --output_dir {{ base_output_dir }} \
+    --resource_dir {{ resource_dir }} \
+    --organism "$organism"
+
+echo "Finished $accession at $(date)"

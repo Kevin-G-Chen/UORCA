@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=96G
+#SBATCH --partition=tki_agpdev
+#SBATCH --constraint="zen"
+#SBATCH -t 0-6:00
+#SBATCH -o {{ logs_dir }}/run_master.out
+#SBATCH -e {{ logs_dir }}/run_master.out.err
+
+source ~/.bashrc
+module load R/4.1.2-gcc-blas-fullsupport
+
+echo "Current time: $(date)"
+echo "Running with parallelized Kallisto quantification"
+echo "CPUs available: $SLURM_CPUS_PER_TASK"
+
+export PYTHONPATH="{{ project_root }}:$PYTHONPATH"
+export R_LIBS_USER=~/R/library
+
+echo "Starting run for {{ accession }} at $(date)"
+uv run {{ project_root }}/main_workflow/master.py \
+    --accession {{ accession }} \
+    --output_dir {{ output_dir }} \
+    --resource_dir {{ resource_dir }} \
+    --organism {{ organism }}
+echo "Completed run for {{ accession }} at $(date)"
