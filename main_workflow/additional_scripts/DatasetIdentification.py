@@ -99,14 +99,33 @@ def fetch_geo_summaries(ids: List[str]) -> pd.DataFrame:
         with Entrez.esummary(db="gds", id=','.join(batch), retmode="xml") as h:
             summaries = Entrez.read(h)
         for rec in summaries:
-            rows.append({
+            # Safely extract PubMed IDs if available
+            pmids = []
+            try:
+                if 'PubMedIds' in rec and rec['PubMedIds']:
+                    pmids = [int(pmid) for pmid in rec['PubMedIds']]
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Error extracting PubMed IDs for {rec.get('Accession', '')}: {e}")
+
+            # Build row with optional PubMed data
+            row_data = {
                 'ID': rec.get('Accession', ''),
                 'Title': rec.get('title', ''),
                 'Summary': rec.get('summary', ''),
                 'Accession': rec.get('Accession', ''),
                 'Species': rec.get('taxon', ''),
-                'Date': rec.get('PDAT', ''),
-            })
+                'Date': rec.get('PDAT', '')
+            }
+
+            # Add PubMed information when available
+            if pmids:
+                row_data['PrimaryPubMedID'] = pmids[0]
+                row_data['AllPubMedIDs'] = ','.join(str(pid) for pid in pmids)
+            else:
+                row_data['PrimaryPubMedID'] = None
+                row_data['AllPubMedIDs'] = None
+
+            rows.append(row_data)
         time.sleep(0.3)
     return pd.DataFrame(rows)
 
@@ -213,6 +232,9 @@ def main():
                         help='Max parallel relevance API calls')
     parser.add_argument('-o', '--output', default='final_combined.csv',
                         help='Output CSV path')
+    parser.add_argument('--generate-multi-csv', action='store_true',
+                       help='Generate an additional CSV file formatted for multi-dataset analysis')
+
     global args
     args = parser.parse_args()
 
@@ -275,13 +297,38 @@ def main():
                               and row.get('LibrarySource') == 'TRANSCRIPTOMIC') else 'No',
         axis=1
     )
+
+    # For convenience, generate URLs to PubMed and GEO
+    def create_pubmed_url(pmid):
+        if pd.notna(pmid):
+            return f"https://pubmed.ncbi.nlm.nih.gov/{int(pmid)}/"
+        return None
+
+    def create_geo_url(accession):
+        if pd.notna(accession):
+            return f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={accession}"
+        return None
+
+    final['PubMedURL'] = final['PrimaryPubMedID'].apply(create_pubmed_url)
+    final['GEOURL'] = final['Accession'].apply(create_geo_url)
+
     final = final.drop_duplicates(subset=['Accession'])
+
 
     # Save
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     final.to_csv(args.output, index=False)
     print(f'Saved combined table to {args.output}')
+
+    if args.generate_multi_csv:
+        multi_df = final[['Accession', 'Species', 'PrimaryPubMedID', 'RelevanceScore', 'Valid']].copy()
+        multi_df = multi_df[multi_df['Valid'] == 'Yes']
+        multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
+        multi_df = multi_df.rename(columns={'Species': 'organism'})
+        multi_csv_path = os.path.join(os.path.dirname(args.output), 'multi_dataset_input.csv')
+        multi_df.to_csv(multi_csv_path, index=False)
+        print(f"Generated multi-dataset input CSV at {multi_csv_path}")
 
 if __name__ == '__main__':
     main()
