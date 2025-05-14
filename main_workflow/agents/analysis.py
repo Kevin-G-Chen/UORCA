@@ -897,7 +897,7 @@ Designed contrasts:
         logger.error("❌ %s", error_msg, exc_info=True)
         return error_msg
 
-@log_tool
+@log_agent_tool
 async def run_agent_async(prompt: str, deps: AnalysisContext, usage=None):
     logger.info("🚀 Analysis agent invoked with prompt: %s", prompt)
     result = await rnaseq_agent.run(prompt, deps=deps, usage=usage)
