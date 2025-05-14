@@ -1,3 +1,7 @@
+# SLURM
+*.out
+*.err
+
 # Misc files
 data/*
 
