@@ -5,14 +5,14 @@ from typing import Optional, List, Dict, Any
 
 # --- Core context; minimal fields shared everywhere ---
 class RNAseqCoreContext(BaseModel):
-    accession: str = Field(..., description="Accession ID for the run")
+    accession: str = Field(..., description="NCBI GEO Accession ID for the run")
     output_dir: str = Field(..., description="Output directory for the run")
     fastq_dir: Optional[str] = Field(None, description="Directory for FASTQ files")
-    metadata_path: Optional[str] = Field(None, description="Path to metadata file")
+    metadata_path: Optional[str] = Field(None, description="Path to sample metadata file")
     organism: str = Field(..., description="Organism name")
-    resource_dir: Optional[str] = Field(None, description="Directory for resources")
-    files: Optional[List[str]] = Field(None, description="List of files to process")
-    dataset_information: Optional[str] = Field(None, description="Dataset information from GEO metadata")
+    resource_dir: Optional[str] = Field(None, description="Directory containing resources such as Kallisto indices and transcript to gene (t2g) mapping files")
+    files: Optional[List[str]] = Field(None, description="List of identified files in the system")
+    dataset_information: Optional[str] = Field(None, description="Information about the dataset being identified")
 
     class Config:
         extra = "allow"  # allows enrichment by agents
