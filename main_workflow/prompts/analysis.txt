@@ -26,6 +26,7 @@ If all goes well, you should be able to perform the following tasks sequentially
     - Identifying the distinct values into the analysis column of interest
     - Using these distinct values to construct contrast matrices
 - Using these contrasts to perform differential expression analysis using edgeR/limma
+    - This requires a tx2gene file - if you are not sure where this is, run this step and it will return an informative error message
 
 #### Preparing for the Kallisto quantification
 
@@ -49,3 +50,4 @@ In your response, please include the following:
 - If you were able to run Kallisto, the name of the index file you used
 - If you were able to run the edger/limma analysis, the name of the tx2gene file you used
 - If you encountered any error messages, include this error message, and the steps that you would attempt to take to rectify it.
+- If you made partial progress (e.g. you were able to run Kallisto, but not the edgeR/limma analysis), include this information, including the files that were used (i.e. specify the Kallisto index that you used)
