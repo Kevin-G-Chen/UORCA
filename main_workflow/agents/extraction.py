@@ -97,8 +97,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
           .reset_index()              # GSM ID becomes its own column
           .rename(columns={"index": "GSM"})
     )
-    meta_wide.to_csv(meta_dir / "meta_wide.csv", index=False)
-    logger.info("meta_wide.csv written (%d rows, %d cols)", len(meta_wide), meta_wide.shape[1])
+    logger.info("meta_wide.csv prepared (%d rows, %d cols)", len(meta_wide), meta_wide.shape[1])
 
 
     # ── long GSM↔SRX↔SRR table ──────────────────────────────────────────────
@@ -136,7 +135,11 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
         validate="many_to_one"
     )
     out_df.to_csv(meta_dir / "meta_long.csv", index=False)
-    logger.info("meta_long.csv written (%d rows)", len(out_df))
+
+    metadata_filename = f"{accession}_metadata.csv"
+    out_df.to_csv(meta_dir / metadata_filename, index=False)
+
+    logger.info("%s written (%d rows)", metadata_filename, len(out_df))
 
     # expose merged table to downstream agents
     ctx.deps.metadata_df = out_df
