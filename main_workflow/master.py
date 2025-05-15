@@ -93,7 +93,7 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
            - Merge columns if necessary into a single grouping variable
            - Extract unique values and construct appropriate contrast matrices
 
-        2. Identify the appropriate Kallisto index file for {ctx.deps.organism} in the resource directory
+        2. Identify the appropriate Kallisto index file for {ctx.deps.organism} in the resource directory: {ctx.deps.resource_dir}
            - Ensure you select the correct species-specific index (.idx file)
 
         3. Run Kallisto quantification:
@@ -102,12 +102,11 @@ async def analyse(ctx: RunContext[AnalysisContext]) -> str:
            - Generate abundance files
 
         4. Perform differential expression analysis using edgeR/limma:
-           - Use the appropriate tx2gene file for {ctx.deps.organism}
+           - Use the appropriate tx2gene file for {ctx.deps.organism}, again found in the resource directory: {ctx.deps.resource_dir}
            - Follow best practices for normalization, filtering, and statistical analysis
            - Generate visualizations (MDS plots, heatmaps, volcano plots)
 
         Provide detailed explanations for each step and handle errors gracefully.
-        Skip GSEA analysis for this run.
     """
 
     # Log the start of the reflection process
