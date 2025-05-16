@@ -3,6 +3,12 @@ import glob
 import argparse
 import pandas as pd
 import logging
+from pathlib import Path
+
+DATATABLES_CSS = "https://cdn.datatables.net/2.0.7/css/dataTables.dataTables.min.css"
+JQUERY_JS      = "https://code.jquery.com/jquery-3.7.1.min.js"
+DATATABLES_JS  = "https://cdn.datatables.net/2.0.7/js/dataTables.min.js"
+
 
 # Set up basic logging
 logging.basicConfig(
@@ -11,6 +17,26 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 logger = logging.getLogger(__name__)
+
+def write_datatables_html(df: pd.DataFrame, path: Path, title="Integration Matrix"):
+    DATATABLES_CSS = "https://cdn.datatables.net/2.0.7/css/dataTables.dataTables.min.css"
+    JQUERY_JS      = "https://code.jquery.com/jquery-3.7.1.min.js"
+    DATATABLES_JS  = "https://cdn.datatables.net/2.0.7/js/dataTables.min.js"
+
+    html = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>{title}</title>
+<link rel="stylesheet" href="{DATATABLES_CSS}">
+<script src="{JQUERY_JS}"></script>
+<script src="{DATATABLES_JS}"></script>
+<style>body{{margin:2rem;font-family:sans-serif}}</style>
+</head><body>
+<h1>{title}</h1>
+{df.to_html(index=True, classes="display", table_id="matrix")}
+<script>$(function(){{$('#matrix').DataTable({{scrollX:true,pageLength:25}});}});</script>
+</body></html>"""
+    path.write_text(html, encoding="utf-8")
+
 
 def find_contrast_csvs(root_dir: str) -> list[str]:
     """Recursively find all contrasts.csv under root_dir."""
@@ -101,7 +127,7 @@ def main():
     p = argparse.ArgumentParser(description="Build gene×contrast binary matrix")
     p.add_argument("root_dir",
                    help="Root folder under which analysis results (contrasts.csv & deg_*.csv) live")
-    p.add_argument("--output", "-o",
+    p.add_argument("--outdir", "-o",
                    default="integration_matrix.csv",
                    help="Path to write matrix CSV")
     p.add_argument("--lfc", "-l", type=float, default=1.0,
@@ -110,6 +136,8 @@ def main():
                    help="Adjusted p-value threshold (default=0.05)")
     p.add_argument("--verbose", "-v", action="store_true",
                    help="Enable verbose logging")
+    p.add_argument("--html", action="store_true",
+                   help="Also write an interactive DataTables HTML file")
     args = p.parse_args()
 
     if args.verbose:
@@ -118,11 +146,38 @@ def main():
     logger.info(f"Starting analysis on directory: {args.root_dir}")
     logger.info(f"Using thresholds: |logFC| >= {args.lfc}, adj.P.Val <= {args.padj}")
 
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)  # safe even if it already exists
+
+    logger.info(f"Writing all outputs under: {outdir.resolve()}")
+
+    matrix_path = outdir / "integrated_results.csv"
+    filtered_path = outdir / "integrated_results_filtered.csv"
+    html_path = outdir / "integrated_results_filtered.html"
+
+    # --- original logic ---
     matrix = build_binary_matrix(args.root_dir, args.lfc, args.padj)
-    matrix.to_csv(args.output)
-    logger.info(f"Wrote integration matrix to: {args.output}")
-    print(f"Wrote integration matrix: {args.output} "
-          f"({matrix.shape[0]} genes × {matrix.shape[1]} contrasts)")
+    matrix.to_csv(matrix_path)
+    logger.info(f"Wrote integration matrix to: {matrix_path}")
+
+    filtered = matrix[matrix.sum(axis=1) > 0].copy()
+    filtered["Num_DE_Contrasts"] = filtered.sum(axis=1)
+    filtered.to_csv(filtered_path)
+
+    logger.info(f"Wrote filtered integration matrix to: {filtered_path}")
+
+    # --- write HTML if requested ---------------------------
+    if args.html:
+        write_datatables_html(filtered, html_path)
+        logger.info(f"Wrote interactive HTML table to: {html_path}")
+
+    print(
+        f"✓ Results:\n"
+        f"  • {matrix_path.name} ({matrix.shape[0]}×{matrix.shape[1]})\n"
+        f"  • {filtered_path.name} ({filtered.shape[0]}×{filtered.shape[1]})\n"
+        f"  • {html_path.name if args.html else '(HTML skipped)'}"
+    )
+
 
 if __name__ == "__main__":
     main()
