@@ -197,13 +197,54 @@ async def report(ctx: RunContext[ReportingContext]) -> str:
     )
     return r.output
 
+def cleanup_large_files(output_dir, logger):
+    """
+    Clean up large FASTQ and SRA files to save disk space.
+    Only removes files from standard pipeline folders.
+
+    Args:
+        output_dir: Base output directory for the run
+        logger: Logger instance for recording actions
+    """
+    output_path = pathlib.Path(output_dir)
+    sra_dir = output_path / "sra"
+    fastq_dir = output_path / "fastq"
+
+    # Clean up SRA files
+    if sra_dir.exists():
+        logger.info("🧹 Cleaning up SRA files in %s", sra_dir)
+        sra_files = list(sra_dir.glob("**/*.sra")) + list(sra_dir.glob("**/*.sralite"))
+        for file in sra_files:
+            try:
+                file.unlink()
+                logger.info("🗑️ Removed SRA file: %s", file)
+            except Exception as e:
+                logger.warning("⚠️ Failed to remove %s: %s", file, str(e))
+
+    # Clean up FASTQ files
+    if fastq_dir.exists():
+        logger.info("🧹 Cleaning up FASTQ files in %s", fastq_dir)
+        fastq_files = list(fastq_dir.glob("**/*.fastq.gz"))
+        for file in fastq_files:
+            try:
+                file.unlink()
+                logger.info("🗑️ Removed FASTQ file: %s", file)
+            except Exception as e:
+                logger.warning("⚠️ Failed to remove %s: %s", file, str(e))
+
+    logger.info("✅ Cleanup completed")
+
+
 # ── CLI entrypoint ──────────────────────────
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--accession", required=True)
     ap.add_argument("--output_dir", default=None)
     ap.add_argument("--resource_dir", default=None)
-    ap.add_argument("--organism", default="human")
+    ap.add_argument("--organism", required=True,
+                       help="Name of the organism to be analysed (must be supplied)")
+    ap.add_argument("--cleanup", action="store_true",
+                       help="Clean up large FASTQ and SRA files after successful completion")
     args = ap.parse_args()
 
     # -------- create & remember the chosen run folder -----------------------
@@ -247,6 +288,13 @@ def main():
 
     logger.info("✅ Master agent completed execution")
     logger.info("📝 Final output: %s", run.output)
+
+    # Perform cleanup if requested
+    if args.cleanup:
+        logger.info("🧹 Starting cleanup of large temporary files...")
+        cleanup_large_files(output_dir, logger)
+    else:
+        logger.info("ℹ️ Cleanup skipped. Use --cleanup flag to remove FASTQ/SRA files")
 
     try:
         usage_stats = run.usage()
