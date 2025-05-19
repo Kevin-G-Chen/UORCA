@@ -62,13 +62,13 @@ async def extract(ctx: RunContext[ExtractionContext], accession: str) -> str:
 async def evaluate_analysis(ctx: RunContext[RNAseqCoreContext]) -> str:
     """
     Evaluate the success of the analysis run by checking output files and tool logs.
-    
+
     This tool examines:
     1. Kallisto quantification results (abundance files exist and are non-empty)
     2. edgeR/limma analysis results (DEG files exist)
     3. Tool logs for errors or failures
     4. Whether proper files were used (correct organism-specific indices and tx2gene files)
-    
+
     Returns a detailed diagnostic string with the evaluation results.
     """
     logger = logging.getLogger(__name__)
@@ -203,85 +203,85 @@ async def evaluate_analysis(ctx: RunContext[RNAseqCoreContext]) -> str:
 async def generate_reflection(ctx: RunContext[RNAseqCoreContext]) -> str:
     """
     Generate a concise reflection based on analysis diagnostics.
-    
+
     This tool creates a focused reflection that:
     1. Identifies what went wrong in the analysis
     2. Suggests specific corrections for the next attempt
     3. Provides guidance on what files or parameters to use
-    
+
     Returns a concise reflection string that will guide the next analysis attempt.
     """
     logger = logging.getLogger(__name__)
     logger.info("🧠 Generating reflection for failed analysis")
-    
+
     # Safely access analysis_diagnostics
     analysis_diagnostics = getattr(ctx.deps, 'analysis_diagnostics', None)
     if not analysis_diagnostics:
         logger.warning("⚠️ No analysis diagnostics available - running evaluation first")
         await evaluate_analysis(ctx)
         analysis_diagnostics = getattr(ctx.deps, 'analysis_diagnostics', "No diagnostics available")
-    
+
     # Safely access tool_logs
     tool_logs = getattr(ctx.deps, 'tool_logs', [])
     recent_logs = tool_logs[-5:] if tool_logs and len(tool_logs) > 0 else []
-    
+
     # Create reflection prompt
     reflection_prompt = f"""
     Based on the RNA-seq analysis diagnostics, identify the key issues and suggest concrete next steps.
-    
+
     ORGANISM: {ctx.deps.organism}
-    
+
     DIAGNOSTICS:
     {analysis_diagnostics}
-    
+
     TOOL LOGS (most recent 5):
     {json.dumps(recent_logs, indent=2)}
-    
+
     Please provide a CONCISE one-paragraph reflection that:
     1. Clearly identifies the main problem(s)
     2. Gives specific guidance on what file paths or parameters to use in the next attempt
     3. Indicates which steps succeeded and can be skipped in the next run
-    
+
     REFLECTION:
     """
-    
+
     # Run a small LLM to generate the reflection
     reflection_agent = Agent(
         "openai:o4-mini",
         system_prompt="You are an RNA-seq analysis troubleshooter who provides concise, actionable guidance."
     )
-    
+
     result = await reflection_agent.run(reflection_prompt)
     reflection = result.output.strip()
-    
+
     # Safely access and update reflections
     reflections = getattr(ctx.deps, 'reflections', [])
     reflections.append(reflection)
     setattr(ctx.deps, 'reflections', reflections)
-    
+
     logger.info("✅ Generated reflection: %s", reflection)
-    
+
     return reflection
 
 @master.tool
 async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
     """
     Run RNA-seq analysis with intelligent reflection capabilities.
-    
+
     Instead of a fixed number of iterations, this tool:
     1. Attempts analysis
     2. Evaluates success based on output files and logs
     3. Generates targeted reflections when needed
     4. Continues until success or max attempts reached
-    
+
     This approach follows the Reflexion methodology for LLM self-improvement.
     """
     # Maximum number of attempts
-    max_attempts = 3
-    
+    max_attempts = 5
+
     # Initialize collections
     logger = logging.getLogger(__name__)
-    
+
     # Convert to AnalysisContext if needed
     if not isinstance(ctx.deps, AnalysisContext):
         # Create an AnalysisContext with all the attributes from RNAseqCoreContext
@@ -289,7 +289,7 @@ async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
         # Replace the context's deps
         ctx.deps = analysis_ctx
         logger.info("🔄 Converted RNAseqCoreContext to AnalysisContext")
-    
+
     # Initialize collections if they don't exist
     for attr_name, default_value in [
         ('tool_logs', []),
@@ -385,7 +385,7 @@ async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
         if analysis_success:
             logger.info("✅ Analysis attempt %d succeeded!", attempt)
             break
-        
+
         # If unsuccessful and not at max attempts, generate reflection for next attempt
         if attempt < max_attempts:
             logger.info("❌ Analysis attempt %d failed, generating reflection", attempt)
@@ -396,20 +396,20 @@ async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
     # Summarize the analysis process
     analysis_success = getattr(ctx.deps, 'analysis_success', False)
     analysis_diagnostics = getattr(ctx.deps, 'analysis_diagnostics', "No diagnostics available")
-    
+
     if analysis_success:
         summary = f"""
         Analysis completed successfully after {attempt} attempt(s).
-        
+
         {final_output}
         """
     else:
         summary = f"""
         Analysis did not complete successfully after {max_attempts} attempts.
-        
+
         Final diagnostic information:
         {analysis_diagnostics}
-        
+
         Final output:
         {final_output}
         """
@@ -490,7 +490,7 @@ def main():
                        help="Name of the organism to be analysed (must be supplied)")
     ap.add_argument("--cleanup", action="store_true",
                        help="Clean up large FASTQ and SRA files after successful completion")
-    
+
     # AnalysisContext is already imported at the top of the file
     args = ap.parse_args()
 
