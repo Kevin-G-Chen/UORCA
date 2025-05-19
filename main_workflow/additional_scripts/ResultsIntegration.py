@@ -1,14 +1,19 @@
+# Dependencies:
+# - Base: os, glob, argparse, pandas, logging, pathlib
+# - Visualization: panel, bokeh - install with: pip install panel bokeh
+#
+# New dependencies for improved visualization:
+# Panel provides a high-level API for building interactive web applications
+# Bokeh provides the underlying visualization capabilities
 import os
 import glob
 import argparse
 import pandas as pd
 import logging
 from pathlib import Path
-
-DATATABLES_CSS = "https://cdn.datatables.net/2.0.7/css/dataTables.dataTables.min.css"
-JQUERY_JS      = "https://code.jquery.com/jquery-3.7.1.min.js"
-DATATABLES_JS  = "https://cdn.datatables.net/2.0.7/js/dataTables.min.js"
-
+import panel as pn
+import bokeh
+from bokeh.models import TableColumn, DataTable, ColumnDataSource, CustomJS
 
 # Set up basic logging
 logging.basicConfig(
@@ -19,24 +24,193 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 def write_datatables_html(df: pd.DataFrame, path: Path, title="Integration Matrix"):
-    DATATABLES_CSS = "https://cdn.datatables.net/2.0.7/css/dataTables.dataTables.min.css"
-    JQUERY_JS      = "https://code.jquery.com/jquery-3.7.1.min.js"
-    DATATABLES_JS  = "https://cdn.datatables.net/2.0.7/js/dataTables.min.js"
+    # 1  ------- constants for CDN assets -------
+    DATATABLES_CSS  = "https://cdn.datatables.net/2.0.7/css/dataTables.dataTables.min.css"
+    BUTTONS_CSS     = "https://cdn.datatables.net/buttons/2.4.1/css/buttons.dataTables.min.css"
 
+    JQUERY_JS       = "https://code.jquery.com/jquery-3.7.1.min.js"
+    DATATABLES_JS   = "https://cdn.datatables.net/2.0.7/js/dataTables.min.js"
+    BUTTONS_JS      = "https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"
+    COLVIS_JS       = "https://cdn.datatables.net/buttons/2.4.1/js/buttons.colVis.min.js"
+
+    # 2  ------- give the index a label so it has a header cell -------
+    df = df.copy()
+    df.index.name = "Gene"
+
+    # 3  ------- build the HTML document -------
     html = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
-<title>{title}</title>
-<link rel="stylesheet" href="{DATATABLES_CSS}">
-<script src="{JQUERY_JS}"></script>
-<script src="{DATATABLES_JS}"></script>
-<style>body{{margin:2rem;font-family:sans-serif}}</style>
-</head><body>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{title}</title>
+
+  <!-- DataTables+Buttons CSS -->
+  <link rel="stylesheet" href="{DATATABLES_CSS}">
+  <link rel="stylesheet" href="{BUTTONS_CSS}">
+
+  <!-- jQuery and DataTables JS -->
+  <script src="{JQUERY_JS}"></script>
+  <script src="{DATATABLES_JS}"></script>
+  <script src="{BUTTONS_JS}"></script>
+  <script src="{COLVIS_JS}"></script>
+
+  <!-- Tiny page styling -->
+  <style>
+    body {{ font-family: sans-serif; margin: 2rem; }}
+    .toolbar {{ margin-bottom: 1rem; }}
+    .toolbar select, .toolbar input {{ margin-right: 0.5rem; }}
+  </style>
+</head>
+<body>
+
 <h1>{title}</h1>
+
+<div class="toolbar">
+  <!-- (a) contrast-column selector -->
+  <label for="contrastFilter">Show rows with 1 in&nbsp;</label>
+  <select id="contrastFilter">
+    <option value="">— any contrast —</option>
+    {"".join(f'<option value="{c}">{c}</option>' for c in df.columns if c != "Num_DE_Contrasts")}
+  </select>
+
+  <!-- (b) Num_DE_Contrasts threshold -->
+  <label for="numComparator">and&nbsp;Num_DE_Contrasts&nbsp;</label>
+  <select id="numComparator">
+    <option value=">=">≥</option>
+    <option value="<=">≤</option>
+  </select>
+  <input type="number" id="numThreshold" value="1" min="0" style="width:6rem;">
+</div>
+
 {df.to_html(index=True, classes="display", table_id="matrix")}
-<script>$(function(){{$('#matrix').DataTable({{scrollX:true,pageLength:25}});}});</script>
-</body></html>"""
+
+<script>
+$(function () {{
+
+  // ------------- initialise the DataTable -------------
+  var table = $('#matrix').DataTable({{
+      dom: 'Bfrtip',                           // Buttons + filter + table
+      buttons: [ 'colvis' ],                   // column visibility menu
+      pageLength: 25,
+      scrollX: true,
+      deferRender: true,                       // build rows on demand
+      scrollCollapse: true,                    // trim unused space
+      scroller: true                           // adds virtual scrolling plugin
+  }});
+
+  // ------------- custom row-filter function -----------
+  $.fn.dataTable.ext.search.push(function(settings, data, dataIndex) {{
+      // (1) contrast filter
+      var chosenCol = $('#contrastFilter').val();     // e.g. "PHOX2B_Knockdown_vs_Control"
+      if (chosenCol) {{
+          var colIdx = table.column(chosenCol + ':name').index(); // find its index
+          if (data[colIdx] !== '1') return false;     // keep only rows with 1
+      }}
+
+      // (2) Num_DE_Contrasts threshold
+      var cmp = $('#numComparator').val();            // ">=" or "<="
+      var thresh = parseInt($('#numThreshold').val(), 10) || 0;
+      var numIdx = table.column('Num_DE_Contrasts:name').index();
+      var num = parseInt(data[numIdx], 10) || 0;
+      return (cmp === '>=' ? num >= thresh : num <= thresh);
+  }});
+
+  // ------------- re-draw when controls change ---------
+  $('#contrastFilter, #numComparator, #numThreshold').on('change keyup', function() {{
+      table.draw();
+  }});
+
+}});
+</script>
+
+</body>
+</html>"""
     path.write_text(html, encoding="utf-8")
 
+def write_panel_bokeh_html(df: pd.DataFrame, path: Path, title="Integration Matrix"):
+    """
+    Generate interactive HTML visualization using Panel and Bokeh.
+    
+    This function creates a Tabulator widget with custom filtering capabilities
+    and exports it as a standalone HTML file.
+    
+    Parameters:
+    -----------
+    df : pd.DataFrame
+        The DataFrame to visualize
+    path : Path
+        Where to save the HTML file
+    title : str
+        Title for the visualization
+    """
+    # Initialize Panel extensions
+    pn.extension('tabulator')
+    
+    # Set index name
+    df = df.copy()
+    df.index.name = "Gene"
+    
+    # Reset index to make Gene a column for easier interaction
+    df_reset = df.reset_index()
+    
+    # Create widgets for filtering
+    contrast_columns = [col for col in df.columns if col != "Num_DE_Contrasts"]
+    contrast_select = pn.widgets.Select(
+        name='Show rows with 1 in',
+        options=['— any contrast —'] + contrast_columns,
+        value='— any contrast —'
+    )
+    
+    comparator_select = pn.widgets.Select(
+        name='Num_DE_Contrasts',
+        options=['≥', '≤'],
+        value='≥'
+    )
+    
+    threshold_input = pn.widgets.IntInput(
+        name='Threshold',
+        value=1,
+        step=1,
+        start=0
+    )
+    
+    # Function to filter the data based on widget values
+    def filter_data(contrast, comparator, threshold):
+        filtered_df = df_reset.copy()
+        
+        # Filter by contrast if selected
+        if contrast != '— any contrast —':
+            filtered_df = filtered_df[filtered_df[contrast] == 1]
+        
+        # Filter by Num_DE_Contrasts
+        if comparator == '≥':
+            filtered_df = filtered_df[filtered_df['Num_DE_Contrasts'] >= threshold]
+        else:
+            filtered_df = filtered_df[filtered_df['Num_DE_Contrasts'] <= threshold]
+            
+        return filtered_df
+    
+    # Create interactive table with filtered data
+    table = pn.widgets.Tabulator(
+        pn.bind(filter_data, contrast_select, comparator_select, threshold_input),
+        pagination='remote',
+        page_size=25,
+        height=600,
+        layout='fit_data_fill',
+        disabled=True  # Makes the table read-only
+    )
+    
+    # Create the layout with title, filters, and table
+    layout = pn.Column(
+        f"# {title}",
+        pn.Row(contrast_select, comparator_select, threshold_input),
+        table
+    )
+    
+    # Save to standalone HTML
+    layout.save(str(path))
+    
+    return f"Panel+Bokeh visualization saved to {path}"
 
 def find_contrast_csvs(root_dir: str) -> list[str]:
     """Recursively find all contrasts.csv under root_dir."""
@@ -137,7 +311,9 @@ def main():
     p.add_argument("--verbose", "-v", action="store_true",
                    help="Enable verbose logging")
     p.add_argument("--html", action="store_true",
-                   help="Also write an interactive DataTables HTML file")
+                   help="Also write an interactive HTML file")
+    p.add_argument("--html-type", choices=["datatables", "panel"], default="panel",
+                   help="Type of HTML to generate: datatables (old) or panel (new, default)")
     args = p.parse_args()
 
     if args.verbose:
@@ -157,19 +333,29 @@ def main():
 
     # --- original logic ---
     matrix = build_binary_matrix(args.root_dir, args.lfc, args.padj)
+    
+    # Add explicit Gene header
+    matrix.index.name = "Gene"
     matrix.to_csv(matrix_path)
     logger.info(f"Wrote integration matrix to: {matrix_path}")
 
     filtered = matrix[matrix.sum(axis=1) > 0].copy()
     filtered["Num_DE_Contrasts"] = filtered.sum(axis=1)
+    
+    # Add explicit Gene header
+    filtered.index.name = "Gene"
     filtered.to_csv(filtered_path)
 
     logger.info(f"Wrote filtered integration matrix to: {filtered_path}")
 
     # --- write HTML if requested ---------------------------
     if args.html:
-        write_datatables_html(filtered, html_path)
-        logger.info(f"Wrote interactive HTML table to: {html_path}")
+        if args.html_type == "datatables":
+            write_datatables_html(filtered, html_path)
+            logger.info(f"Wrote interactive DataTables HTML table to: {html_path}")
+        else:  # panel
+            write_panel_bokeh_html(filtered, html_path)
+            logger.info(f"Wrote interactive Panel+Bokeh HTML visualization to: {html_path}")
 
     print(
         f"✓ Results:\n"
