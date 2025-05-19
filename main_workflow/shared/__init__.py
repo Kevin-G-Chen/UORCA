@@ -25,6 +25,14 @@ class ExtractionContext(RNAseqCoreContext):
 class AnalysisContext(RNAseqCoreContext):
     analysis_history: Optional[List[Dict[str, str]]] = Field(default_factory=list,
            description="History of analysis prompts and outputs for reflection")
+    tool_logs: Optional[List[Dict[str, Any]]] = Field(default_factory=list,
+           description="Logs of tool calls with parameters and outputs")
+    reflections: Optional[List[str]] = Field(default_factory=list,
+           description="Reflections on previous analysis attempts")
+    analysis_success: Optional[bool] = Field(None,
+           description="Whether the analysis was successful")
+    analysis_diagnostics: Optional[str] = Field(None,
+           description="Diagnostic information about the analysis")
     abundance_files: Optional[List[str]] = Field(None, description="List of abundance files")
     merged_column: Optional[str] = Field(None, description="Column to merge on")
     unique_groups: Optional[List[str]] = Field(None, description="Unique groups for analysis")
@@ -32,6 +40,8 @@ class AnalysisContext(RNAseqCoreContext):
     contrast_matrix_df: Optional[Any] = Field(None, description="Contrast matrix DataFrame")
     contrasts: Optional[Any] = Field(None, description="Contrasts for analysis")
     deg_results_path: Optional[str] = Field(None, description="Path to DEGs results")
+    kallisto_index_used: Optional[str] = Field(None, description="Path to the Kallisto index file that was used")
+    tx2gene_file_used: Optional[str] = Field(None, description="Path to the transcript-to-gene mapping file that was used")
 
 
 # --- Reporting context ---
