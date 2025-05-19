@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
 from shared import AnalysisContext
-from shared.workflow_logging import log_tool, log_agent_tool
+from shared.workflow_logging import log_tool, log_agent_tool, log_tool_for_reflection
 from agents.metadata import metadata_agent, MetadataContext
 from unidecode import unidecode
 from openai import OpenAI
@@ -118,6 +118,7 @@ rnaseq_agent = Agent(
 # ----------------------------
 @rnaseq_agent.tool
 @log_tool
+@log_tool_for_reflection
 async def list_files(ctx: RunContext[AnalysisContext],
                      directory: Optional[str] = None,
                      pattern: Optional[str] = None,
@@ -212,6 +213,7 @@ async def list_files(ctx: RunContext[AnalysisContext],
 
 @rnaseq_agent.tool
 @log_tool
+@log_tool_for_reflection
 async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
                                      kallisto_index: Optional[str] = None) -> str:
     """
@@ -366,6 +368,7 @@ Files used:
 
 @rnaseq_agent.tool
 @log_tool
+@log_tool_for_reflection
 async def prepare_edgeR_analysis(ctx: RunContext[AnalysisContext]) -> str:
     """
     Prepare a sample mapping table for downstream edgeR differential expression analysis
@@ -551,6 +554,7 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
 
 @rnaseq_agent.tool
 @log_tool
+@log_tool_for_reflection
 async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
     tx2gene_path: Optional[str] = None) -> str:
     """
@@ -606,13 +610,13 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
         os.makedirs(ctx.deps.output_dir, exist_ok=True)
 
         # Check if we have contrasts available
-        if ctx.deps.contrast_matrix_df is None and not ctx.deps.contrasts:
+        if getattr(ctx.deps, 'contrast_matrix_df', None) is None and not getattr(ctx.deps, 'contrasts', None):
             error_msg = "No contrasts defined. Please run process_metadata_with_agent first."
             logger.warning("⚠️ %s", error_msg)
             return error_msg
 
         # Check if sample_mapping exists and is valid
-        sample_mapping_path = ctx.deps.sample_mapping
+        sample_mapping_path = getattr(ctx.deps, 'sample_mapping', None)
         if not sample_mapping_path:
             error_msg = "Error: Sample mapping not defined. Please run prepare_edgeR_analysis first to create the sample metadata mapping."
             logger.error("❌ %s", error_msg)
@@ -624,10 +628,13 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
             return error_msg
 
         # If we have contrasts but they're not in DataFrame format, convert them
-        if ctx.deps.contrast_matrix_df is None and ctx.deps.contrasts:
+        contrasts = getattr(ctx.deps, 'contrasts', None)
+        contrast_matrix_df = getattr(ctx.deps, 'contrast_matrix_df', None)
+        
+        if contrast_matrix_df is None and contrasts:
             logger.info("🔄 Converting contrasts from agent output to DataFrame format")
             contrast_data = []
-            for contrast in ctx.deps.contrasts.data.contrasts:
+            for contrast in contrasts.data.contrasts:
                 contrast_data.append({
                     'name': contrast.name,
                     'expression': contrast.expression,
@@ -635,17 +642,18 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
                     'justification': contrast.justification if hasattr(contrast, 'justification') else ""
                 })
             if contrast_data:
-                ctx.deps.contrast_matrix_df = pd.DataFrame(contrast_data)
+                setattr(ctx.deps, 'contrast_matrix_df', pd.DataFrame(contrast_data))
 
                 # Save contrasts to a CSV file if not already done
-                if ctx.deps.contrast_path is None:
+                contrast_path = getattr(ctx.deps, 'contrast_path', None)
+                if contrast_path is None:
                     contrast_path = os.path.join(ctx.deps.output_dir, "contrasts.csv")
                     pd.DataFrame(contrast_data).to_csv(contrast_path, index=False)
-                    ctx.deps.contrast_path = contrast_path
+                    setattr(ctx.deps, 'contrast_path', contrast_path)
                     logger.info("💾 Saved contrasts to %s", contrast_path)
 
-        # Get the sample mapping path
-        sample_mapping_path = ctx.deps.sample_mapping
+        # Get the sample mapping path (redundant check, but kept for safety)
+        sample_mapping_path = getattr(ctx.deps, 'sample_mapping', None)
         if not sample_mapping_path or not os.path.exists(sample_mapping_path):
             error_msg = "Error: Sample mapping file not found. Please run prepare_edgeR_analysis first."
             logger.error("❌ %s", error_msg)
@@ -666,8 +674,9 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
                ctx.deps.merged_column, ctx.deps.output_dir, tx2gene_arg]
 
         # Add the contrasts CSV file as the fifth argument if it exists
-        if ctx.deps.contrast_path and os.path.exists(ctx.deps.contrast_path):
-            cmd.append(ctx.deps.contrast_path)
+        contrast_path = getattr(ctx.deps, 'contrast_path', None)
+        if contrast_path and os.path.exists(contrast_path):
+            cmd.append(contrast_path)
 
         # Check for None values in the command
         for i, arg in enumerate(cmd):
@@ -707,7 +716,7 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
         if os.path.exists(deg_dir):
             deg_files = [os.path.join(deg_dir, f) for f in os.listdir(deg_dir) if f.endswith('.csv')]
             if deg_files:
-                ctx.deps.deg_results_path = deg_files[0] if len(deg_files) == 1 else deg_files
+                setattr(ctx.deps, 'deg_results_path', deg_files[0] if len(deg_files) == 1 else deg_files)
                 logger.info("💾 Found %d differential expression result files", len(deg_files))
 
         logger.info("✅ edgeR/limma analysis completed successfully")
@@ -739,6 +748,7 @@ Differential expression results saved to {deg_dir}
 
 @rnaseq_agent.tool
 @log_agent_tool
+@log_tool_for_reflection
 async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
     """
     Process metadata using a specialized metadata agent that has access to analysis context.
@@ -746,11 +756,12 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
     """
     try:
         logger.info("📋 process_metadata_with_agent started")
-        logger.info("🔍 Processing metadata at: %s", ctx.deps.metadata_path)
+        metadata_path = getattr(ctx.deps, 'metadata_path', None)
+        logger.info("🔍 Processing metadata at: %s", metadata_path)
 
         # Check if metadata file exists
-        if not ctx.deps.metadata_path or not os.path.exists(ctx.deps.metadata_path):
-            error_msg = f"Error: Metadata file not found at {ctx.deps.metadata_path}"
+        if not metadata_path or not os.path.exists(metadata_path):
+            error_msg = f"Error: Metadata file not found at {metadata_path}"
             logger.error("❌ %s", error_msg)
             return error_msg
 
@@ -764,7 +775,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
             return error_msg
 
         # Create a MetadataContext instance specifically for the metadata agent
-        metadata_deps = metadata.MetadataContext(metadata_path=ctx.deps.metadata_path)
+        metadata_deps = metadata.MetadataContext(metadata_path=metadata_path)
 
         # Generate the metadata prompt, incorporating analysis history if available
         base_prompt = """
@@ -781,23 +792,43 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
 
         # Include dataset information context if available
         dataset_context = ""
-        if ctx.deps.dataset_information:
+        dataset_information = getattr(ctx.deps, 'dataset_information', None)
+        if dataset_information:
             dataset_context = f"""
 
             IMPORTANT DATASET CONTEXT: Below is information about the dataset you are analyzing:
 
-            {ctx.deps.dataset_information}
+            {dataset_information}
 
             Please consider this information when selecting relevant columns and designing contrasts.
             The biological context above may help you understand which experimental factors are most important.
             """
+            
+        # Include reflection information if available
+        reflection_context = ""
+        reflections = getattr(ctx.deps, 'reflections', [])
+        if reflections:
+            reflection_list = "\n".join([f"Reflection {i+1}: {r}" for i, r in enumerate(reflections)])
+            reflection_context = f"""
+
+            IMPORTANT REFLECTIONS FROM PREVIOUS ATTEMPTS: 
+            The analysis agent has provided the following reflections about previous attempts.
+            Please pay close attention to these reflections as they identify specific issues
+            that need to be addressed:
+
+            {reflection_list}
+
+            These reflections highlight issues that were encountered in previous analysis attempts.
+            Please consider them carefully when selecting columns and designing contrasts.
+            """
 
         # Include analysis history context if available
         analysis_context = ""
-        if ctx.deps.analysis_history:
+        analysis_history = getattr(ctx.deps, 'analysis_history', [])
+        if analysis_history:
             # Find the most recent entry with a non-None output
             latest = None
-            for entry in reversed(ctx.deps.analysis_history):
+            for entry in reversed(analysis_history):
                 if entry.get("output") is not None:
                     latest = entry
                     break
@@ -822,9 +853,8 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
                 appropriate columns for analysis to prevent downstream errors.
                 """
 
-            metadata_prompt = base_prompt + dataset_context + analysis_context
-        else:
-            metadata_prompt = base_prompt
+        # Combine all contexts into the final prompt
+        metadata_prompt = base_prompt + dataset_context + reflection_context + analysis_context
 
         # Run the metadata agent with the Contrasts result type
         logger.info("🤖 Running metadata agent...")
@@ -842,10 +872,10 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         logger.info("✅ Metadata agent completed successfully")
 
         # Transfer the key information from the metadata agent back to the main agent context
-        ctx.deps.metadata_df = metadata_deps.metadata_df
-        ctx.deps.merged_column = metadata_deps.merged_column
-        ctx.deps.unique_groups = metadata_deps.unique_groups
-        ctx.deps.contrasts = metadata_result
+        setattr(ctx.deps, 'metadata_df', metadata_deps.metadata_df)
+        setattr(ctx.deps, 'merged_column', metadata_deps.merged_column)
+        setattr(ctx.deps, 'unique_groups', metadata_deps.unique_groups)
+        setattr(ctx.deps, 'contrasts', metadata_result)
 
         # Create a contrast DataFrame from the agent's output
         contrast_data = []
@@ -859,24 +889,28 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
 
         # Convert to DataFrame and store in the context
         if contrast_data:
-            ctx.deps.contrast_matrix_df = pd.DataFrame(contrast_data)
+            setattr(ctx.deps, 'contrast_matrix_df', pd.DataFrame(contrast_data))
             logger.info("📊 Created contrast matrix with %d contrasts", len(contrast_data))
 
             # Save contrasts to a CSV file for later use
-            os.makedirs(ctx.deps.output_dir, exist_ok=True)
-            contrast_path = os.path.join(ctx.deps.output_dir, "contrasts.csv")
+            output_dir = getattr(ctx.deps, 'output_dir', '.')
+            os.makedirs(output_dir, exist_ok=True)
+            contrast_path = os.path.join(output_dir, "contrasts.csv")
             pd.DataFrame(contrast_data).to_csv(contrast_path, index=False)
-            ctx.deps.contrast_path = contrast_path
+            setattr(ctx.deps, 'contrast_path', contrast_path)
             logger.info("💾 Saved contrasts to %s", contrast_path)
         else:
             logger.warning("⚠️ No contrasts were generated by the metadata agent")
 
         # Generate a summary for the main agent
+        merged_column = getattr(ctx.deps, 'merged_column', 'Not defined')
+        unique_groups = getattr(ctx.deps, 'unique_groups', 'Not identified')
+        
         summary = f"""
 Metadata processing completed successfully.
 
-Selected analysis column: {ctx.deps.merged_column}
-Unique groups identified: {ctx.deps.unique_groups}
+Selected analysis column: {merged_column}
+Unique groups identified: {unique_groups}
 
 Designed contrasts:
 """
@@ -886,8 +920,9 @@ Designed contrasts:
         if hasattr(metadata_result.output, 'summary'):
             summary += f"\nSummary:\n{metadata_result.output.summary}\n"
 
-        if ctx.deps.contrast_path:
-            summary += f"\nContrasts saved to: {ctx.deps.contrast_path}\n"
+        contrast_path = getattr(ctx.deps, 'contrast_path', None)
+        if contrast_path:
+            summary += f"\nContrasts saved to: {contrast_path}\n"
 
         logger.info("✅ Metadata processing pipeline completed")
         return summary
@@ -900,17 +935,64 @@ Designed contrasts:
 @log_agent_tool
 async def run_agent_async(prompt: str, deps: AnalysisContext, usage=None):
     logger.info("🚀 Analysis agent invoked with prompt: %s", prompt)
+    
+    # Ensure all required attributes exist
+    for attr_name, default_value in [
+        ('tool_logs', []),
+        ('reflections', []),
+        ('analysis_history', []),
+        ('kallisto_index_used', None),
+        ('tx2gene_file_used', None)
+    ]:
+        if not hasattr(deps, attr_name):
+            setattr(deps, attr_name, default_value)
+    
+    # Save the starting length of tool logs for later reporting
+    tool_logs_start_len = len(deps.tool_logs)
+    
+    # Run the agent
     result = await rnaseq_agent.run(prompt, deps=deps, usage=usage)
 
     # Log the agent's output
     logger.info("📄 Analysis agent output: %s", result.output)
+    
+    # Report on tool logs that were added during this run
+    new_logs_count = len(deps.tool_logs) - tool_logs_start_len
+    if new_logs_count > 0:
+        logger.info("🔧 Collected %d tool logs during analysis run", new_logs_count)
 
-    # If you want to log usage statistics
+    # Log usage statistics if available
     if hasattr(result, 'usage') and result.usage:
         try:
             usage_stats = result.usage()
             logger.info("📊 Analysis agent usage: %s", usage_stats)
         except Exception as e:
             logger.debug("Could not get usage stats: %s", e)
+
+    # Write tool logs to a file if we have an output directory
+    if hasattr(deps, 'output_dir') and deps.output_dir:
+        try:
+            log_dir = pathlib.Path(deps.output_dir) / "logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create a timestamped log file to preserve history
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            tool_log_path = log_dir / f"analysis_tool_logs_{timestamp}.json"
+            
+            # Also update the main log file
+            main_log_path = log_dir / "analysis_tool_logs_latest.json"
+            
+            # Save to timestamped file
+            with open(tool_log_path, 'w') as f:
+                json.dump(deps.tool_logs, f, indent=2)
+            
+            # Update the latest log file
+            with open(main_log_path, 'w') as f:
+                json.dump(deps.tool_logs, f, indent=2)
+                
+            logger.info("💾 Saved %d tool logs to %s and %s", 
+                       len(deps.tool_logs), tool_log_path.name, main_log_path.name)
+        except Exception as e:
+            logger.warning("⚠️ Failed to save tool logs: %s", str(e))
 
     return result
