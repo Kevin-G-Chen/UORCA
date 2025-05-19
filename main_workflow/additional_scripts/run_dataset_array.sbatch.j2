@@ -31,6 +31,7 @@ uv run {{ project_root }}/main_workflow/master.py \
     --accession "$accession" \
     --output_dir {{ base_output_dir }} \
     --resource_dir {{ resource_dir }} \
-    --organism "$organism"
+    --organism "$organism" \
+    {% if cleanup %}--cleanup{% endif %}
 
 echo "Finished $accession at $(date)"
