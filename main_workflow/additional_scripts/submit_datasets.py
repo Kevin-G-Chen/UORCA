@@ -8,6 +8,8 @@ def main():
     ap.add_argument("--output_dir", default="../UORCA_results")
     ap.add_argument("--resource_dir", default="./data/kallisto_indices/")
     ap.add_argument("--max_parallel", type=int, default=10)
+    ap.add_argument("--cleanup", action="store_true",
+                   help="Clean up FASTQ and SRA files after successful completion of each dataset")
     args = ap.parse_args()
 
     logs_dir = os.path.join(args.output_dir, "logs")
@@ -25,6 +27,7 @@ def main():
         project_root=os.getcwd(),
         base_output_dir=args.output_dir,
         resource_dir=args.resource_dir,
+        cleanup=args.cleanup,
     )
 
     script_path = pathlib.Path("run_datasets_array.sbatch")
