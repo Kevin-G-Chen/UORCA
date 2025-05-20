@@ -83,14 +83,24 @@ metadata_agent = Agent(
 def clean_string(s: str) -> str:
     """
     Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
+    If cleaning would result in an empty string, returns "None" instead.
     """
     if pd.isna(s):
         logger.debug("🧹 Input is NaN, returning 'NA'")
         return "NA"
     s = str(s).strip()
+    if not s or s == "-":  # Handle empty strings and dash-only entries
+        logger.debug("🧹 Input is empty or just a dash, returning 'None'")
+        return "None"
     s = unidecode(s)
     s = s.replace(" ", "_")
     s = re.sub(r'[^\w]', '', s)
+    
+    # Handle case where cleaning results in an empty string
+    if not s:
+        logger.debug("🧹 Cleaning resulted in empty string, returning 'None'")
+        return "None"
+        
     return s
 
 # ----------------------------
