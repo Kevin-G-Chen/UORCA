@@ -711,13 +711,22 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
             return f"{error_msg} See error output above.\n\nSTDEERR:\n{stderr_output[:1000]}...(truncated)" if len(stderr_output) > 1000 else stderr_output
 
 
-        # Find and record DEG result files
-        deg_dir = os.path.join(ctx.deps.output_dir, "DEG")
-        if os.path.exists(deg_dir):
-            deg_files = [os.path.join(deg_dir, f) for f in os.listdir(deg_dir) if f.endswith('.csv')]
+        # Find and record DEG result files in the new contrast-specific directories
+        analysis_dir = os.path.join(ctx.deps.output_dir, "RNAseqAnalysis")
+        if os.path.exists(analysis_dir):
+            # Look for DEG files in each contrast subdirectory
+            deg_files = []
+            for subdir in os.listdir(analysis_dir):
+                subdir_path = os.path.join(analysis_dir, subdir)
+                if os.path.isdir(subdir_path) and subdir != "logs":
+                    # Check for DEG.csv in this contrast directory
+                    deg_file = os.path.join(subdir_path, "DEG.csv")
+                    if os.path.exists(deg_file):
+                        deg_files.append(deg_file)
+            
             if deg_files:
                 setattr(ctx.deps, 'deg_results_path', deg_files[0] if len(deg_files) == 1 else deg_files)
-                logger.info("💾 Found %d differential expression result files", len(deg_files))
+                logger.info("💾 Found %d differential expression result files in contrast directories", len(deg_files))
 
         logger.info("✅ edgeR/limma analysis completed successfully")
 
@@ -730,7 +739,9 @@ Analysis performed using:
 - {len(ctx.deps.unique_groups or [])} unique groups
 
 Results saved to {ctx.deps.output_dir}
-Differential expression results saved to {deg_dir}
+Analysis directory: {os.path.join(ctx.deps.output_dir, "RNAseqAnalysis")}
+Dataset-wide plots (MDS, CPM, etc.) are in the main analysis directory
+Each contrast has its own subdirectory with DEG.csv and specific plots
 
 ==== R Script Output (truncated) ====
 {stdout_output[:1500]}

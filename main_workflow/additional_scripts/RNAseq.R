@@ -9,13 +9,45 @@ library(pacman)
 p_load(edgeR, tximport, limma, gplots, ComplexHeatmap)
 
 create_plot_output_dirs <- function(output_dir) {
-  plots_dir <- file.path(output_dir, "plots")
-  dir.create(plots_dir, showWarnings = FALSE, recursive = TRUE)
-  # Create subdirectories for different plot types
-  for(subdir in c("mds", "filtering", "normalization", "voom", "ma", "volcano", "heatmap")) {
-    dir.create(file.path(plots_dir, subdir), showWarnings = FALSE)
-  }
-  return(plots_dir)
+  # Create main analysis directory (RNAseqAnalysis)
+  analysis_dir <- file.path(output_dir, "RNAseqAnalysis")
+  dir.create(analysis_dir, showWarnings = FALSE, recursive = TRUE)
+  
+  # Return the analysis directory path
+  return(analysis_dir)
+}
+
+# Function to create a contrast-specific directory
+create_contrast_dir <- function(output_dir, contrast_name) {
+  # Clean contrast name for file system use
+  clean_contrast <- gsub("[^a-zA-Z0-9]", "_", contrast_name)
+  
+  # Create contrast-specific directory
+  contrast_dir <- file.path(output_dir, "RNAseqAnalysis", clean_contrast)
+  dir.create(contrast_dir, showWarnings = FALSE, recursive = TRUE)
+  
+  return(contrast_dir)
+}
+
+# Function to export normalized CPM values
+export_cpm <- function(dge, output_dir) {
+  # Calculate log-CPM values
+  lcpm <- cpm(dge, log = TRUE)
+  
+  # Create a data frame with gene names as first column
+  cpm_df <- as.data.frame(lcpm)
+  cpm_df$Gene <- rownames(cpm_df)
+  
+  # Reorder columns to have Gene as first column
+  cpm_df <- cpm_df[, c("Gene", setdiff(names(cpm_df), "Gene"))]
+  
+  # Save to file
+  cpm_file <- file.path(output_dir, "RNAseqAnalysis", "CPM.csv")
+  write.csv(cpm_df, file = cpm_file, row.names = FALSE)
+  
+  cat("Saved normalized log-CPM values to:", cpm_file, "\n")
+  
+  return(cpm_file)
 }
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -54,12 +86,12 @@ plot_mds <- function(dge, output_dir, groups = group_data, labels_column = "geo_
     group_colors <- colors[as.factor(groups)]
 
     # Create directory if it doesn't exist
-    plots_dir <- file.path(output_dir, "plots", "mds")
-    dir.create(plots_dir, recursive = TRUE, showWarnings = FALSE)
+    analysis_dir <- file.path(output_dir, "RNAseqAnalysis")
+    dir.create(analysis_dir, recursive = TRUE, showWarnings = FALSE)
 
     # Start PNG device if saving
     if (save_png) {
-        png(file.path(plots_dir, "mds_plot_group.png"), width = width, height = height, res = res)
+        png(file.path(analysis_dir, "MDS.png"), width = width, height = height, res = res)
     }
 
     # Calculate margin adjustments for labels
@@ -89,7 +121,7 @@ plot_mds <- function(dge, output_dir, groups = group_data, labels_column = "geo_
     # Close PNG device if saving
     if (save_png) {
         dev.off()
-        return(paste0("MDS plot saved to ", file.path(plots_dir, "mds_plot_group.png")))
+        return(paste0("MDS plot saved to ", file.path(analysis_dir, "MDS.png")))
     } else {
         return("MDS plot displayed")
     }
@@ -97,8 +129,8 @@ plot_mds <- function(dge, output_dir, groups = group_data, labels_column = "geo_
 
 # 2. Filtering Plots (Density plots before/after filtering)
 plot_filtering <- function(lcpm_pre, lcpm_post, output_dir, width = 1000, height = 600, res = 100) {
-    plots_dir <- file.path(output_dir, "plots", "filtering")
-    png(file.path(plots_dir, "filtering_density.png"), width = width, height = height, res = res)
+    analysis_dir <- file.path(output_dir, "RNAseqAnalysis")
+    png(file.path(analysis_dir, "filtering_density.png"), width = width, height = height, res = res)
     par(mfrow = c(1, 2))
     nsamples <- ncol(lcpm_pre)
     col <- rainbow(nsamples)
@@ -120,15 +152,15 @@ plot_filtering <- function(lcpm_pre, lcpm_post, output_dir, width = 1000, height
         legend("topright", colnames(lcpm_post), col = col, lwd = 2, cex = 0.6)
     }
     dev.off()
-    return(paste0("Filtering plots saved to ", plots_dir))
+    return(paste0("Filtering plots saved to ", analysis_dir))
 }
 
 # 3. Normalization Boxplots
 plot_normalization <- function(DGE_filtered, dge_norm, output_dir, width = 1000, height = 600, res = 100) {
-    plots_dir <- file.path(output_dir, "plots", "normalization")
+    analysis_dir <- file.path(output_dir, "RNAseqAnalysis")
     lcpm_raw <- cpm(DGE_filtered, log = TRUE)
     lcpm_norm <- cpm(dge_norm, log = TRUE)
-    png(file.path(plots_dir, "normalization_boxplots.png"), width = width, height = height, res = res)
+    png(file.path(analysis_dir, "normalization_boxplots.png"), width = width, height = height, res = res)
     par(mfrow = c(1, 2))
     ylim <- range(c(lcpm_raw, lcpm_norm))
     boxplot(lcpm_raw,
@@ -140,35 +172,33 @@ plot_normalization <- function(DGE_filtered, dge_norm, output_dir, width = 1000,
         main = "After Normalization", ylab = "Log2-CPM", ylim = ylim
     )
     dev.off()
-    return(paste0("Normalization plots saved to ", plots_dir))
+    return(paste0("Normalization plots saved to ", analysis_dir))
 }
 
 # 4. Voom Plot
 save_voom_plot <- function(dge, fit, design, output_dir, width = 800, height = 600, res = 100) {
-    plots_dir <- file.path(output_dir, "plots", "voom")
+    analysis_dir <- file.path(output_dir, "RNAseqAnalysis")
 
     # Save the voom plot
-    png(file.path(plots_dir, "voom_mean_variance.png"), width = width, height = height, res = res)
+    png(file.path(analysis_dir, "voom_mean_variance.png"), width = width, height = height, res = res)
     v <- voom(dge, design, plot = TRUE)
     dev.off()
 
     # Save the SA plot
-    png(file.path(plots_dir, "sa_plot.png"), width = width, height = height, res = res)
+    png(file.path(analysis_dir, "sa_plot.png"), width = width, height = height, res = res)
     saplot <- plotSA(fit, main = "Final model: Mean-Variance trend", xlab = "Mean log2-counts")
     dev.off()
 
-    return(paste0("Voom and SA plots saved to ", plots_dir))
+    return(paste0("Voom and SA plots saved to ", analysis_dir))
 }
 
 # 5. MA Plot
 plot_ma <- function(fit_object, output_dir, coef = 1, status = NULL, highlight = 10, width = 800, height = 600, res = 100) {
-    plots_dir <- file.path(output_dir, "plots", "ma")
     contrast_name <- colnames(fit_object)[coef]
+    contrast_dir <- create_contrast_dir(output_dir, contrast_name)
 
     # Create PNG file
-    png(file.path(plots_dir, paste0("ma_plot_", gsub("[^a-zA-Z0-9]", "_", contrast_name), ".png")),
-        width = width, height = height, res = res
-    )
+    png(file.path(contrast_dir, "ma_plot.png"), width = width, height = height, res = res)
 
     # Use limma's built-in plotMA function
     if (!is.null(status)) {
@@ -188,18 +218,16 @@ plot_ma <- function(fit_object, output_dir, coef = 1, status = NULL, highlight =
     }
 
     dev.off()
-    return(paste0("MA plot for ", contrast_name, " saved to ", plots_dir))
+    return(paste0("MA plot for ", contrast_name, " saved to ", contrast_dir))
 }
 
 # 6. Volcano Plot
 plot_volcano <- function(fit_object, output_dir, coef = 1, highlight = 10, width = 800, height = 600, res = 100) {
-    plots_dir <- file.path(output_dir, "plots", "volcano")
     contrast_name <- colnames(fit_object)[coef]
+    contrast_dir <- create_contrast_dir(output_dir, contrast_name)
 
     # Create PNG file
-    png(file.path(plots_dir, paste0("volcano_plot_", gsub("[^a-zA-Z0-9]", "_", contrast_name), ".png")),
-        width = width, height = height, res = res
-    )
+    png(file.path(contrast_dir, "volcano_plot.png"), width = width, height = height, res = res)
 
     # Use limma's built-in volcanoplot function
     volcanoplot(fit_object,
@@ -209,7 +237,7 @@ plot_volcano <- function(fit_object, output_dir, coef = 1, highlight = 10, width
     )
 
     dev.off()
-    return(paste0("Volcano plot for ", contrast_name, " saved to ", plots_dir))
+    return(paste0("Volcano plot for ", contrast_name, " saved to ", contrast_dir))
 }
 
 # 7. Heatmap of Top DEGs
@@ -224,14 +252,11 @@ plot_deg_heatmap <- function(dge, fit_object, output_dir, group_data = NULL,
         library(circlize)
     }
 
-    # Create directory for plots if it doesn't exist
-    plots_dir <- file.path(output_dir, "plots", "heatmap")
-    if (!dir.exists(plots_dir)) {
-        dir.create(plots_dir, recursive = TRUE)
-    }
-
     # Determine the contrast name from the fit_object
     contrast_name <- colnames(fit_object)[coef]
+    
+    # Create contrast-specific directory
+    contrast_dir <- create_contrast_dir(output_dir, contrast_name)
 
     # Identify top genes based on available p-values or table data
     if (!is.null(fit_object$p.value) && !is.null(fit_object$lods)) {
@@ -321,10 +346,7 @@ plot_deg_heatmap <- function(dge, fit_object, output_dir, group_data = NULL,
     height_adjusted <- max(height, n_genes * 8)
 
     # Save the ComplexHeatmap to a PNG file
-    png_file <- file.path(plots_dir, paste0(
-        "heatmap_complex_top", n_genes, "_",
-        gsub("[^a-zA-Z0-9]", "_", contrast_name), ".png"
-    ))
+    png_file <- file.path(contrast_dir, paste0("heatmap_top", n_genes, ".png"))
 
     png(png_file, width = width, height = height_adjusted, res = res)
 
@@ -370,12 +392,11 @@ plot_deg_heatmap <- function(dge, fit_object, output_dir, group_data = NULL,
     ))
 }
 
-plots_dir <- create_plot_output_dirs(output_dir)
+analysis_dir <- create_plot_output_dirs(output_dir)
 
-# Create DEG subfolder within the output directory
-deg_dir <- file.path(output_dir, "DEG")
-dir.create(deg_dir, recursive = TRUE, showWarnings = FALSE)
-cat("Created DEG results directory at:", deg_dir, "\n")
+# Create DEG subfolder within the output directory is no longer needed
+# as we'll store DEG files in contrast-specific directories
+cat("Created analysis directory at:", analysis_dir, "\n")
 
 cat("Step 1: Loading metadata from file...\n")
 cat("Loading metadata from:", metadata_file, "\n")
@@ -520,9 +541,10 @@ if (!is.null(custom_contrast_matrix)) {
         top_results$Gene <- rownames(top_results)
         top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
 
-        # Save results with the contrast name
-        clean_contrast_name <- gsub("[^a-zA-Z0-9_]", "_", contrast_name)
-        result_file <- file.path(deg_dir, paste0("deg_", clean_contrast_name, ".csv"))
+        # Save results in the contrast-specific directory
+        contrast_name <- colnames(custom_contrast_matrix)[i]
+        contrast_dir <- create_contrast_dir(output_dir, contrast_name)
+        result_file <- file.path(contrast_dir, "DEG.csv")
         write.csv(top_results, file = result_file, row.names = FALSE)
         cat("Saved results to:", result_file, "\n")
     }
@@ -549,7 +571,11 @@ if (!is.null(custom_contrast_matrix)) {
         top_results$Gene <- rownames(top_results)
         top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
         print(head(top_results))
-        write.csv(top_results, file = file.path(deg_dir, "DEG_results.csv"), row.names = FALSE)
+        
+        # Save in contrast-specific directory
+        contrast_name <- colnames(design)[2] + "_vs_" + colnames(design)[1]
+        contrast_dir <- create_contrast_dir(output_dir, contrast_name)
+        write.csv(top_results, file = file.path(contrast_dir, "DEG.csv"), row.names = FALSE)
     } else {
         cat("Multiple groups detected. Generating top results for each coefficient...\n")
         for (i in 1:ncol(design)) {
@@ -566,13 +592,19 @@ if (!is.null(custom_contrast_matrix)) {
             top_results$Gene <- rownames(top_results)
             top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
             print(head(top_results))
-            write.csv(top_results, file = file.path(deg_dir, paste0("DEG_results_", coef_name, ".csv")), row.names = FALSE)
+            
+            # Save in contrast-specific directory
+            contrast_dir <- create_contrast_dir(output_dir, coef_name)
+            write.csv(top_results, file = file.path(contrast_dir, "DEG.csv"), row.names = FALSE)
         }
     }
 }
 
-cat("Step 9: Saving DEG results and normalized DGEList...\n")
+cat("Step 9: Saving DEG results, normalized DGEList, and CPM values...\n")
 cat("Saving normalized DGEList object...\n")
-saveRDS(DGE.norm, file = file.path(output_dir, "DGE_norm.RDS"))
+saveRDS(DGE.norm, file = file.path(analysis_dir, "DGE_norm.RDS"))
+
+# Export CPM values
+export_cpm(DGE.norm, output_dir)
 
 cat("=== R Script: edgeR/limma Analysis Completed ===\n")
