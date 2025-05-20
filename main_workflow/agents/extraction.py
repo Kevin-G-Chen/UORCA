@@ -210,7 +210,7 @@ async def download_fastqs(
 
     # Helper function for prefetching a single SRR
     async def prefetch_single(srr: str):
-        cmd = f"prefetch {srr} -O {prefetch_dir} -t https --progress"
+        cmd = f"prefetch {srr} -O {prefetch_dir} -t https"
         logger.debug("▶ Running command: %s", cmd)
         proc = await asyncio.create_subprocess_shell(
             cmd,
