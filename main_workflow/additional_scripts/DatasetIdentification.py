@@ -614,13 +614,27 @@ def main():
 
     # Save
     output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    final.to_csv(args.output, index=False)
-    print(f'Saved combined table to {args.output}')
+    
+    # Check if output_path is a directory
+    if output_path.is_dir() or output_path.name == '' or str(output_path).endswith('/') or str(output_path).endswith('\\'):
+        # Create directory if it doesn't exist
+        output_path.mkdir(parents=True, exist_ok=True)
+        main_output_file = output_path / "Dataset_identification_result.csv"
+    else:
+        # Ensure parent directory exists
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        main_output_file = output_path
+    
+    final.to_csv(main_output_file, index=False)
+    print(f'Saved combined table to {main_output_file}')
 
     # Save a separate file with the selected datasets and their clusters if clustering was used
     if args.use_clustering and 'ClusterLabel' in geo_full.columns:
-        selected_path = output_path.with_name('selected_datasets.csv')
+        if output_path.is_dir() or output_path.name == '' or str(output_path).endswith('/') or str(output_path).endswith('\\'):
+            selected_path = output_path / 'selected_datasets.csv'
+        else:
+            selected_path = output_path.with_name('selected_datasets.csv')
+        
         selected_cols = ['ID', 'Accession', 'Title', 'ClusterLabel', 'RelevanceScore']
         selected_df = geo_full[selected_cols].sort_values(['ClusterLabel', 'RelevanceScore'], ascending=[True, False])
         selected_df.to_csv(selected_path, index=False)
@@ -631,7 +645,13 @@ def main():
         multi_df = multi_df[multi_df['Valid'] == 'Yes']
         multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
         multi_df = multi_df.rename(columns={'Species': 'organism'})
-        multi_csv_path = os.path.join(os.path.dirname(args.output), 'multi_dataset_input.csv')
+        
+        # Determine appropriate path for the multi-dataset CSV
+        if output_path.is_dir() or output_path.name == '' or str(output_path).endswith('/') or str(output_path).endswith('\\'):
+            multi_csv_path = output_path / 'Valid_datasets.csv'
+        else:
+            multi_csv_path = output_path.parent / 'Valid_datasets.csv'
+            
         multi_df.to_csv(multi_csv_path, index=False)
         print(f"Generated multi-dataset input CSV at {multi_csv_path}")
 
