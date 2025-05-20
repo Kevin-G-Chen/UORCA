@@ -146,6 +146,37 @@ async def evaluate_analysis(ctx: RunContext[RNAseqCoreContext]) -> str:
         system_prompt="You are an expert RNA-seq analysis evaluator. You assess whether an analysis was successful and if the correct files were used."
     )
 
+    # Extract metadata analysis details
+    metadata_details = []
+    
+    # Get candidate columns
+    analysis_metadata_df = getattr(ctx.deps, 'analysis_metadata_df', None)
+    if analysis_metadata_df is not None and hasattr(analysis_metadata_df, 'columns'):
+        metadata_details.append(f"Candidate columns: {', '.join(analysis_metadata_df.columns.tolist())}")
+    
+    # Get unique values in the merged column
+    merged_column = getattr(ctx.deps, 'merged_column', None)
+    unique_groups = getattr(ctx.deps, 'unique_groups', None)
+    
+    if merged_column:
+        metadata_details.append(f"Chosen analysis column: {merged_column}")
+        
+        if unique_groups:
+            metadata_details.append(f"Unique values in analysis column: {', '.join(map(str, unique_groups))}")
+    
+    # Get contrast information
+    contrast_matrix_df = getattr(ctx.deps, 'contrast_matrix_df', None)
+    if contrast_matrix_df is not None:
+        contrasts_info = []
+        for _, row in contrast_matrix_df.iterrows():
+            contrasts_info.append(f"{row.get('name', 'Unknown')}: {row.get('expression', 'Unknown')}")
+        
+        if contrasts_info:
+            metadata_details.append("Contrast formulas:")
+            metadata_details.extend([f"  - {c}" for c in contrasts_info])
+    
+    metadata_section = "\n".join(metadata_details) if metadata_details else "No metadata analysis details available"
+    
     evaluation_prompt = f"""
     Please evaluate this RNA-seq analysis and determine if it was successful.
 
@@ -156,13 +187,17 @@ async def evaluate_analysis(ctx: RunContext[RNAseqCoreContext]) -> str:
 
     KALLISTO INDEX: {getattr(ctx.deps, 'kallisto_index_used', 'Not specified')}
     TX2GENE FILE: {getattr(ctx.deps, 'tx2gene_file_used', 'Not specified')}
+    
+    METADATA ANALYSIS DETAILS:
+    {metadata_section}
 
     Perform the following evaluation:
 
     1. Determine if the analysis was SUCCESSFUL or FAILED
     2. Check if the Kallisto index matches the organism ({ctx.deps.organism})
     3. Check if the tx2gene file matches the organism ({ctx.deps.organism})
-    4. Identify if any critical steps failed
+    4. Check if the metadata analysis used correct values for contrasts (ensure formulas use values that exist in metadata)
+    5. Identify if any critical steps failed
 
     Return your evaluation as a list of diagnostic statements, with each line starting with:
     ✅ for success conditions
@@ -208,6 +243,10 @@ async def generate_reflection(ctx: RunContext[RNAseqCoreContext]) -> str:
     1. Identifies what went wrong in the analysis
     2. Suggests specific corrections for the next attempt
     3. Provides guidance on what files or parameters to use
+    4. Notes any issues with metadata processing including:
+       - Problems with column selection
+       - Issues with unique values
+       - Errors in contrast formulation
 
     Returns a concise reflection string that will guide the next analysis attempt.
     """
@@ -226,6 +265,44 @@ async def generate_reflection(ctx: RunContext[RNAseqCoreContext]) -> str:
     recent_logs = tool_logs[-5:] if tool_logs and len(tool_logs) > 0 else []
 
     # Create reflection prompt
+    # Extract metadata analysis details for reflection
+    metadata_details = []
+    
+    # Get candidate columns
+    analysis_metadata_df = getattr(ctx.deps, 'analysis_metadata_df', None)
+    if analysis_metadata_df is not None and hasattr(analysis_metadata_df, 'columns'):
+        metadata_details.append(f"Candidate columns: {', '.join(analysis_metadata_df.columns.tolist())}")
+        
+        # Get sample values from each column
+        for col in analysis_metadata_df.columns:
+            unique_vals = analysis_metadata_df[col].unique()
+            sample_vals = unique_vals[:5] if len(unique_vals) > 5 else unique_vals
+            metadata_details.append(f"Column '{col}' unique values: {', '.join(map(str, sample_vals))}" + 
+                                   (f" (and {len(unique_vals)-5} more...)" if len(unique_vals) > 5 else ""))
+    
+    # Get merged column info
+    merged_column = getattr(ctx.deps, 'merged_column', None)
+    unique_groups = getattr(ctx.deps, 'unique_groups', None)
+    
+    if merged_column:
+        metadata_details.append(f"Chosen analysis column: {merged_column}")
+        
+        if unique_groups:
+            metadata_details.append(f"Unique values in analysis column: {', '.join(map(str, unique_groups))}")
+    
+    # Get contrast information
+    contrast_matrix_df = getattr(ctx.deps, 'contrast_matrix_df', None)
+    if contrast_matrix_df is not None:
+        contrasts_info = []
+        for _, row in contrast_matrix_df.iterrows():
+            contrasts_info.append(f"{row.get('name', 'Unknown')}: {row.get('expression', 'Unknown')}")
+        
+        if contrasts_info:
+            metadata_details.append("Contrast formulas:")
+            metadata_details.extend([f"  - {c}" for c in contrasts_info])
+    
+    metadata_section = "\n".join(metadata_details) if metadata_details else "No metadata analysis details available"
+    
     reflection_prompt = f"""
     Based on the RNA-seq analysis diagnostics, identify the key issues and suggest concrete next steps.
 
@@ -233,6 +310,9 @@ async def generate_reflection(ctx: RunContext[RNAseqCoreContext]) -> str:
 
     DIAGNOSTICS:
     {analysis_diagnostics}
+    
+    METADATA ANALYSIS DETAILS:
+    {metadata_section}
 
     TOOL LOGS (most recent 5):
     {json.dumps(recent_logs, indent=2)}
@@ -241,6 +321,7 @@ async def generate_reflection(ctx: RunContext[RNAseqCoreContext]) -> str:
     1. Clearly identifies the main problem(s)
     2. Gives specific guidance on what file paths or parameters to use in the next attempt
     3. Indicates which steps succeeded and can be skipped in the next run
+    4. If metadata issues are present, suggests specific corrections for column selection or contrast formulation
 
     REFLECTION:
     """
@@ -421,8 +502,8 @@ async def report(ctx: RunContext[ReportingContext]) -> str:
     if not isinstance(ctx.deps, ReportingContext):
         ctx.deps = ReportingContext(**ctx.deps.dict())  # copies all existing attrs
     if not ctx.deps.png_dir:
-        # Look for plot directories in standard locations created by analysis agent
-        plot_dir = f"{ctx.deps.output_dir}/plots"
+        # Look for plot directories in the new RNAseqAnalysis directory structure
+        plot_dir = f"{ctx.deps.output_dir}/RNAseqAnalysis"
         ctx.deps.png_dir = plot_dir
 
     if not ctx.deps.rst_folder:
@@ -456,28 +537,45 @@ def cleanup_large_files(output_dir, logger):
     fastq_dir = output_path / "fastq"
 
     # Clean up SRA files
+    sra_removed = 0
+    sra_failed = 0
     if sra_dir.exists():
         logger.info("🧹 Cleaning up SRA files in %s", sra_dir)
         sra_files = list(sra_dir.glob("**/*.sra")) + list(sra_dir.glob("**/*.sralite"))
+        logger.info("🔍 Found %d SRA files to remove", len(sra_files))
+        
         for file in sra_files:
             try:
                 file.unlink()
-                logger.info("🗑️ Removed SRA file: %s", file)
+                sra_removed += 1
             except Exception as e:
-                logger.warning("⚠️ Failed to remove %s: %s", file, str(e))
+                sra_failed += 1
+                logger.debug("⚠️ Failed to remove %s: %s", file, str(e))
+        
+        logger.info("🗑️ Removed %d/%d SRA files (%d failed)", 
+                   sra_removed, len(sra_files), sra_failed)
 
     # Clean up FASTQ files
+    fastq_removed = 0
+    fastq_failed = 0
     if fastq_dir.exists():
         logger.info("🧹 Cleaning up FASTQ files in %s", fastq_dir)
         fastq_files = list(fastq_dir.glob("**/*.fastq.gz"))
+        logger.info("🔍 Found %d FASTQ files to remove", len(fastq_files))
+        
         for file in fastq_files:
             try:
                 file.unlink()
-                logger.info("🗑️ Removed FASTQ file: %s", file)
+                fastq_removed += 1
             except Exception as e:
-                logger.warning("⚠️ Failed to remove %s: %s", file, str(e))
+                fastq_failed += 1
+                logger.debug("⚠️ Failed to remove %s: %s", file, str(e))
+        
+        logger.info("🗑️ Removed %d/%d FASTQ files (%d failed)", 
+                   fastq_removed, len(fastq_files), fastq_failed)
 
-    logger.info("✅ Cleanup completed")
+    logger.info("✅ Cleanup completed - Removed %d SRA files and %d FASTQ files", 
+               sra_removed, fastq_removed)
 
 
 # ── CLI entrypoint ──────────────────────────
