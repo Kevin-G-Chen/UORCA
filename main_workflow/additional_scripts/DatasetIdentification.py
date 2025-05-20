@@ -12,6 +12,7 @@ The final output joins GEO dataset info with selected SRA run metadata fields, i
 from __future__ import annotations
 import argparse
 import asyncio
+import datetime
 import json
 import os
 import statistics
@@ -47,11 +48,33 @@ client = OpenAI(api_key=openai_api_key)
 PROMPT_DIR = os.getenv("PROMPT_DIR", "./main_workflow/prompts/dataset_identification")
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
 logger = logging.getLogger(__name__)
+
+def setup_logging(output_dir=None):
+    """Configure logging to both console and file if output_dir is provided."""
+    log_format = "%(asctime)s - %(levelname)s - %(message)s"
+    handlers = [logging.StreamHandler()]
+    
+    # Add file handler if output directory is provided
+    if output_dir:
+        log_dir = Path(output_dir)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file = log_dir / f"dataset_identification_{timestamp}.log"
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(logging.Formatter(log_format))
+        handlers.append(file_handler)
+        print(f"Logging to file: {log_file}")
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=logging.INFO,
+        format=log_format,
+        handlers=handlers,
+        force=True
+    )
+    
+    return logger
 
 def load_prompt(fname: str) -> str:
     path = Path(PROMPT_DIR) / fname
@@ -393,12 +416,12 @@ def main():
                         help='Minimum relevance score to fetch SRA metadata')
     parser.add_argument('--batch-size', type=int, default=20,
                         help='Number of datasets per relevance assessment batch')
-    parser.add_argument('--openai-api-jobs', type=int, default=1,
+    parser.add_argument('--openai-api-jobs', type=int, default=4,
                         help='Maximum parallel OpenAI API jobs for relevance assessment')
     parser.add_argument('--embedding-jobs', type=int, default=4,
                         help='Maximum parallel embedding jobs for dataset clustering')
-    parser.add_argument('-o', '--output', default='final_combined.csv',
-                        help='Output CSV path')
+    parser.add_argument('-o', '--output', default='./output_dir',
+                        help='Output directory for all result files')
     parser.add_argument('--generate-multi-csv', action='store_true',
                        help='Generate an additional CSV file formatted for multi-dataset analysis')
     parser.add_argument('--use-clustering', action='store_true',
@@ -416,17 +439,32 @@ def main():
 
     global args
     args = parser.parse_args()
+    
+    # Set up logging in the output directory
+    output_path = Path(args.output)
+    # Ensure output directory exists
+    output_path.mkdir(parents=True, exist_ok=True)
+    setup_logging(output_path)
 
-    print("🧠 Extracting terms …")
+    message = "🧠 Extracting terms …"
+    print(message)
+    logger.info(message)
+    
     terms = extract_terms(args.query)
     search_terms = set(terms.extracted_terms + terms.expanded_terms)
-    logger.info(f"Extracted {len(terms.extracted_terms)} direct terms and {len(terms.expanded_terms)} expanded terms")
-    logger.info(f"Using {len(search_terms)} unique search terms: {', '.join(search_terms)}")
+    log_message = f"Extracted {len(terms.extracted_terms)} direct terms and {len(terms.expanded_terms)} expanded terms"
+    logger.info(log_message)
+    log_message = f"Using {len(search_terms)} unique search terms: {', '.join(search_terms)}"
+    logger.info(log_message)
 
-    print("🔍 Searching GEO …")
+    message = "🔍 Searching GEO …"
+    print(message)
+    logger.info(message)
     geo_ids: List[str] = []
     for term in search_terms:
-        print(f"Searching for: {term}")
+        message = f"Searching for: {term}"
+        print(message)
+        logger.info(message)
         term_ids = perform_search(term, args.retmax)
         geo_ids.extend(term_ids)
         logger.info(f"Found {len(term_ids)} results for term: {term}")
@@ -437,7 +475,9 @@ def main():
     logger.info(f"Found {len(geo_ids)} total GEO IDs, {len(unique_geo_ids)} unique IDs")
 
     if not unique_geo_ids:
-        print('No GEO IDs found')
+        message = 'No GEO IDs found'
+        print(message)
+        logger.info(message)
         sys.exit(0)
 
     geo_df = fetch_geo_summaries(unique_geo_ids)
@@ -453,7 +493,9 @@ def main():
         logger.info(f"... and {len(species_counts)-5} more species")
 
     if args.use_clustering:
-        print("🔬 Clustering datasets by similarity...")
+        message = "🔬 Clustering datasets by similarity..."
+        print(message)
+        logger.info(message)
         logger.info(f"Starting embedding and clustering for {len(geo_df)} datasets")
 
         # Create embeddings
@@ -491,7 +533,9 @@ def main():
 
         # Use the representative datasets for relevance assessment
         assess_df = representative_df
-        print(f"📊 Selected {len(assess_df)} representative datasets for relevance assessment")
+        message = f"📊 Selected {len(representative_df)} representative datasets for relevance assessment"
+        print(message)
+        logger.info(message)
     else:
         # Use all datasets (or max_assess limit) for relevance assessment
         if args.max_assess is not None:
@@ -510,7 +554,9 @@ def main():
 
     # Filter for SRA fetch
     to_fetch = geo_full[geo_full['RelevanceScore'] >= args.relevance_threshold]
-    print(f"🔗 Fetching SRA metadata for {len(to_fetch)} datasets (threshold >= {args.relevance_threshold}) …")
+    message = f"🔗 Fetching SRA metadata for {len(to_fetch)} datasets (threshold >= {args.relevance_threshold}) …"
+    print(message)
+    logger.info(message)
     logger.info(f"Selected {len(to_fetch)}/{len(geo_full)} datasets above relevance threshold {args.relevance_threshold}")
 
     runs: List[pd.DataFrame] = []
@@ -566,33 +612,59 @@ def main():
     )
 
     # Log detailed distribution of LibraryLayout and LibrarySource values
-    print("\n📊 Distribution of Library properties:")
+    summary_message = "\n📊 Distribution of Library properties:"
+    print(summary_message)
+    logger.info(summary_message)
 
+    # Calculate the number of samples with SRA metadata
+    samples_with_sra = final['LibraryLayout'].notna().sum()
+    
     # Count LibraryLayout values
     layout_counts = final['LibraryLayout'].value_counts().to_dict()
-    print("\nLibraryLayout distribution:")
+    summary_message = "\nLibraryLayout distribution:"
+    logger.info(summary_message)
+    print(summary_message)
     for layout, count in layout_counts.items():
-        print(f"  - {layout if pd.notna(layout) else 'NA'}: {count} samples ({count/len(final)*100:.1f}%)")
+        percentage = count/samples_with_sra*100 if samples_with_sra > 0 else 0
+        message = f"  - {layout if pd.notna(layout) else 'NA'}: {count} samples ({percentage:.1f}% of SRA samples)"
+        logger.info(message)
+        print(message)
 
     # Count LibrarySource values
     source_counts = final['LibrarySource'].value_counts().to_dict()
-    print("\nLibrarySource distribution:")
+    summary_message = "\nLibrarySource distribution:"
+    logger.info(summary_message)
+    print(summary_message)
     for source, count in source_counts.items():
-        print(f"  - {source if pd.notna(source) else 'NA'}: {count} samples ({count/len(final)*100:.1f}%)")
+        percentage = count/samples_with_sra*100 if samples_with_sra > 0 else 0
+        message = f"  - {source if pd.notna(source) else 'NA'}: {count} samples ({percentage:.1f}% of SRA samples)"
+        logger.info(message)
+        print(message)
 
     # Count LibraryStrategy values
     strategy_counts = final['LibraryStrategy'].value_counts().to_dict()
-    print("\nLibraryStrategy distribution:")
+    summary_message = "\nLibraryStrategy distribution:"
+    logger.info(summary_message)
+    print(summary_message)
     for strategy, count in strategy_counts.items():
-        print(f"  - {strategy if pd.notna(strategy) else 'NA'}: {count} samples ({count/len(final)*100:.1f}%)")
+        percentage = count/samples_with_sra*100 if samples_with_sra > 0 else 0
+        message = f"  - {strategy if pd.notna(strategy) else 'NA'}: {count} samples ({percentage:.1f}% of SRA samples)"
+        logger.info(message)
+        print(message)
 
     # Print validity summary
     valid_counts = final['Valid'].value_counts().to_dict()
-    print("\nValidity summary:")
+    summary_message = "\nValidity summary:"
+    logger.info(summary_message)
+    print(summary_message)
     yes_count = valid_counts.get('Yes', 0)
-    print(f"  - Valid samples (PAIRED + TRANSCRIPTOMIC): {yes_count} ({yes_count/len(final)*100:.1f}%)")
+    message = f"  - Valid samples (PAIRED + TRANSCRIPTOMIC): {yes_count} ({yes_count/len(final)*100:.1f}% of total)"
+    logger.info(message)
+    print(message)
     no_count = valid_counts.get('No', 0)
-    print(f"  - Invalid samples: {no_count} ({no_count/len(final)*100:.1f}%)")
+    message = f"  - Invalid samples: {no_count} ({no_count/len(final)*100:.1f}% of total)"
+    logger.info(message)
+    print(message)
     print()
 
     # For convenience, generate URLs to PubMed and GEO
@@ -612,33 +684,24 @@ def main():
     final = final.drop_duplicates(subset=['Accession'])
 
 
-    # Save
-    output_path = Path(args.output)
-    
-    # Check if output_path is a directory
-    if output_path.is_dir() or output_path.name == '' or str(output_path).endswith('/') or str(output_path).endswith('\\'):
-        # Create directory if it doesn't exist
-        output_path.mkdir(parents=True, exist_ok=True)
-        main_output_file = output_path / "Dataset_identification_result.csv"
-    else:
-        # Ensure parent directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        main_output_file = output_path
+    # Save to output directory
+    main_output_file = output_path / "Dataset_identification_result.csv"
     
     final.to_csv(main_output_file, index=False)
-    print(f'Saved combined table to {main_output_file}')
+    message = f'Saved combined table to {main_output_file}'
+    logger.info(message)
+    print(message)
 
     # Save a separate file with the selected datasets and their clusters if clustering was used
     if args.use_clustering and 'ClusterLabel' in geo_full.columns:
-        if output_path.is_dir() or output_path.name == '' or str(output_path).endswith('/') or str(output_path).endswith('\\'):
-            selected_path = output_path / 'selected_datasets.csv'
-        else:
-            selected_path = output_path.with_name('selected_datasets.csv')
+        selected_path = output_path / 'selected_datasets.csv'
         
         selected_cols = ['ID', 'Accession', 'Title', 'ClusterLabel', 'RelevanceScore']
         selected_df = geo_full[selected_cols].sort_values(['ClusterLabel', 'RelevanceScore'], ascending=[True, False])
         selected_df.to_csv(selected_path, index=False)
-        print(f'Saved selected datasets with cluster information to {selected_path}')
+        message = f'Saved selected datasets with cluster information to {selected_path}'
+        logger.info(message)
+        print(message)
 
     if args.generate_multi_csv:
         multi_df = final[['Accession', 'Species', 'PrimaryPubMedID', 'RelevanceScore', 'Valid']].copy()
@@ -646,14 +709,13 @@ def main():
         multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
         multi_df = multi_df.rename(columns={'Species': 'organism'})
         
-        # Determine appropriate path for the multi-dataset CSV
-        if output_path.is_dir() or output_path.name == '' or str(output_path).endswith('/') or str(output_path).endswith('\\'):
-            multi_csv_path = output_path / 'Valid_datasets.csv'
-        else:
-            multi_csv_path = output_path.parent / 'Valid_datasets.csv'
+        # Set path for the multi-dataset CSV in the output directory
+        multi_csv_path = output_path / 'Valid_datasets.csv'
             
         multi_df.to_csv(multi_csv_path, index=False)
-        print(f"Generated multi-dataset input CSV at {multi_csv_path}")
+        message = f"Generated multi-dataset input CSV at {multi_csv_path}"
+        logger.info(message)
+        print(message)
 
 if __name__ == '__main__':
     main()
