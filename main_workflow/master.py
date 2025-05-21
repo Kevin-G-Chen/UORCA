@@ -32,6 +32,36 @@ master = Agent(
     instrument=True,
 )
 
+def save_analysis_info(ctx: RunContext[RNAseqCoreContext]):
+    """
+    Save key analysis information to a JSON file for later integration.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("📝 Saving analysis information for integration")
+
+    # Create a dictionary with the relevant information
+    analysis_info = {
+        "accession": ctx.deps.accession,
+        "organism": ctx.deps.organism,
+        "number_of_samples": len(getattr(ctx.deps, 'abundance_files', [])) if hasattr(ctx.deps, 'abundance_files') else 0,
+        "analysis_column": getattr(ctx.deps, 'merged_column', None),
+        "unique_groups": getattr(ctx.deps, 'unique_groups', None),
+        "number_of_contrasts": len(getattr(ctx.deps, 'contrast_matrix_df', [])) if hasattr(ctx.deps, 'contrast_matrix_df') and ctx.deps.contrast_matrix_df is not None else 0,
+        "deg_results_path": getattr(ctx.deps, 'deg_results_path', None),
+        "kallisto_index_used": getattr(ctx.deps, 'kallisto_index_used', None),
+        "tx2gene_file_used": getattr(ctx.deps, 'tx2gene_file_used', None),
+        "analysis_success": getattr(ctx.deps, 'analysis_success', False),
+        "timestamp": datetime.datetime.now().isoformat()
+    }
+
+    # Save to file
+    info_file = os.path.join(ctx.deps.output_dir, "analysis_info.json")
+    with open(info_file, "w") as f:
+        json.dump(analysis_info, f, indent=2)
+
+    logger.info(f"✅ Saved analysis information to {info_file}")
+
+
 # ── tool wrappers (all async, all await) ────
 @master.tool
 async def extract(ctx: RunContext[ExtractionContext], accession: str) -> str:
@@ -74,11 +104,54 @@ async def evaluate_analysis(ctx: RunContext[RNAseqCoreContext]) -> str:
     logger = logging.getLogger(__name__)
     logger.info("🔍 Evaluating analysis results")
 
+    # Convert to AnalysisContext if needed
+    if not isinstance(ctx.deps, AnalysisContext):
+        try:
+            # Create an AnalysisContext with all the attributes from RNAseqCoreContext
+            analysis_ctx = AnalysisContext(**ctx.deps.model_dump() if hasattr(ctx.deps, 'model_dump') else ctx.deps.dict())
+            # Replace the context's deps
+            ctx.deps = analysis_ctx
+            logger.info("🔄 Converted RNAseqCoreContext to AnalysisContext for evaluation")
+        except Exception as e:
+            logger.error("❌ Failed to convert context for evaluation: %s", str(e))
+
+    # Collect basic facts about the run
+    facts = []
+    # Convert to AnalysisContext if needed for accessing properties like abundance_files
+    if not isinstance(ctx.deps, AnalysisContext):
+        try:
+            # Create an AnalysisContext with all the attributes from RNAseqCoreContext
+            analysis_ctx = AnalysisContext(**ctx.deps.model_dump())
+            # Replace the context's deps
+            ctx.deps = analysis_ctx
+            logger.info("🔄 Converted RNAseqCoreContext to AnalysisContext for evaluation")
+        except Exception as e:
+            logger.warning("⚠️ Failed to convert context: %s", str(e))
+
+    # Collect basic facts about the run
+    facts = []
+    # Convert to AnalysisContext if needed
+    if not isinstance(ctx.deps, AnalysisContext):
+        try:
+            # Create an AnalysisContext with all the attributes from RNAseqCoreContext
+            if hasattr(ctx.deps, "model_dump"):
+                analysis_ctx = AnalysisContext(**ctx.deps.model_dump())
+            else:
+                # Fall back to treating it as a dict-like object
+                analysis_ctx = AnalysisContext(**{k: getattr(ctx.deps, k) for k in dir(ctx.deps)
+                                               if not k.startswith('_') and not callable(getattr(ctx.deps, k))})
+            # Replace the context's deps
+            ctx.deps = analysis_ctx
+            logger.info("🔄 Converted RNAseqCoreContext to AnalysisContext for evaluation")
+        except Exception as e:
+            logger.error("❌ Error converting context type: %s", str(e))
+            # Continue with existing context - later code will handle missing attributes safely
+
     # Collect basic facts about the run
     facts = []
 
     # Check Kallisto quantification results
-    if not ctx.deps.abundance_files or len(ctx.deps.abundance_files) == 0:
+    if not hasattr(ctx.deps, 'abundance_files') or not ctx.deps.abundance_files or len(ctx.deps.abundance_files) == 0:
         facts.append("⚠️ No abundance files were found")
     else:
         # Check if abundance files actually exist
@@ -101,26 +174,50 @@ async def evaluate_analysis(ctx: RunContext[RNAseqCoreContext]) -> str:
         facts.append("⚠️ No Kallisto index was recorded as being used")
 
     # Check for DEG results
-    if not ctx.deps.deg_results_path:
-        facts.append("⚠️ No differential expression results were found")
+    deg_results_path = getattr(ctx.deps, 'deg_results_path', None)
+
+    # If deg_results_path is not set, check for DEG files in contrast subdirectories
+    if not deg_results_path:
+        # Look for contrast-specific directories under RNAseqAnalysis
+        analysis_dir = os.path.join(ctx.deps.output_dir, "RNAseqAnalysis")
+        if os.path.exists(analysis_dir):
+            deg_files = []
+            for subdir in os.listdir(analysis_dir):
+                subdir_path = os.path.join(analysis_dir, subdir)
+                if os.path.isdir(subdir_path) and subdir != "logs":
+                    # Check for DEG.csv in this contrast directory
+                    deg_file = os.path.join(subdir_path, "DEG.csv")
+                    if os.path.exists(deg_file):
+                        deg_files.append(deg_file)
+
+            if deg_files:
+                # Update the context with found files
+                setattr(ctx.deps, 'deg_results_path', deg_files if len(deg_files) > 1 else deg_files[0])
+                logger.info("💾 Found %d differential expression result files in contrast directories", len(deg_files))
+                facts.append(f"✓ Found {len(deg_files)} DEG files in contrast directories")
+            else:
+                facts.append("⚠️ No differential expression results were found in any subdirectory")
+        else:
+            facts.append("⚠️ RNAseqAnalysis directory not found")
     else:
-        if isinstance(ctx.deps.deg_results_path, list):
+        # Regular checking for DEG results as before
+        if isinstance(deg_results_path, list):
             # Multiple DEG files
             missing_deg_files = []
-            for deg_file in ctx.deps.deg_results_path:
+            for deg_file in deg_results_path:
                 if not os.path.exists(deg_file):
                     missing_deg_files.append(deg_file)
 
             if missing_deg_files:
-                facts.append(f"⚠️ {len(missing_deg_files)}/{len(ctx.deps.deg_results_path)} DEG result files are missing")
+                facts.append(f"⚠️ {len(missing_deg_files)}/{len(deg_results_path)} DEG result files are missing")
             else:
-                facts.append(f"✓ Found {len(ctx.deps.deg_results_path)} DEG result files")
+                facts.append(f"✓ Found {len(deg_results_path)} DEG result files")
         else:
             # Single DEG file
-            if os.path.exists(ctx.deps.deg_results_path):
-                facts.append(f"✓ Found DEG results file: {ctx.deps.deg_results_path}")
+            if os.path.exists(deg_results_path):
+                facts.append(f"✓ Found DEG results file: {deg_results_path}")
             else:
-                facts.append(f"⚠️ DEG results file not found: {ctx.deps.deg_results_path}")
+                facts.append(f"⚠️ DEG results file not found: {deg_results_path}")
 
     # Add information about tx2gene file
     tx2gene_file_used = getattr(ctx.deps, 'tx2gene_file_used', None)
@@ -148,35 +245,35 @@ async def evaluate_analysis(ctx: RunContext[RNAseqCoreContext]) -> str:
 
     # Extract metadata analysis details
     metadata_details = []
-    
+
     # Get candidate columns
     analysis_metadata_df = getattr(ctx.deps, 'analysis_metadata_df', None)
     if analysis_metadata_df is not None and hasattr(analysis_metadata_df, 'columns'):
         metadata_details.append(f"Candidate columns: {', '.join(analysis_metadata_df.columns.tolist())}")
-    
+
     # Get unique values in the merged column
     merged_column = getattr(ctx.deps, 'merged_column', None)
     unique_groups = getattr(ctx.deps, 'unique_groups', None)
-    
+
     if merged_column:
         metadata_details.append(f"Chosen analysis column: {merged_column}")
-        
+
         if unique_groups:
             metadata_details.append(f"Unique values in analysis column: {', '.join(map(str, unique_groups))}")
-    
+
     # Get contrast information
     contrast_matrix_df = getattr(ctx.deps, 'contrast_matrix_df', None)
     if contrast_matrix_df is not None:
         contrasts_info = []
         for _, row in contrast_matrix_df.iterrows():
             contrasts_info.append(f"{row.get('name', 'Unknown')}: {row.get('expression', 'Unknown')}")
-        
+
         if contrasts_info:
             metadata_details.append("Contrast formulas:")
             metadata_details.extend([f"  - {c}" for c in contrasts_info])
-    
+
     metadata_section = "\n".join(metadata_details) if metadata_details else "No metadata analysis details available"
-    
+
     evaluation_prompt = f"""
     Please evaluate this RNA-seq analysis and determine if it was successful.
 
@@ -187,7 +284,7 @@ async def evaluate_analysis(ctx: RunContext[RNAseqCoreContext]) -> str:
 
     KALLISTO INDEX: {getattr(ctx.deps, 'kallisto_index_used', 'Not specified')}
     TX2GENE FILE: {getattr(ctx.deps, 'tx2gene_file_used', 'Not specified')}
-    
+
     METADATA ANALYSIS DETAILS:
     {metadata_section}
 
@@ -253,6 +350,63 @@ async def generate_reflection(ctx: RunContext[RNAseqCoreContext]) -> str:
     logger = logging.getLogger(__name__)
     logger.info("🧠 Generating reflection for failed analysis")
 
+    # Convert to AnalysisContext if needed
+    if not isinstance(ctx.deps, AnalysisContext):
+        try:
+            # Create an AnalysisContext with all the attributes from RNAseqCoreContext
+            analysis_ctx = AnalysisContext(**ctx.deps.model_dump() if hasattr(ctx.deps, 'model_dump') else ctx.deps.dict())
+            # Replace the context's deps
+            ctx.deps = analysis_ctx
+            logger.info("🔄 Converted RNAseqCoreContext to AnalysisContext for reflection")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to convert context type: {str(e)}")
+
+    # Convert to AnalysisContext if needed
+    if not isinstance(ctx.deps, AnalysisContext):
+        try:
+            # Create an AnalysisContext with all the attributes from RNAseqCoreContext
+            if hasattr(ctx.deps, "model_dump"):
+                analysis_ctx = AnalysisContext(**ctx.deps.model_dump())
+            elif hasattr(ctx.deps, "dict"):
+                analysis_ctx = AnalysisContext(**ctx.deps.dict())
+            else:
+                # Fall back to treating it as a dict-like object
+                analysis_ctx = AnalysisContext(**{k: getattr(ctx.deps, k) for k in dir(ctx.deps)
+                                               if not k.startswith('_') and not callable(getattr(ctx.deps, k))})
+            # Replace the context's deps
+            ctx.deps = analysis_ctx
+            logger.info("🔄 Converted RNAseqCoreContext to AnalysisContext")
+        except Exception as e:
+            logger.error("❌ Error converting context type: %s", str(e))
+            # Continue with existing context but ensure required attributes exist
+            for attr in ['tool_logs', 'reflections', 'analysis_history']:
+                if not hasattr(ctx.deps, attr):
+                    setattr(ctx.deps, attr, [])
+        except Exception as e:
+            logger.error("❌ Failed to convert context for reflection: %s", str(e))
+
+    # Safely access analysis_diagnostics
+    analysis_diagnostics = getattr(ctx.deps, 'analysis_diagnostics', None)
+    # Convert to AnalysisContext if needed
+    if not isinstance(ctx.deps, AnalysisContext):
+        try:
+            # Create an AnalysisContext with all the attributes from RNAseqCoreContext
+            if hasattr(ctx.deps, "model_dump"):
+                analysis_ctx = AnalysisContext(**ctx.deps.model_dump())
+            else:
+                # Fall back to treating it as a dict-like object
+                analysis_ctx = AnalysisContext(**{k: getattr(ctx.deps, k) for k in dir(ctx.deps)
+                                               if not k.startswith('_') and not callable(getattr(ctx.deps, k))})
+            # Replace the context's deps
+            ctx.deps = analysis_ctx
+            logger.info("🔄 Converted RNAseqCoreContext to AnalysisContext for reflection")
+        except Exception as e:
+            logger.error("❌ Error converting context type: %s", str(e))
+            # Initialize essential attributes if they don't exist
+            for attr in ['reflections', 'tool_logs', 'analysis_diagnostics']:
+                if not hasattr(ctx.deps, attr):
+                    setattr(ctx.deps, attr, [] if attr in ['reflections', 'tool_logs'] else "No diagnostics available")
+
     # Safely access analysis_diagnostics
     analysis_diagnostics = getattr(ctx.deps, 'analysis_diagnostics', None)
     if not analysis_diagnostics:
@@ -267,42 +421,42 @@ async def generate_reflection(ctx: RunContext[RNAseqCoreContext]) -> str:
     # Create reflection prompt
     # Extract metadata analysis details for reflection
     metadata_details = []
-    
+
     # Get candidate columns
     analysis_metadata_df = getattr(ctx.deps, 'analysis_metadata_df', None)
     if analysis_metadata_df is not None and hasattr(analysis_metadata_df, 'columns'):
         metadata_details.append(f"Candidate columns: {', '.join(analysis_metadata_df.columns.tolist())}")
-        
+
         # Get sample values from each column
         for col in analysis_metadata_df.columns:
             unique_vals = analysis_metadata_df[col].unique()
             sample_vals = unique_vals[:5] if len(unique_vals) > 5 else unique_vals
-            metadata_details.append(f"Column '{col}' unique values: {', '.join(map(str, sample_vals))}" + 
+            metadata_details.append(f"Column '{col}' unique values: {', '.join(map(str, sample_vals))}" +
                                    (f" (and {len(unique_vals)-5} more...)" if len(unique_vals) > 5 else ""))
-    
+
     # Get merged column info
     merged_column = getattr(ctx.deps, 'merged_column', None)
     unique_groups = getattr(ctx.deps, 'unique_groups', None)
-    
+
     if merged_column:
         metadata_details.append(f"Chosen analysis column: {merged_column}")
-        
+
         if unique_groups:
             metadata_details.append(f"Unique values in analysis column: {', '.join(map(str, unique_groups))}")
-    
+
     # Get contrast information
     contrast_matrix_df = getattr(ctx.deps, 'contrast_matrix_df', None)
     if contrast_matrix_df is not None:
         contrasts_info = []
         for _, row in contrast_matrix_df.iterrows():
             contrasts_info.append(f"{row.get('name', 'Unknown')}: {row.get('expression', 'Unknown')}")
-        
+
         if contrasts_info:
             metadata_details.append("Contrast formulas:")
             metadata_details.extend([f"  - {c}" for c in contrasts_info])
-    
+
     metadata_section = "\n".join(metadata_details) if metadata_details else "No metadata analysis details available"
-    
+
     reflection_prompt = f"""
     Based on the RNA-seq analysis diagnostics, identify the key issues and suggest concrete next steps.
 
@@ -310,7 +464,7 @@ async def generate_reflection(ctx: RunContext[RNAseqCoreContext]) -> str:
 
     DIAGNOSTICS:
     {analysis_diagnostics}
-    
+
     METADATA ANALYSIS DETAILS:
     {metadata_section}
 
@@ -366,7 +520,7 @@ async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
     # Convert to AnalysisContext if needed
     if not isinstance(ctx.deps, AnalysisContext):
         # Create an AnalysisContext with all the attributes from RNAseqCoreContext
-        analysis_ctx = AnalysisContext(**ctx.deps.dict())
+        analysis_ctx = AnalysisContext(**ctx.deps.model_dump() if hasattr(ctx.deps, 'model_dump') else ctx.deps.dict())
         # Replace the context's deps
         ctx.deps = analysis_ctx
         logger.info("🔄 Converted RNAseqCoreContext to AnalysisContext")
@@ -478,6 +632,8 @@ async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
     analysis_success = getattr(ctx.deps, 'analysis_success', False)
     analysis_diagnostics = getattr(ctx.deps, 'analysis_diagnostics', "No diagnostics available")
 
+    save_analysis_info(ctx)
+
     if analysis_success:
         summary = f"""
         Analysis completed successfully after {attempt} attempt(s).
@@ -543,7 +699,7 @@ def cleanup_large_files(output_dir, logger):
         logger.info("🧹 Cleaning up SRA files in %s", sra_dir)
         sra_files = list(sra_dir.glob("**/*.sra")) + list(sra_dir.glob("**/*.sralite"))
         logger.info("🔍 Found %d SRA files to remove", len(sra_files))
-        
+
         for file in sra_files:
             try:
                 file.unlink()
@@ -551,8 +707,8 @@ def cleanup_large_files(output_dir, logger):
             except Exception as e:
                 sra_failed += 1
                 logger.debug("⚠️ Failed to remove %s: %s", file, str(e))
-        
-        logger.info("🗑️ Removed %d/%d SRA files (%d failed)", 
+
+        logger.info("🗑️ Removed %d/%d SRA files (%d failed)",
                    sra_removed, len(sra_files), sra_failed)
 
     # Clean up FASTQ files
@@ -562,7 +718,7 @@ def cleanup_large_files(output_dir, logger):
         logger.info("🧹 Cleaning up FASTQ files in %s", fastq_dir)
         fastq_files = list(fastq_dir.glob("**/*.fastq.gz"))
         logger.info("🔍 Found %d FASTQ files to remove", len(fastq_files))
-        
+
         for file in fastq_files:
             try:
                 file.unlink()
@@ -570,11 +726,11 @@ def cleanup_large_files(output_dir, logger):
             except Exception as e:
                 fastq_failed += 1
                 logger.debug("⚠️ Failed to remove %s: %s", file, str(e))
-        
-        logger.info("🗑️ Removed %d/%d FASTQ files (%d failed)", 
+
+        logger.info("🗑️ Removed %d/%d FASTQ files (%d failed)",
                    fastq_removed, len(fastq_files), fastq_failed)
 
-    logger.info("✅ Cleanup completed - Removed %d SRA files and %d FASTQ files", 
+    logger.info("✅ Cleanup completed - Removed %d SRA files and %d FASTQ files",
                sra_removed, fastq_removed)
 
 
