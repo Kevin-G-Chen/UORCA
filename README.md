@@ -35,6 +35,9 @@ UORCA will generate "insights" by collating information from different datasets.
 - identifying genes which are differentially expressed in disease states, including those which affect disease progression/severity
 - more generally - identifying common biological trends between different datasets on same/similar diseases. Alternatively - identifying biological factors underpinning different contexts
 - how genetic, transcriptomic, and proteomic data relate to eachother (e.g. is the transcriptomic information correlated to the proteomic information)
+- what this might look like in practice:
+  - in a specific contrast, what genes are uniquely differentially expressed?
+  - what genes are differentially expressed across all/most (similar) contrasts?
 
 These findings are nice, and would generate testable hypotheses (e.g. if we induce this mutation, findings from UORCA predict that we should induce a disease state similar to X, but distinct to Y). However, I would need to
 - convince researchers that any generated insights/testable hypotheses are actually worth pursuing further
@@ -49,7 +52,7 @@ If I can successfully establish this, then I believe there is a chance that UORC
 ## Envisaged end result
 
 A web server where the user
-1. Inputs a research question
+1. Inputs a research question (regardless of whether this is a web-server or not, this should be the entry point)
 2. OPTIONALLY includes their own data. The intent here would be to assist with "how does my data fit in the broader picture?"
 
 The user should then see:
@@ -73,6 +76,92 @@ The user should then see:
 ## Internal collaboration opportunities
 - SampleExplorer: this would facilitate identification of relevant samples and datasets.
 - GeneInsight: I will get DEGs as part of the analysis of individual RNAseq datasets. GeneInsight could be used generate insights
+
+## External collaboration opportunities
+
+Given that this workflow should be agnostic to disease/gene etc., I anticipate that any researcher that would benefit from pulling from public data should see benefit here. Therefore, there are collaboration opportunities to help researchers identify datasets that are relevant to their research question, and then to analyse these datasets.
+
+Dependencies and Installation
+
+### Python Environment
+
+UORCA uses `uv` for Python package management:
+
+```bash
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Create and activate a new environment
+uv venv
+source .venv/bin/activate
+
+# Install required Python packages
+uv pip install openai pandas numpy pydantic pydantic-ai matplotlib tqdm scipy scikit-learn hdbscan plotly biopython unidecode python-dotenv GEOparse
+```
+
+### R Packages
+
+R 4.1.2 or newer is recommended. Install the required R packages:
+
+```R
+# Install required packages
+install.packages(c("gplots"))
+
+# Install Bioconductor packages
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install(c("edgeR", "tximport", "limma", "ComplexHeatmap"))
+```
+
+### Command-line Tools
+
+#### NCBI Entrez Direct E-utilities
+
+```bash
+# Install Entrez Direct
+sh -c "$(curl -fsSL https://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh)"
+echo 'export PATH=${PATH}:$HOME/edirect' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### NCBI SRA Toolkit
+
+```bash
+# Download and extract SRA Toolkit
+wget https://ftp-trace.ncbi.nlm.nih.gov/sra/sdk/current/sratoolkit.current-ubuntu64.tar.gz
+tar -xzf sratoolkit.current-ubuntu64.tar.gz
+echo 'export PATH=${PATH}:/path/to/sratoolkit.x.x.x-ubuntu64/bin' >> ~/.bashrc
+source ~/.bashrc
+
+# Configure SRA Toolkit
+vdb-config --interactive
+```
+
+#### Kallisto
+
+```bash
+# Install Kallisto via conda (recommended)
+conda install -c bioconda kallisto
+
+# Or download pre-built binary
+wget https://github.com/pachterlab/kallisto/releases/download/v0.46.1/kallisto_linux-v0.46.1.tar.gz
+tar -xzf kallisto_linux-v0.46.1.tar.gz
+echo 'export PATH=${PATH}:/path/to/kallisto' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Pigz (Parallel gzip)
+
+```bash
+# On Ubuntu/Debian
+apt-get install pigz
+
+# On CentOS/RedHat
+yum install pigz
+
+# On macOS with Homebrew
+brew install pigz
 
 ## Navigating this repository
 
