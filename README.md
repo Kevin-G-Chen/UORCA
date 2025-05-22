@@ -297,7 +297,7 @@ The `ResultsIntegration.py` script integrates results from multiple RNA-seq anal
 
 #### Usage:
 ```bash
-python main_workflow/additional_scripts/ResultsIntegration.py \
+uv run main_workflow/additional_scripts/ResultsIntegration.py \
     --results_dir ../UORCA_results \
     --output_dir ../UORCA_results/integrated_results \
     --pvalue_threshold 0.05 \
