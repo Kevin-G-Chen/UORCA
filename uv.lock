@@ -1196,6 +1196,19 @@ wheels = [
 ]
 
 [[package]]
+name = "plotly"
+version = "6.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "narwhals" },
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8a/7c/f396bc817975252afbe7af102ce09cd12ac40a8e90b8699a857d1b15c8a3/plotly-6.1.1.tar.gz", hash = "sha256:84a4f3d36655f1328fa3155377c7e8a9533196697d5b79a4bc5e905bdd09a433", size = 7543694 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/f3/f8cb7066f761e2530e1280889e3413769891e349fca35ee7290e4ace35f5/plotly-6.1.1-py3-none-any.whl", hash = "sha256:9cca7167406ebf7ff541422738402159ec3621a608ff7b3e2f025573a1c76225", size = 16118469 },
+]
+
+[[package]]
 name = "pooch"
 version = "1.8.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1650,6 +1663,20 @@ wheels = [
 ]
 
 [[package]]
+name = "seaborn"
+version = "0.13.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pandas" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/59/a451d7420a77ab0b98f7affa3a1d78a313d2f7281a57afb1a34bae8ab412/seaborn-0.13.2.tar.gz", hash = "sha256:93e60a40988f4d65e9f4885df477e2fdaff6b73a9ded434c1ab356dd57eefff7", size = 1457696 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/83/11/00d3c3dfc25ad54e731d91449895a79e4bf2384dc3ac01809010ba88f6d5/seaborn-0.13.2-py3-none-any.whl", hash = "sha256:636f8336facf092165e27924f223d3c62ca560b1f2bb5dff7ab7fad265361987", size = 294914 },
+]
+
+[[package]]
 name = "setuptools"
 version = "79.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1987,9 +2014,11 @@ dependencies = [
     { name = "openai" },
     { name = "opentelemetry-api" },
     { name = "panel" },
+    { name = "plotly" },
     { name = "pydantic-ai" },
     { name = "pydantic-ai-slim", extra = ["mcp"] },
     { name = "pysradb" },
+    { name = "seaborn" },
     { name = "sphinx" },
     { name = "tabulate" },
     { name = "tiktoken" },
@@ -2012,9 +2041,11 @@ requires-dist = [
     { name = "openai", specifier = ">=1.70.0" },
     { name = "opentelemetry-api", specifier = ">=1.32.1" },
     { name = "panel", specifier = ">=1.6.3" },
+    { name = "plotly", specifier = ">=6.1.1" },
     { name = "pydantic-ai", specifier = ">=0.0.48" },
     { name = "pydantic-ai-slim", extras = ["mcp"], specifier = ">=0.0.48" },
     { name = "pysradb", specifier = ">=2.2.2" },
+    { name = "seaborn", specifier = ">=0.13.2" },
     { name = "sphinx", specifier = ">=8.2.3" },
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "tiktoken", specifier = ">=0.9.0" },

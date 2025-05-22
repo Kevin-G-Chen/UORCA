@@ -282,3 +282,39 @@ GSE789012,mouse,9.2,Yes
 ```
 
 You can use the `--generate-multi-csv` option in the DatasetIdentification.py script to automatically generate this CSV file.
+
+### Results Integration
+
+The `ResultsIntegration.py` script integrates results from multiple RNA-seq analyses, identifying important genes and generating interactive visualizations that highlight patterns across datasets.
+
+#### Features:
+- Intelligently selects important genes using two complementary strategies:
+  1. Most frequently differentially expressed genes across all contrasts
+  2. Contrast-specific genes with large fold changes that appear in few contrasts
+- Creates interactive heatmaps showing log fold changes across contrasts
+- Generates expression plots (violin/box) showing CPM values across samples
+- Produces a comprehensive HTML report with interactive visualizations
+
+#### Usage:
+```bash
+python main_workflow/additional_scripts/ResultsIntegration.py \
+    --results_dir ../UORCA_results \
+    --output_dir ../UORCA_results/integrated_results \
+    --pvalue_threshold 0.05 \
+    --lfc_threshold 1.0 \
+    --top_frequent 20 \
+    --top_unique 10 \
+    --plot_type violin
+```
+
+#### Key parameters:
+- `--results_dir`: Directory containing multiple analysis results (required)
+- `--output_dir`: Directory for integrated results (default: results_dir/integrated_results_TIMESTAMP)
+- `--pvalue_threshold`: P-value threshold for DEGs (default: 0.05)
+- `--lfc_threshold`: Log fold change threshold for DEGs (default: 1.0)
+- `--top_frequent`: Number of most frequently occurring genes to include (default: 20)
+- `--top_unique`: Number of unique genes with large fold changes to include per contrast (default: 10)
+- `--max_genes`: Maximum number of genes to include in visualizations (default: 100)
+- `--plot_type`: Type of expression plot to generate (default: violin)
+- `--gene_list`: Path to text file with specific genes to plot (optional)
+- `--analysis_summary`: Generate a separate summary of all analyses and contrasts (optional)
