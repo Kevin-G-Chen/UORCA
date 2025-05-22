@@ -15,7 +15,7 @@ def main():
     logs_dir = os.path.join(args.output_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
 
-    env = Environment(loader=FileSystemLoader("main_workflow/additional_scripts"))
+    env = Environment(loader=FileSystemLoader("main_workflow/run_helpers"))
 
     df = pd.read_csv(args.csv_file)
 
