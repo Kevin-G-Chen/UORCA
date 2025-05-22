@@ -211,33 +211,53 @@ class ResultsIntegrator:
 
         # Load contrast information if available
         self.contrast_info = {}
-
-        # Check multiple potential locations for the contrasts file
-        contrast_file_locations = [
+        
+        # Try to load contrasts from each analysis directory as well as global locations
+        analysis_folders = self.find_analysis_folders()
+        
+        # First try to load from analysis-specific directories
+        for analysis_folder in analysis_folders:
+            analysis_id = os.path.basename(analysis_folder)
+            for contrasts_file in [
+                os.path.join(analysis_folder, "contrasts.csv"),
+                os.path.join(analysis_folder, "metadata", "contrasts.csv")
+            ]:
+                if os.path.isfile(contrasts_file):
+                    try:
+                        contrasts_df = pd.read_csv(contrasts_file)
+                        for _, row in contrasts_df.iterrows():
+                            if 'name' in row and 'description' in row:
+                                contrast_key = row['name']
+                                self.contrast_info[contrast_key] = {
+                                    'description': row['description'],
+                                    'expression': row.get('expression', '')
+                                }
+                        logger.info(f"Loaded contrasts from {contrasts_file}")
+                    except Exception as e:
+                        logger.warning(f"Error loading contrasts file {contrasts_file}: {str(e)}")
+        
+        # Then try global locations as fallback
+        for contrasts_file in [
             os.path.join(self.results_dir, "contrasts.csv"),
             os.path.join(os.path.dirname(self.results_dir), "contrasts.csv"),
             os.path.join(self.results_dir, "metadata", "contrasts.csv")
-        ]
-
-        contrasts_file = None
-        for file_path in contrast_file_locations:
-            if os.path.isfile(file_path):
-                contrasts_file = file_path
-                logger.info(f"Found contrasts file at {file_path}")
-                break
-
-        if contrasts_file:
-            try:
-                contrasts_df = pd.read_csv(contrasts_file)
-                for _, row in contrasts_df.iterrows():
-                    if 'name' in row and 'description' in row:
-                        self.contrast_info[row['name']] = {
-                            'description': row['description'],
-                            'expression': row.get('expression', '')
-                        }
-                logger.info(f"Loaded information for {len(self.contrast_info)} contrasts")
-            except Exception as e:
-                logger.warning(f"Error loading contrasts file: {str(e)}")
+        ]:
+            if os.path.isfile(contrasts_file):
+                try:
+                    contrasts_df = pd.read_csv(contrasts_file)
+                    for _, row in contrasts_df.iterrows():
+                        if 'name' in row and 'description' in row:
+                            contrast_key = row['name']
+                            if contrast_key not in self.contrast_info:
+                                self.contrast_info[contrast_key] = {
+                                    'description': row['description'],
+                                    'expression': row.get('expression', '')
+                                }
+                    logger.info(f"Loaded contrasts from global file {contrasts_file}")
+                except Exception as e:
+                    logger.warning(f"Error loading contrasts file {contrasts_file}: {str(e)}")
+        
+        logger.info(f"Loaded information for {len(self.contrast_info)} total contrasts")
 
         # Load DEG data
         for analysis_id, contrasts in deg_files.items():
@@ -644,31 +664,39 @@ class ResultsIntegrator:
             # Get the sample groups from the edger_analysis_samples.csv file
             sample_to_group = {}
 
-            # Check multiple potential locations for the sample mapping file
+            # Helper function to find first existing file
+            def first_existing(paths):
+                for path in paths:
+                    if os.path.isfile(path):
+                        return path
+                return None
+
+            # Look inside the current analysis directory first
+            analysis_dir = os.path.join(self.results_dir, analysis_id)
             sample_file_locations = [
+                os.path.join(analysis_dir, "edger_analysis_samples.csv"),
+                os.path.join(analysis_dir, "metadata", "edger_analysis_samples.csv"),
                 os.path.join(self.results_dir, "edger_analysis_samples.csv"),
                 os.path.join(os.path.dirname(self.results_dir), "edger_analysis_samples.csv")
             ]
-
-            edger_samples_file = None
-            for file_path in sample_file_locations:
-                if os.path.isfile(file_path):
-                    edger_samples_file = file_path
-                    logger.info(f"Found sample mapping file at {file_path}")
-                    break
+            
+            edger_samples_file = first_existing(sample_file_locations)
+            if edger_samples_file:
+                logger.info(f"Found sample mapping file at {edger_samples_file}")
 
             if edger_samples_file:
                 try:
-                    # Load the sample mapping file - try both with and without index
-                    try:
-                        sample_mapping_df = pd.read_csv(edger_samples_file)
-                        # Check if first column should be index
-                        if sample_mapping_df.columns[0] == '' or sample_mapping_df.columns[0].startswith('Unnamed'):
-                            sample_mapping_df = pd.read_csv(edger_samples_file, index_col=0)
-                    except Exception as e:
-                        logger.warning(f"Error reading sample mapping file, trying alternative approach: {str(e)}")
-                        sample_mapping_df = pd.read_csv(edger_samples_file, index_col=0)
-
+                    # First try loading the file to check its structure
+                    sample_mapping_df = pd.read_csv(edger_samples_file, nrows=0)
+                    
+                    # If the first column has no name or starts with 'Unnamed', it's probably an index
+                    first_col = sample_mapping_df.columns[0]
+                    has_index = first_col == '' or first_col.startswith('Unnamed')
+                    
+                    # Now load the full file with appropriate index_col setting
+                    sample_mapping_df = pd.read_csv(edger_samples_file, index_col=0 if has_index else None)
+                    logger.info(f"Loaded sample mapping with columns: {', '.join(sample_mapping_df.columns)}")
+                    
                     # Find the group column
                     group_col = None
                     if self.analysis_info and analysis_id in self.analysis_info and 'analysis_column' in self.analysis_info[analysis_id]:
@@ -683,16 +711,13 @@ class ResultsIntegrator:
                                 group_col = col
                                 logger.info(f"Using '{col}' column as group")
                                 break
-
+                    
                     if group_col and group_col in sample_mapping_df.columns:
                         # Create a mapping from sample index to group
-                        for i, row in enumerate(sample_mapping_df.itertuples()):
+                        for i in range(len(sample_mapping_df)):
                             # Use sample index (i) as the key (starting with Sample1)
                             sample_key = f"Sample{i+1}"
-                            if hasattr(row, group_col):
-                                sample_to_group[sample_key] = getattr(row, group_col)
-                            elif group_col in sample_mapping_df.columns:
-                                sample_to_group[sample_key] = sample_mapping_df.iloc[i][group_col]
+                            sample_to_group[sample_key] = sample_mapping_df.iloc[i][group_col]
                         logger.info(f"Created mapping for {len(sample_to_group)} samples")
                     else:
                         logger.warning(f"No group column found in sample mapping file")
@@ -710,6 +735,9 @@ class ResultsIntegrator:
 
             # Add analysis ID
             melted_df['Analysis'] = analysis_id
+            
+            # Create a more descriptive sample label for hover info
+            melted_df['SampleLabel'] = melted_df['Analysis'] + ":" + melted_df['Sample']
 
             # Map samples to groups if available
             if sample_to_group:
@@ -738,9 +766,9 @@ class ResultsIntegrator:
         # Number of genes actually found in data
         genes_found = plot_df['Gene'].nunique()
 
-        # Determine facet column wrapping (3 columns max)
-        facet_col_wrap = min(3, genes_found)
-
+        # Determine facet column wrapping (4 columns max)
+        facet_col_wrap = min(4, genes_found)
+        
         # Calculate rows for height
         n_rows = math.ceil(genes_found / facet_col_wrap)
 
@@ -754,15 +782,13 @@ class ResultsIntegrator:
             plot_df['LogExpression'] = np.log2(plot_df['Expression'] + 1)
             y_axis_title = "Log2(CPM+1)"
 
-        # Calculate appropriate facet_row_spacing based on number of rows
-        # Must be less than 1/(rows-1) to avoid the error
-        if n_rows <= 1:
-            facet_row_spacing = 0.05  # Default for single row
-        else:
-            # Use 80% of the maximum allowed value to be safe
-            max_spacing = 1 / (n_rows - 1)
-            facet_row_spacing = max_spacing * 0.8
-            logger.info(f"Using facet_row_spacing of {facet_row_spacing:.4f} for {n_rows} rows (max allowed: {max_spacing:.4f})")
+        # Use simple consistent spacing values that work well across different panel counts
+        facet_row_spacing = 0.03
+        facet_col_spacing = 0.03
+        
+        # Add sample label for hover info
+        if 'SampleLabel' not in plot_df.columns:
+            plot_df['SampleLabel'] = plot_df['Analysis'] + ":" + plot_df['Sample']
 
         # Create the plot using Plotly Express with adjusted spacing
         if plot_type in ['violin', 'both']:
@@ -773,12 +799,13 @@ class ResultsIntegrator:
                 color='Analysis',
                 facet_col='Gene',
                 facet_col_wrap=facet_col_wrap,
-                hover_data=['Sample', 'Expression'],
+                hover_data=['SampleLabel', 'Expression', 'Group'],
                 box=True,
                 points="all",
                 title=f"Gene Expression Across Samples (Page 1 of {len(gene_pages)})",
                 labels={'LogExpression': y_axis_title, 'Group': 'Group', 'Analysis': 'Dataset'},
-                facet_row_spacing=facet_row_spacing
+                facet_row_spacing=facet_row_spacing,
+                facet_col_spacing=facet_col_spacing
             )
         else:  # box plot
             fig = px.box(
@@ -788,23 +815,35 @@ class ResultsIntegrator:
                 color='Analysis',
                 facet_col='Gene',
                 facet_col_wrap=facet_col_wrap,
-                hover_data=['Sample', 'Expression'],
+                hover_data=['SampleLabel', 'Expression'],
                 points="all",
                 title=f"Gene Expression Across Samples (Page 1 of {len(gene_pages)})",
                 labels={'LogExpression': y_axis_title, 'Group': 'Group', 'Analysis': 'Dataset'},
-                facet_row_spacing=facet_row_spacing
+                facet_row_spacing=facet_row_spacing,
+                facet_col_spacing=facet_col_spacing
             )
 
-        # Layout adjustments
+        # Layout adjustments optimized for readability
         fig.update_layout(
-            height=min(250 * n_rows, 2000),  # Cap height (reduced from 300 to 250 per row)
-            width=min(400 * facet_col_wrap, 1200),  # Cap width
+            height=220 * n_rows,  # 220px per row
+            width=320 * facet_col_wrap,  # 320px per column
             legend_title_text="Dataset",
-            margin=dict(l=40, r=20, t=80, b=40)
+            margin=dict(l=40, r=20, t=80, b=40),
+            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
         )
+        
+        # Improve axis appearance
+        fig.update_xaxes(categoryorder="category ascending")
+        fig.update_layout(xaxis_title="")
+        
+        # Ensure points are visible even with many data points
+        fig.update_traces(marker=dict(size=3, opacity=0.7), jitter=0.3)
 
-        # Update facet formatting (remove "Gene=" prefix)
-        fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[1]))
+        # Update facet formatting (remove "Gene=" prefix and adjust font size)
+        fig.for_each_annotation(lambda a: a.update(
+            text=a.text.split("=")[1],
+            font=dict(size=12, color="black", family="Arial")
+        ))
 
         # Add note about number of genes
         if len(genes) < len(gene_list):
@@ -839,7 +878,21 @@ class ResultsIntegrator:
         """Get the description for a contrast from the loaded contrast info."""
         if contrast_id in self.contrast_info:
             return self.contrast_info[contrast_id]['description']
-
+        
+        # Try to look in an analysis-specific contrasts file (check multiple locations)
+        for contrasts_file in [
+            os.path.join(self.results_dir, analysis_id, "contrasts.csv"),
+            os.path.join(self.results_dir, analysis_id, "metadata", "contrasts.csv")
+        ]:
+            if os.path.isfile(contrasts_file):
+                try:
+                    contrasts_df = pd.read_csv(contrasts_file)
+                    match = contrasts_df[contrasts_df['name'] == contrast_id]
+                    if not match.empty:
+                        return match.iloc[0].get('description', 'No description available')
+                except Exception:
+                    pass
+                
         return f"Contrast: {contrast_id}"
 
     def create_integrated_report(self,
