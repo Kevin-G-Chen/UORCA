@@ -361,7 +361,7 @@ pip install streamlit plotly pandas scipy
 
 ### Usage
 
-Navigate to the `main_workflow/additional_scripts` directory and run:
+Navigate to the `main_workflow/reporting` directory and run:
 
 ```bash
 streamlit run uorca_explorer.py
@@ -369,4 +369,18 @@ streamlit run uorca_explorer.py
 
 This will launch the interactive web interface where you can explore and visualize UORCA RNA-seq results.
 
----
+If the app is running on a remote server (e.g., HPC cluster), you can access it using an SSH tunnel:
+
+1. Start the app on the remote server:
+   ```bash
+   # On remote server
+   streamlit run uorca_explorer.py --server.port 8501
+   ```
+
+2. Create an SSH tunnel from your local machine:
+   ```bash
+   # On your local machine
+   ssh -L 8000:127.0.0.1:8501 user@remote.server
+   ```
+
+3. Open `http://127.0.0.1:8000` in your browser
