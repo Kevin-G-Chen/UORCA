@@ -18,6 +18,7 @@ import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from pathlib import Path
 import sys
 from datetime import datetime
@@ -26,6 +27,34 @@ from datetime import datetime
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # ResultsIntegration.py is in the same directory
 from ResultsIntegration import ResultsIntegrator
+
+# Check if fragment is available (Streamlit >=1.33.0)
+# If not, fallback to experimental_fragment
+try:
+    from streamlit import fragment
+    st.fragment = fragment
+except ImportError:
+    try:
+        from streamlit import experimental_fragment
+        st.fragment = experimental_fragment
+    except ImportError:
+        # Fallback for very old Streamlit versions
+        def fragment(func):
+            """Fallback decorator when st.fragment is not available."""
+            def wrapper(*args, **kwargs):
+                return func(*args, **kwargs)
+            return wrapper
+        st.fragment = fragment
+    
+    # Add a cache for figure objects to improve performance in older versions
+    @st.cache_data(hash_funcs={go.Figure: lambda _: None})
+    def cached_figure_creation(func_name, *args, **kwargs):
+        """Cache figure objects to avoid recreating them."""
+        if func_name == "create_lfc_heatmap":
+            return ri.create_lfc_heatmap(*args, **kwargs)
+        elif func_name == "create_expression_plots":
+            return ri.create_expression_plots(*args, **kwargs)
+        return None
 
 # Set page configuration
 st.set_page_config(
@@ -71,9 +100,9 @@ results_dir = st.sidebar.text_input(
     value=default_dir
 )
 
-# expensive → cache
-@st.cache_data
-def load_integrator(path):
+# expensive → cache resource (keeps the object alive for the whole session)
+@st.cache_resource
+def get_integrator(path):
     try:
         ri = ResultsIntegrator(results_dir=path)
         ri.load_data()
@@ -83,7 +112,7 @@ def load_integrator(path):
 
 # Load the integrator (cached)
 with st.sidebar.status("Loading data...", expanded=True) as status:
-    ri, error = load_integrator(results_dir)
+    ri, error = get_integrator(results_dir)
 
     if error:
         status.update(label=f"Error loading data: {error}", state="error")
@@ -180,6 +209,15 @@ if ri and ri.cpm_data:
 
         st.sidebar.subheader("Visualization Options")
         hide_x_labels = st.sidebar.checkbox("Hide x-axis labels in expression plots", value=True)
+        
+        st.sidebar.subheader("Heatmap Options")
+        use_dynamic_filtering = st.sidebar.checkbox("Use dynamic significance filtering in heatmap", value=True, help="Apply current p-value and LFC thresholds to heatmap display")
+        if use_dynamic_filtering:
+            st.sidebar.info("🎯 Heatmap will only show colored cells for genes meeting current significance thresholds")
+        hide_empty_rows_cols = st.sidebar.checkbox("Hide genes/contrasts with no significant values", value=False, help="Remove rows/columns where no values meet significance criteria")
+        if hide_empty_rows_cols:
+            st.sidebar.info("🧹 Genes/contrasts with no significant values will be completely removed from the heatmap")
+        
         debug_mode = st.sidebar.checkbox("Debug mode", value=False)
 
     # Initialize session state for selections
@@ -197,22 +235,63 @@ if ri and ri.cpm_data:
     )
 
     if gene_select_method == "From list":
+        col1, col2 = st.sidebar.columns([3, 1])
+        with col2:
+            st.write("")  # Add some spacing
+            if st.button("Select All", key="select_all_genes_list"):
+                st.session_state['gene_sel_list'] = all_genes[:30]  # Limit to max_selections
+                try:
+                    st.rerun()
+                except AttributeError:
+                    try:
+                        st.experimental_rerun()
+                    except AttributeError:
+                        pass
+        
+        # Use session state if "Select All" was clicked
+        default_genes = st.session_state.get('gene_sel_list', [])
         gene_sel = st.sidebar.multiselect(
             "Select genes:",
             all_genes,
+            default=default_genes,
             max_selections=30
         )
+        
+        # Clear the session state after use
+        if 'gene_sel_list' in st.session_state:
+            del st.session_state['gene_sel_list']
     elif gene_select_method == "Search":
         gene_search = st.sidebar.text_input("Search genes:")
         matching_genes = [g for g in all_genes if gene_search.upper() in g.upper()]
         if len(matching_genes) > 100:
             st.sidebar.warning(f"Found {len(matching_genes)} matches. Showing first 100.")
             matching_genes = matching_genes[:100]
+        
+        col1, col2 = st.sidebar.columns([3, 1])
+        with col2:
+            st.write("")  # Add some spacing
+            if st.button("Select All", key="select_all_genes_search") and matching_genes:
+                st.session_state['gene_sel_search'] = matching_genes[:30]  # Limit to max_selections
+                try:
+                    st.rerun()
+                except AttributeError:
+                    try:
+                        st.experimental_rerun()
+                    except AttributeError:
+                        pass
+        
+        # Use session state if "Select All" was clicked
+        default_genes = st.session_state.get('gene_sel_search', [])
         gene_sel = st.sidebar.multiselect(
             "Matching genes:",
             matching_genes,
+            default=default_genes,
             max_selections=30
         )
+        
+        # Clear the session state after use
+        if 'gene_sel_search' in st.session_state:
+            del st.session_state['gene_sel_search']
     else:  # Important genes
         # Use p-value and lfc thresholds (these will be defined either here or in advanced options)
         if not show_advanced:
@@ -236,6 +315,15 @@ if ri and ri.cpm_data:
                     lfc_thresh = float(lfc_text)
                 except ValueError:
                     pass
+            
+            # Add heatmap options for simple mode too
+            st.sidebar.subheader("Heatmap Options")
+            use_dynamic_filtering = st.sidebar.checkbox("Use dynamic significance filtering in heatmap", value=True, help="Apply current p-value and LFC thresholds to heatmap display")
+            if use_dynamic_filtering:
+                st.sidebar.info("🎯 Heatmap will only show colored cells for genes meeting current significance thresholds")
+            hide_empty_rows_cols = st.sidebar.checkbox("Hide genes/contrasts with no significant values", value=False, help="Remove rows/columns where no values meet significance criteria")
+            if hide_empty_rows_cols:
+                st.sidebar.info("🧹 Genes/contrasts with no significant values will be completely removed from the heatmap")
 
             # Set default values for parameters with number inputs
             col1, col2 = st.sidebar.columns([3, 1])
@@ -278,12 +366,31 @@ if ri and ri.cpm_data:
             lfc_threshold=lfc_thresh
         )
         top_genes = sorted(top_genes)
+        col1, col2 = st.sidebar.columns([3, 1])
+        with col2:
+            st.write("")  # Add some spacing
+            if st.button("Select All", key="select_all_genes_important") and top_genes:
+                st.session_state['gene_sel_important'] = top_genes[:100]  # Limit to max_selections
+                try:
+                    st.rerun()
+                except AttributeError:
+                    try:
+                        st.experimental_rerun()
+                    except AttributeError:
+                        pass
+        
+        # Use session state if "Select All" was clicked or use default selection
+        default_genes = st.session_state.get('gene_sel_important', top_genes[:min(50, len(top_genes))] if top_genes else [])
         gene_sel = st.sidebar.multiselect(
             "Important genes:",
             top_genes,
-            default=top_genes[:min(50, len(top_genes))] if top_genes else None,
+            default=default_genes,
             max_selections=100
         )
+        
+        # Clear the session state after use
+        if 'gene_sel_important' in st.session_state:
+            del st.session_state['gene_sel_important']
 
     # Dataset selection
     st.sidebar.subheader("Dataset Selection")
@@ -294,10 +401,25 @@ if ri and ri.cpm_data:
     if default_datasets is None:
         default_datasets = all_dsets
 
+    col1, col2 = st.sidebar.columns([3, 1])
+    with col2:
+        st.write("")  # Add some spacing
+        if st.button("Select All", key="select_all_datasets"):
+            st.session_state['datasets_selected'] = all_dsets
+            try:
+                st.rerun()
+            except AttributeError:
+                try:
+                    st.experimental_rerun()
+                except AttributeError:
+                    pass
+
+    # Use session state if available, otherwise use default
+    current_datasets = st.session_state.get('datasets_selected', default_datasets)
     ds_sel = st.sidebar.multiselect(
         "Select datasets:",
         all_dsets,
-        default=default_datasets
+        default=current_datasets
     )
 
     # Contrast selection
@@ -337,10 +459,25 @@ if ri and ri.cpm_data:
     # Filter default_contrasts to only include valid contrasts
     default_contrasts = [c for c in default_contrasts if c in all_contr]
 
+    col1, col2 = st.sidebar.columns([3, 1])
+    with col2:
+        st.write("")  # Add some spacing
+        if st.button("Select All", key="select_all_contrasts"):
+            st.session_state['contrasts_selected'] = all_contr
+            try:
+                st.rerun()
+            except AttributeError:
+                try:
+                    st.experimental_rerun()
+                except AttributeError:
+                    pass
+
+    # Use session state if available, otherwise use default
+    current_contrasts = st.session_state.get('contrasts_selected', default_contrasts)
     contr_sel = st.sidebar.multiselect(
         "Select contrasts:",
         all_contr,
-        default=default_contrasts
+        default=current_contrasts
     )
 
     # Visualization options
@@ -454,53 +591,80 @@ if ri and ri.cpm_data:
             # Keep original contrasts for the heatmap
             # We'll handle the display in the heatmap function itself
 
-            # Create and display the heatmap
-            with st.spinner("Generating heatmap..."):
-                try:
-                    if show_advanced and debug_mode:
-                        st.info("Debug mode: Showing detailed heatmap generation info")
-                        import logging
-                        import io
+            # Create and display the heatmap using isolated fragment
+            @st.fragment
+            def draw_heatmap(gene_selection, contrast_pairs, show_debug=False, show_adv=False):
+                with st.spinner("Generating heatmap..."):
+                    try:
+                        if show_adv and show_debug:
+                            st.info("Debug mode: Showing detailed heatmap generation info")
+                            import logging
+                            import io
 
-                        # Set up a string IO to capture log messages
-                        log_stream = io.StringIO()
-                        handler = logging.StreamHandler(log_stream)
-                        handler.setLevel(logging.DEBUG)
-                        formatter = logging.Formatter('%(levelname)s - %(message)s')
-                        handler.setFormatter(formatter)
+                            # Set up a string IO to capture log messages
+                            log_stream = io.StringIO()
+                            handler = logging.StreamHandler(log_stream)
+                            handler.setLevel(logging.DEBUG)
+                            formatter = logging.Formatter('%(levelname)s - %(message)s')
+                            handler.setFormatter(formatter)
 
-                        # Add the handler to the logger
-                        logger = logging.getLogger("ResultsIntegration")
-                        logger.setLevel(logging.DEBUG)
-                        logger.addHandler(handler)
+                            # Add the handler to the logger
+                            logger = logging.getLogger("ResultsIntegration")
+                            logger.setLevel(logging.DEBUG)
+                            logger.addHandler(handler)
 
-                    # Create heatmap with possibly modified parameters
-                    fig = ri.create_lfc_heatmap(
-                        genes=gene_sel,
-                        contrasts=sel_pairs,
-                        output_file=None
-                    )
+                        # Create heatmap with possibly modified parameters
+                        # Use cached version if available for older Streamlit versions
+                        if 'cached_figure_creation' in globals():
+                            fig = cached_figure_creation("create_lfc_heatmap", 
+                                                        gene_selection, 
+                                                        contrast_pairs, 
+                                                        None)
+                        else:
+                            # Apply dynamic filtering if enabled
+                            p_thresh = pvalue_thresh if use_dynamic_filtering else None
+                            lfc_thresh_val = lfc_thresh if use_dynamic_filtering else None
+                            
+                            fig = ri.create_lfc_heatmap(
+                                genes=gene_selection,
+                                contrasts=contrast_pairs,
+                                output_file=None,
+                                p_value_threshold=p_thresh,
+                                lfc_threshold=lfc_thresh_val,
+                                hide_empty_rows_cols=hide_empty_rows_cols
+                            )
 
-                    # Rename contrast labels to remove dataset prefix if there are multiple datasets
-                    # The ResultsIntegrator already simplified the contrast labels
-                    # No need to update x-axis labels here
+                        # Rename contrast labels to remove dataset prefix if there are multiple datasets
+                        # The ResultsIntegrator already simplified the contrast labels
+                        # No need to update x-axis labels here
 
-                    if show_advanced and debug_mode:
-                        # Remove the handler to avoid duplicates
-                        logger.removeHandler(handler)
+                        if show_adv and show_debug:
+                            # Remove the handler to avoid duplicates
+                            logger.removeHandler(handler)
 
-                        # Display the log
-                        st.expander("Debug Log", expanded=True).code(log_stream.getvalue())
+                            # Display the log
+                            st.expander("Debug Log", expanded=True).code(log_stream.getvalue())
 
-                    if fig:
-                        # Add a note about hover functionality
-                        st.info("💡 Hover over cells in the heatmap to see contrast descriptions and gene information.")
-                        # Display the plot
-                        st.plotly_chart(fig, use_container_width=True)
-                    else:
-                        st.error("Could not generate heatmap. Please check your selections.")
-                except Exception as e:
-                    st.error(f"Error generating heatmap: {str(e)}")
+                        if fig:
+                            # Add notes about functionality
+                            info_messages = ["💡 Hover over cells in the heatmap to see contrast descriptions and gene information."]
+                            if use_dynamic_filtering:
+                                info_messages.append("🎯 Only genes meeting current significance thresholds are colored.")
+                            if hide_empty_rows_cols:
+                                info_messages.append("🧹 Genes/contrasts with no significant values have been removed.")
+                            
+                            for msg in info_messages:
+                                st.info(msg)
+                            
+                            # Display the plot
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.error("Could not generate heatmap. Please check your selections.")
+                    except Exception as e:
+                        st.error(f"Error generating heatmap: {str(e)}")
+                        
+            # Call the fragment with just the input parameters
+            draw_heatmap(gene_sel, sel_pairs, debug_mode, show_advanced)
 
     with tab2:
         st.header("Gene Expression Plots")
@@ -510,74 +674,93 @@ if ri and ri.cpm_data:
         elif not ds_sel:
             st.info("Please select at least one dataset from the sidebar.")
         else:
-            # Create and display the expression plots
-            with st.spinner("Generating expression plots..."):
-                try:
-                    # Calculate gene slice for the current page
-                    genes_per_page = 30
-                    current_page = st.session_state.page_num
-                    start_idx = (current_page - 1) * genes_per_page
-                    end_idx = min(start_idx + genes_per_page, len(gene_sel))
-                    current_genes = gene_sel[start_idx:end_idx]
-                    
-                    fig2 = ri.create_expression_plots(
-                        genes=current_genes,
-                        analyses=ds_sel,
-                        plot_type=plot_type,
-                        output_file=None,
-                        hide_x_labels=hide_x_labels,
-                        page_number=st.session_state.page_num
-                    )
-                    if fig2:
-                        # Add page navigation info if we have multiple pages
-                        if total_pages > 1:
-                            # Create pagination controls at the top of the plot for convenience
-                            cols = st.columns([2, 1, 1, 1, 2])
-                            with cols[1]:
-                                prev_disabled = st.session_state.page_num <= 1
-                                if st.button("◀ Previous", disabled=prev_disabled, key="prev_main"):
-                                    st.session_state.page_num = max(1, st.session_state.page_num - 1)
-                                    try:
-                                        st.rerun()
-                                    except AttributeError:
-                                        # Fallback for older Streamlit versions
-                                        try:
-                                            st.experimental_rerun()
-                                        except AttributeError:
-                                            import streamlit.runtime.scriptrunner.magic as _m
-                                            _m._set_stop_thread(False)  # hidden API for very old versions
-                            with cols[2]:
-                                st.markdown(f"**Page {st.session_state.page_num}/{total_pages}**")
-                            with cols[3]:
-                                next_disabled = st.session_state.page_num >= total_pages
-                                if st.button("Next ▶", disabled=next_disabled, key="next_main"):
-                                    st.session_state.page_num = min(total_pages, st.session_state.page_num + 1)
-                                    try:
-                                        st.rerun()
-                                    except AttributeError:
-                                        # Fallback for older Streamlit versions
-                                        try:
-                                            st.experimental_rerun()
-                                        except AttributeError:
-                                            import streamlit.runtime.scriptrunner.magic as _m
-                                            _m._set_stop_thread(False)  # hidden API for very old versions
+            # Create and display the expression plots using isolated fragment
+            @st.fragment
+            def draw_expression_plots(gene_selection, dataset_selection, plot_style, hide_labels, page_num, total_pgs):
+                with st.spinner("Generating expression plots..."):
+                    try:
+                        # Calculate gene slice for the current page
+                        genes_per_page = 30
+                        current_page = page_num
+                        start_idx = (current_page - 1) * genes_per_page
+                        end_idx = min(start_idx + genes_per_page, len(gene_selection))
+                        current_genes = gene_selection[start_idx:end_idx]
                         
-                        st.plotly_chart(fig2, use_container_width=True)
-                    else:
-                        st.error("Could not generate expression plots. Please check your selections.")
-                except Exception as e:
-                    st.error(f"Error generating expression plots: {str(e)}")
+                        # Use cached version if available for older Streamlit versions
+                        if 'cached_figure_creation' in globals():
+                            fig2 = cached_figure_creation("create_expression_plots",
+                                                         current_genes,
+                                                         dataset_selection,
+                                                         None,
+                                                         hide_labels,
+                                                         page_num,
+                                                         plot_style=plot_style)
+                        else:
+                            fig2 = ri.create_expression_plots(
+                                genes=current_genes,
+                                analyses=dataset_selection,
+                                plot_type=plot_style,
+                                output_file=None,
+                                hide_x_labels=hide_labels,
+                                page_number=page_num
+                            )
+                        if fig2:
+                            # Add page navigation info if we have multiple pages
+                            if total_pgs > 1:
+                                # Create pagination controls at the top of the plot for convenience
+                                cols = st.columns([2, 1, 1, 1, 2])
+                                with cols[1]:
+                                    prev_disabled = page_num <= 1
+                                    if st.button("◀ Previous", disabled=prev_disabled, key="prev_main"):
+                                        st.session_state.page_num = max(1, page_num - 1)
+                                        try:
+                                            st.rerun()
+                                        except AttributeError:
+                                            # Fallback for older Streamlit versions
+                                            try:
+                                                st.experimental_rerun()
+                                            except AttributeError:
+                                                import streamlit.runtime.scriptrunner.magic as _m
+                                                _m._set_stop_thread(False)  # hidden API for very old versions
+                                with cols[2]:
+                                    st.markdown(f"**Page {page_num}/{total_pgs}**")
+                                with cols[3]:
+                                    next_disabled = page_num >= total_pgs
+                                    if st.button("Next ▶", disabled=next_disabled, key="next_main"):
+                                        st.session_state.page_num = min(total_pgs, page_num + 1)
+                                        try:
+                                            st.rerun()
+                                        except AttributeError:
+                                            # Fallback for older Streamlit versions
+                                            try:
+                                                st.experimental_rerun()
+                                            except AttributeError:
+                                                import streamlit.runtime.scriptrunner.magic as _m
+                                                _m._set_stop_thread(False)  # hidden API for very old versions
+                            
+                            st.plotly_chart(fig2, use_container_width=True)
+                        else:
+                            st.error("Could not generate expression plots. Please check your selections.")
+                    except Exception as e:
+                        st.error(f"Error generating expression plots: {str(e)}")
+                        
+            # Call the fragment with just the input parameters
+            draw_expression_plots(gene_sel, ds_sel, plot_type, hide_x_labels, st.session_state.page_num, total_pages)
 
     with tab3:
         st.header("RNA-seq Analysis Plots")
 
-        # Select a dataset first
-        dataset_options = list(ri.cpm_data.keys()) if ri else []
-        selected_dataset = st.selectbox("Select a dataset to view analysis plots:", dataset_options)
+        # Select a dataset first - isolate this in a fragment to prevent full rerun
+        @st.fragment
+        def analysis_plots_tab():
+            dataset_options = list(ri.cpm_data.keys()) if ri else []
+            selected_dataset = st.selectbox("Select a dataset to view analysis plots:", dataset_options)
 
-        if not selected_dataset:
-            st.info("Please select a dataset to view RNA-seq analysis plots.")
-        else:
+            if not selected_dataset:
+                st.info("Please select a dataset to view RNA-seq analysis plots.")
+                return
+
+            # Now handle the plot display for the selected dataset
             # Find QC plots for this dataset
             base_path = os.path.join(results_dir, selected_dataset, "RNAseqAnalysis")
 
@@ -808,247 +991,262 @@ if ri and ri.cpm_data:
                 else:
                     st.info("No contrast-specific plots found for this dataset.")
 
+        # Call the isolated fragment
+        analysis_plots_tab()
+
     with tab4:
         st.header("Dataset Information")
 
-        # Create a DataFrame with dataset information
-        dataset_info = []
-        for analysis_id, info in ri.analysis_info.items():
-            # Build a dataset info dictionary
-            dataset_dict = {
-                "Accession": info.get("accession", "Unknown"),
-                "Organism": info.get("organism", "Unknown"),
-                "Number of Samples": info.get("number_of_samples", 0),
-                "Number of Contrasts": info.get("number_of_contrasts", 0),
-                "Dataset ID": analysis_id  # Keep dataset ID but place it last
-            }
+        # Isolate datasets tab with fragment to prevent recomputation
+        @st.fragment
+        def datasets_tab():
+            # Create a DataFrame with dataset information
+            dataset_info = []
+            for analysis_id, info in ri.analysis_info.items():
+                # Build a dataset info dictionary
+                dataset_dict = {
+                    "Accession": info.get("accession", "Unknown"),
+                    "Organism": info.get("organism", "Unknown"),
+                    "Number of Samples": info.get("number_of_samples", 0),
+                    "Number of Contrasts": info.get("number_of_contrasts", 0),
+                    "Dataset ID": analysis_id  # Keep dataset ID but place it last
+                }
 
-            # Add dataset_info.txt content split into three columns if available
-            if hasattr(ri, "dataset_info") and analysis_id in getattr(ri, "dataset_info", {}):
-                # Remove any "Title:" prefix from the title field
-                title = ri.dataset_info[analysis_id].get("title", "")
-                if isinstance(title, str) and title.startswith("Title:"):
-                    title = title[6:].strip()
-                dataset_dict["Title"] = title
-            
-                dataset_dict["Summary"] = ri.dataset_info[analysis_id].get("summary", "")
-                dataset_dict["Design"] = ri.dataset_info[analysis_id].get("design", "")
+                # Add dataset_info.txt content split into three columns if available
+                if hasattr(ri, "dataset_info") and analysis_id in getattr(ri, "dataset_info", {}):
+                    # Remove any "Title:" prefix from the title field
+                    title = ri.dataset_info[analysis_id].get("title", "")
+                    if isinstance(title, str) and title.startswith("Title:"):
+                        title = title[6:].strip()
+                    dataset_dict["Title"] = title
+                
+                    dataset_dict["Summary"] = ri.dataset_info[analysis_id].get("summary", "")
+                    dataset_dict["Design"] = ri.dataset_info[analysis_id].get("design", "")
 
-            dataset_info.append(dataset_dict)
+                dataset_info.append(dataset_dict)
 
-        # Display the dataset information
-        if dataset_info:
-            df = pd.DataFrame(dataset_info)
+            # Display the dataset information
+            if dataset_info:
+                df = pd.DataFrame(dataset_info)
 
-            # Add filtering options
-            st.subheader("Filter Datasets")
-            col1, col2 = st.columns(2)
+                # Add filtering options
+                st.subheader("Filter Datasets")
+                col1, col2 = st.columns(2)
 
-            with col1:
-                organism_filter = st.multiselect(
-                    "Filter by Organism",
-                    options=sorted(df["Organism"].unique()),
-                    default=[]
-                )
+                with col1:
+                    organism_filter = st.multiselect(
+                        "Filter by Organism",
+                        options=sorted(df["Organism"].unique()),
+                        default=[]
+                    )
 
-            with col2:
-                search_filter = st.text_input("Search Datasets", "")
+                with col2:
+                    search_filter = st.text_input("Search Datasets", "")
 
-            # Apply filters
-            filtered_df = df
-            if organism_filter:
-                filtered_df = filtered_df[filtered_df["Organism"].isin(organism_filter)]
+                # Apply filters
+                filtered_df = df
+                if organism_filter:
+                    filtered_df = filtered_df[filtered_df["Organism"].isin(organism_filter)]
 
-            if search_filter:
-                search_mask = filtered_df.apply(
-                    lambda row: any(search_filter.lower() in str(val).lower() for val in row),
-                    axis=1
-                )
-                filtered_df = filtered_df[search_mask]
+                if search_filter:
+                    search_mask = filtered_df.apply(
+                        lambda row: any(search_filter.lower() in str(val).lower() for val in row),
+                        axis=1
+                    )
+                    filtered_df = filtered_df[search_mask]
 
-            # Display the filtered dataset information
-            if not filtered_df.empty:
-                # Display dataset information with dataframe for interactivity
-                st.dataframe(filtered_df, use_container_width=True, height=400)
+                # Display the filtered dataset information
+                if not filtered_df.empty:
+                    # Display dataset information with dataframe for interactivity
+                    st.dataframe(filtered_df, use_container_width=True, height=400)
 
-                # Show dataset details if available (always show by default)
-                if any(col in filtered_df.columns for col in ["Title", "Summary", "Design"]):
-                    for _, row in filtered_df.iterrows():
-                        dataset_id = row.get("Dataset ID", row.get("Accession", "Unknown"))
-                        accession = row.get("Accession", "")
-                        with st.expander(f"Details for {dataset_id} {f'({accession})' if accession else ''}", expanded=True):
-                            if "Title" in filtered_df.columns and pd.notna(row.get("Title")):
-                                st.subheader("Title")
-                                st.markdown(str(row["Title"]))
-                            
-                            if "Summary" in filtered_df.columns and pd.notna(row.get("Summary")):
-                                st.subheader("Summary")
-                                st.markdown(str(row["Summary"]))
+                    # Show dataset details if available (always show by default)
+                    if any(col in filtered_df.columns for col in ["Title", "Summary", "Design"]):
+                        for _, row in filtered_df.iterrows():
+                            dataset_id = row.get("Dataset ID", row.get("Accession", "Unknown"))
+                            accession = row.get("Accession", "")
+                            with st.expander(f"Details for {dataset_id} {f'({accession})' if accession else ''}", expanded=True):
+                                if "Title" in filtered_df.columns and pd.notna(row.get("Title")):
+                                    st.subheader("Title")
+                                    st.markdown(str(row["Title"]))
                                 
-                            if "Design" in filtered_df.columns and pd.notna(row.get("Design")):
-                                st.subheader("Overall Design")
-                                st.markdown(str(row["Design"]))
+                                if "Summary" in filtered_df.columns and pd.notna(row.get("Summary")):
+                                    st.subheader("Summary")
+                                    st.markdown(str(row["Summary"]))
+                                    
+                                if "Design" in filtered_df.columns and pd.notna(row.get("Design")):
+                                    st.subheader("Overall Design")
+                                    st.markdown(str(row["Design"]))
 
-                # Add dataset selection button
-                if st.button("Select these datasets for analysis"):
-                    datasets_to_select = filtered_df["Dataset ID"].tolist() if "Dataset ID" in filtered_df.columns else filtered_df["Accession"].tolist()
-                    st.session_state['datasets_selected'] = datasets_to_select
-                    # Reset page number when changing datasets
-                    st.session_state.page_num = 1
-                    st.success(f"Selected {len(datasets_to_select)} datasets for analysis!")
-                    st.info("Switch to the Heat-map or Expression tab to view the analysis.")
+                    # Add dataset selection button
+                    if st.button("Select these datasets for analysis"):
+                        datasets_to_select = filtered_df["Dataset ID"].tolist() if "Dataset ID" in filtered_df.columns else filtered_df["Accession"].tolist()
+                        st.session_state['datasets_selected'] = datasets_to_select
+                        # Reset page number when changing datasets
+                        st.session_state.page_num = 1
+                        st.success(f"Selected {len(datasets_to_select)} datasets for analysis!")
+                        st.info("Switch to the Heat-map or Expression tab to view the analysis.")
+                else:
+                    st.info("No datasets match the current filters.")
             else:
-                st.info("No datasets match the current filters.")
-        else:
-            st.info("No dataset information available.")
+                st.info("No dataset information available.")
+
+        # Call the isolated fragment
+        datasets_tab()
 
     with tab5:
         st.header("Contrast Information")
 
-        # Create a DataFrame with contrast information
-        # Display contrast information
-        contrast_info = []
-        for aid, contrasts in ri.deg_data.items():
-            for contrast_id in contrasts.keys():
-                # Get original contrast name and description
-                original_name = contrast_id
-                description = "No description available"
-                
-                # Try to get information from contrast_info
-                if hasattr(ri, "contrast_info") and contrast_id in ri.contrast_info:
-                    description = ri.contrast_info[contrast_id].get('description', "No description available")
-                    # Use original name if available
-                    if 'name' in ri.contrast_info[contrast_id]:
-                        original_name = ri.contrast_info[contrast_id]['name']
-
-                # Count DEGs for this contrast
-                deg_count = 0
-                if aid in ri.deg_data and contrast_id in ri.deg_data[aid]:
-                    df = ri.deg_data[aid][contrast_id]
-                    # Use exact column names from DEG.csv file - prefer adjusted p-value
-                    p_value_col = None
-                    if 'adj.P.Val' in df.columns:
-                        p_value_col = 'adj.P.Val'  # Adjusted p-value (preferred)
-                    elif 'P.Value' in df.columns:
-                        p_value_col = 'P.Value'  # Unadjusted p-value (fallback)
+        # Isolate contrasts tab with fragment to prevent recomputation
+        @st.fragment
+        def contrasts_tab():
+            # Create a DataFrame with contrast information
+            # Display contrast information
+            contrast_info = []
+            for aid, contrasts in ri.deg_data.items():
+                for contrast_id in contrasts.keys():
+                    # Get original contrast name and description
+                    original_name = contrast_id
+                    description = "No description available"
                     
-                    lfc_col = 'logFC' if 'logFC' in df.columns else None
+                    # Try to get information from contrast_info
+                    if hasattr(ri, "contrast_info") and contrast_id in ri.contrast_info:
+                        description = ri.contrast_info[contrast_id].get('description', "No description available")
+                        # Use original name if available
+                        if 'name' in ri.contrast_info[contrast_id]:
+                            original_name = ri.contrast_info[contrast_id]['name']
 
-                    if p_value_col and lfc_col:
-                        deg_count = ((df[p_value_col] < pvalue_thresh) &
-                                     (abs(df[lfc_col]) > lfc_thresh)).sum()
+                    # Count DEGs for this contrast
+                    deg_count = 0
+                    if aid in ri.deg_data and contrast_id in ri.deg_data[aid]:
+                        df = ri.deg_data[aid][contrast_id]
+                        # Use exact column names from DEG.csv file - prefer adjusted p-value
+                        p_value_col = None
+                        if 'adj.P.Val' in df.columns:
+                            p_value_col = 'adj.P.Val'  # Adjusted p-value (preferred)
+                        elif 'P.Value' in df.columns:
+                            p_value_col = 'P.Value'  # Unadjusted p-value (fallback)
+                        
+                        lfc_col = 'logFC' if 'logFC' in df.columns else None
 
-                contrast_info.append({
-                    "Dataset": aid,
-                    "Accession": ri.analysis_info.get(aid, {}).get("accession", "Unknown"),
-                    "Contrast": original_name,
-                    "Original ID": contrast_id,
-                    "Description": description,
-                    "DEGs": deg_count
-                })
+                        if p_value_col and lfc_col:
+                            deg_count = ((df[p_value_col] < pvalue_thresh) &
+                                         (abs(df[lfc_col]) > lfc_thresh)).sum()
 
-        # Display the contrast information
-        if contrast_info:
-            df = pd.DataFrame(contrast_info)
-            # Format DEG count column as integer
-            if 'DEGs' in df.columns:
-                df['DEGs'] = df['DEGs'].astype(int)
+                    contrast_info.append({
+                        "Dataset": aid,
+                        "Accession": ri.analysis_info.get(aid, {}).get("accession", "Unknown"),
+                        "Contrast": original_name,
+                        "Original ID": contrast_id,
+                        "Description": description,
+                        "DEGs": deg_count
+                    })
 
-            # Add filtering options
-            st.subheader("Filter Contrasts")
-            col1, col2, col3 = st.columns(3)
+            # Display the contrast information
+            if contrast_info:
+                df = pd.DataFrame(contrast_info)
+                # Format DEG count column as integer
+                if 'DEGs' in df.columns:
+                    df['DEGs'] = df['DEGs'].astype(int)
 
-            with col1:
-                dataset_column = "Dataset" if "Dataset" in df.columns else "Accession"
-                dataset_filter = st.multiselect(
-                    "Filter by Dataset",
-                    options=sorted(df[dataset_column].unique()),
-                    default=[]
-                )
+                # Add filtering options
+                st.subheader("Filter Contrasts")
+                col1, col2, col3 = st.columns(3)
 
-            with col2:
-                min_degs = st.number_input("Minimum DEGs", min_value=0, value=0)
+                with col1:
+                    dataset_column = "Dataset" if "Dataset" in df.columns else "Accession"
+                    dataset_filter = st.multiselect(
+                        "Filter by Dataset",
+                        options=sorted(df[dataset_column].unique()),
+                        default=[]
+                    )
 
-            with col3:
-                search_filter = st.text_input("Search Contrasts", "")
+                with col2:
+                    min_degs = st.number_input("Minimum DEGs", min_value=0, value=0)
 
-            # Apply filters
-            filtered_df = df
-            if dataset_filter:
-                # Get the column to filter by
-                dataset_column = "Dataset" if "Dataset" in filtered_df.columns else "Accession"
-                filtered_df = filtered_df[filtered_df[dataset_column].isin(dataset_filter)]
+                with col3:
+                    search_filter = st.text_input("Search Contrasts", "")
 
-            if min_degs > 0:
-                filtered_df = filtered_df[filtered_df["DEGs"] >= min_degs]
+                # Apply filters
+                filtered_df = df
+                if dataset_filter:
+                    # Get the column to filter by
+                    dataset_column = "Dataset" if "Dataset" in filtered_df.columns else "Accession"
+                    filtered_df = filtered_df[filtered_df[dataset_column].isin(dataset_filter)]
 
-            if search_filter:
-                search_mask = filtered_df.apply(
-                    lambda row: any(search_filter.lower() in str(val).lower() for val in row),
-                    axis=1
-                )
-                filtered_df = filtered_df[search_mask]
+                if min_degs > 0:
+                    filtered_df = filtered_df[filtered_df["DEGs"] >= min_degs]
 
-            # Display the filtered contrast information
-            if not filtered_df.empty:
-                # Sort by DEG count by default
-                filtered_df = filtered_df.sort_values("DEGs", ascending=False)
+                if search_filter:
+                    search_mask = filtered_df.apply(
+                        lambda row: any(search_filter.lower() in str(val).lower() for val in row),
+                        axis=1
+                    )
+                    filtered_df = filtered_df[search_mask]
 
-                # Display contrast information with dataframe for interactivity
-                st.dataframe(filtered_df, use_container_width=True, height=400)
+                # Display the filtered contrast information
+                if not filtered_df.empty:
+                    # Sort by DEG count by default
+                    filtered_df = filtered_df.sort_values("DEGs", ascending=False)
 
-                # Add contrast selection button
-                if st.button("Select these contrasts for analysis"):
-                    # Create list to store selected contrasts
-                    contrasts_to_select = []
-                    
-                    # Get the original contrast ID if available
-                    for _, row in filtered_df.iterrows():
-                        aid = row['Dataset']
-                    
-                        # Use Original ID if available, otherwise use Contrast
-                        if "Original ID" in row:
-                            cid = row["Original ID"]
-                        else:
-                            cid = row["Contrast"]
-                    
-                        # Try different formats for matching
-                        matched = False
-                    
-                        # Format 1: Try direct match
-                        for display_string, (a_id, c_id) in contrast_map.items():
-                            if a_id == aid and c_id == cid:
-                                contrasts_to_select.append(display_string)
-                                matched = True
-                                break
-                            
-                        # Format 2: Try concatenated form "Dataset:Contrast"
-                        if not matched:
-                            combined_key = f"{aid}:{cid}"
-                            if combined_key in contrast_map:
-                                contrasts_to_select.append(combined_key)
-                                matched = True
-                    
-                        # Format 3: Try searching for partial matches
-                        if not matched:
-                            for display_string in contrast_map.keys():
-                                if cid in display_string and (aid in display_string or row.get('Accession', '') in display_string):
+                    # Display contrast information with dataframe for interactivity
+                    st.dataframe(filtered_df, use_container_width=True, height=400)
+
+                    # Add contrast selection button
+                    if st.button("Select these contrasts for analysis"):
+                        # Create list to store selected contrasts
+                        contrasts_to_select = []
+                        
+                        # Get the original contrast ID if available
+                        for _, row in filtered_df.iterrows():
+                            aid = row['Dataset']
+                        
+                            # Use Original ID if available, otherwise use Contrast
+                            if "Original ID" in row:
+                                cid = row["Original ID"]
+                            else:
+                                cid = row["Contrast"]
+                        
+                            # Try different formats for matching
+                            matched = False
+                        
+                            # Format 1: Try direct match
+                            for display_string, (a_id, c_id) in contrast_map.items():
+                                if a_id == aid and c_id == cid:
                                     contrasts_to_select.append(display_string)
                                     matched = True
                                     break
-                                    
-                    if contrasts_to_select:
-                        st.session_state['contrasts_selected'] = contrasts_to_select
-                        # Reset page number when changing contrasts
-                        st.session_state.page_num = 1
-                        st.success(f"Selected {len(contrasts_to_select)} contrasts for analysis!")
-                        st.info("Switch to the Heat-map tab to view the analysis.")
-                    else:
-                        st.warning("Could not match selected contrasts to display strings. Please try selecting them from the sidebar.")
+                                
+                            # Format 2: Try concatenated form "Dataset:Contrast"
+                            if not matched:
+                                combined_key = f"{aid}:{cid}"
+                                if combined_key in contrast_map:
+                                    contrasts_to_select.append(combined_key)
+                                    matched = True
+                        
+                            # Format 3: Try searching for partial matches
+                            if not matched:
+                                for display_string in contrast_map.keys():
+                                    if cid in display_string and (aid in display_string or row.get('Accession', '') in display_string):
+                                        contrasts_to_select.append(display_string)
+                                        matched = True
+                                        break
+                                        
+                        if contrasts_to_select:
+                            st.session_state['contrasts_selected'] = contrasts_to_select
+                            # Reset page number when changing contrasts
+                            st.session_state.page_num = 1
+                            st.success(f"Selected {len(contrasts_to_select)} contrasts for analysis!")
+                            st.info("Switch to the Heat-map tab to view the analysis.")
+                        else:
+                            st.warning("Could not match selected contrasts to display strings. Please try selecting them from the sidebar.")
+                else:
+                    st.info("No contrasts match the current filters.")
             else:
-                st.info("No contrasts match the current filters.")
-        else:
-            st.info("No contrast information available.")
+                st.info("No contrast information available.")
+
+        # Call the isolated fragment
+        contrasts_tab()
 
     # ---------- 3. additional features -------------------------------
     st.sidebar.divider()

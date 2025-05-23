@@ -81,15 +81,9 @@ class ResultsIntegrator:
         """
         self.results_dir = os.path.abspath(results_dir)
 
-        # Create output directory if not provided
-        if output_dir is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.output_dir = os.path.join(self.results_dir, f"integrated_results_{timestamp}")
-        else:
-            self.output_dir = os.path.abspath(output_dir)
-
-        # Create output directory
-        os.makedirs(self.output_dir, exist_ok=True)
+        # Store requested output directory but don't create it yet
+        self._output_dir_requested = output_dir
+        self.output_dir = None
 
         # Set threshold parameters
         self.pvalue_threshold = pvalue_threshold
@@ -103,7 +97,6 @@ class ResultsIntegrator:
         self.contrast_info = {}   # Information about contrasts
 
         logger.info(f"Initialized ResultsIntegrator with results_dir: {self.results_dir}")
-        logger.info(f"Output will be saved to: {self.output_dir}")
 
     def find_analysis_folders(self) -> List[str]:
         """Find all analysis folders in the results directory."""
@@ -437,10 +430,27 @@ class ResultsIntegrator:
         logger.info(f"Identified {len(important_genes)} important genes in total")
         return important_genes
 
+    def _ensure_output_dir(self):
+        """Create output_dir only on first use."""
+        if self.output_dir is None:  # not created yet
+            if self._output_dir_requested:
+                self.output_dir = os.path.abspath(self._output_dir_requested)
+            else:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                self.output_dir = os.path.join(self.results_dir, f"integrated_results_{timestamp}")
+            
+            os.makedirs(self.output_dir, exist_ok=True)
+            logger.info(f"Output will be saved to: {self.output_dir}")
+            
+        return self.output_dir
+        
     def create_lfc_heatmap(self,
                          genes: List[str] = None,
                          contrasts: List[Tuple[str, str]] = None,
-                         output_file: str = None) -> go.Figure:
+                         output_file: str = None,
+                         p_value_threshold: float = None,
+                         lfc_threshold: float = None,
+                         hide_empty_rows_cols: bool = False) -> go.Figure:
         """
         Create an interactive heatmap of log fold changes for selected genes across contrasts.
 
@@ -452,11 +462,21 @@ class ResultsIntegrator:
             List of (analysis_id, contrast_id) tuples to include. If None, all contrasts are used.
         output_file : str, optional
             Path to save the interactive HTML output. If None, no file is saved (useful for Streamlit).
+        p_value_threshold : float, optional
+            P-value threshold for significance filtering. If None, uses instance default.
+        lfc_threshold : float, optional
+            Log fold change threshold for significance filtering. If None, uses instance default.
+        hide_empty_rows_cols : bool, optional
+            If True, hide genes/contrasts where no significant values exist.
 
         Returns:
         --------
         plotly.graph_objects.Figure
         """
+        # Use provided thresholds or fall back to instance defaults
+        p_thresh = p_value_threshold if p_value_threshold is not None else self.pvalue_threshold
+        lfc_thresh = lfc_threshold if lfc_threshold is not None else self.lfc_threshold
+        
         # If genes not provided, identify important genes
         if genes is None:
             try:
@@ -535,7 +555,7 @@ class ResultsIntegrator:
                         if p_value_col is not None:
                             p_value = gene_row.iloc[0][p_value_col]
                             abs_lfc = abs(gene_row.iloc[0][lfc_col])
-                            if p_value >= self.pvalue_threshold or abs_lfc <= self.lfc_threshold:
+                            if p_value >= p_thresh or abs_lfc <= lfc_thresh:
                                 row[contrast_label] = 0  # Not significant, set to white
                             else:
                                 row[contrast_label] = gene_row.iloc[0][lfc_col]
@@ -596,6 +616,30 @@ class ResultsIntegrator:
         if 'Gene' in heatmap_df.columns:
             heatmap_df = heatmap_df.set_index('Gene')
         heatmap_df = heatmap_df.fillna(0)
+        
+        # Remove empty rows/columns if requested
+        if hide_empty_rows_cols:
+            # Remove genes (rows) where all values are 0
+            non_zero_rows = (heatmap_df != 0).any(axis=1)
+            heatmap_df = heatmap_df[non_zero_rows]
+            
+            # Remove contrasts (columns) where all values are 0
+            non_zero_cols = (heatmap_df != 0).any(axis=0)
+            heatmap_df = heatmap_df.loc[:, non_zero_cols]
+            
+            # Update contrasts list to match remaining columns
+            if len(heatmap_df.columns) < len(contrasts):
+                remaining_contrast_indices = [i for i, label in enumerate(contrast_labels) if label in heatmap_df.columns]
+                contrasts = [contrasts[i] for i in remaining_contrast_indices]
+                logger.info(f"After filtering empty rows/columns: {len(heatmap_df)} genes × {len(heatmap_df.columns)} contrasts")
+        
+        # Check if we still have data after filtering
+        if len(heatmap_df) == 0:
+            logger.warning("No genes remain after filtering empty rows")
+            return None
+        elif len(heatmap_df.columns) == 0:
+            logger.warning("No contrasts remain after filtering empty columns")
+            return None
 
         # Perform hierarchical clustering on both axes if there are enough data points
         # Perform hierarchical clustering on both axes
@@ -752,6 +796,7 @@ class ResultsIntegrator:
             
         # Save to file if specified
         if output_file is not None:
+            self._ensure_output_dir()
             fig.write_html(output_file)
             logger.info(f"Saved LFC heatmap to {output_file}")
 
@@ -1053,6 +1098,7 @@ class ResultsIntegrator:
 
         # Save to file if specified
         if output_file is not None:
+            self._ensure_output_dir()
             fig.write_html(output_file)
             logger.info(f"Saved expression plots to {output_file}")
 
@@ -1256,8 +1302,11 @@ class ResultsIntegrator:
         """
         # Override output directory if specified
         if output_dir is not None:
-            self.output_dir = os.path.abspath(output_dir)
-            os.makedirs(self.output_dir, exist_ok=True)
+            self._output_dir_requested = output_dir
+            self.output_dir = None
+            
+        # Now ensure the output directory exists
+        self._ensure_output_dir()
 
         # Load data if not already done
         if not self.deg_data:
@@ -1335,6 +1384,37 @@ class ResultsIntegrator:
                 except Exception as e:
                     logger.error(f"Error creating expression plots page {page+1}: {str(e)}")
 
+        # Generate additional pages links if there are many genes
+        additional_pages_html = ""
+        if len(gene_list) > 30:
+            page_links = []
+            num_additional_pages = min(2, (len(gene_list) + 29) // 30 - 1)
+            for i in range(num_additional_pages):
+                page_num = i + 2
+                page_links.append(f'<a href="expression_plots/expression_{plot_type}_page{page_num}.html" target="_blank" style="margin-right: 5px; font-size: 12px; padding: 5px 10px;">Page {page_num}</a>')
+            additional_pages_html = f"""
+                            <p><small>Additional pages:
+                            {''.join(page_links)}
+                            </small></p>"""
+
+        # Generate contrast details HTML
+        if not self.deg_data:
+            contrast_details_html = '<p>No contrast information available.</p>'
+        else:
+            contrast_rows = []
+            for analysis_id, contrasts in self.deg_data.items():
+                for contrast_id in contrasts.keys():
+                    contrast_rows.append(f'<tr><td>{analysis_id}</td><td>{contrast_id}</td><td>{self._get_contrast_description(analysis_id, contrast_id)}</td></tr>')
+            contrast_details_html = f"""
+                    <table>
+                        <tr>
+                            <th>Analysis</th>
+                            <th>Contrast</th>
+                            <th>Description</th>
+                        </tr>
+                        {''.join(contrast_rows)}
+                    </table>"""
+
         # Generate HTML report
         html_content = f"""
         <!DOCTYPE html>
@@ -1369,11 +1449,7 @@ class ResultsIntegrator:
                         <li>
                             <strong>Gene Expression Plots</strong>: Shows expression levels (CPM) for selected genes across samples.
                             <br><a href="expression_{plot_type}_plots.html" class="vis-link" target="_blank">View Expression Plots</a>
-                            {f"""
-                            <p><small>Additional pages:
-                            {''.join([f'<a href="expression_plots/expression_{plot_type}_page{i+2}.html" target="_blank" style="margin-right: 5px; font-size: 12px; padding: 5px 10px;">Page {i+2}</a>' for i in range(min(2, (len(gene_list) + 29) // 30 - 1))])}
-                            </small></p>
-                            """ if len(gene_list) > 30 else ''}
+                            {additional_pages_html}
                         </li>
                     </ul>
                 </div>
@@ -1398,16 +1474,7 @@ class ResultsIntegrator:
                     </table>
 
                     <h3>Contrast Details</h3>
-                    {'<p>No contrast information available.</p>' if not self.deg_data else f"""
-                    <table>
-                        <tr>
-                            <th>Analysis</th>
-                            <th>Contrast</th>
-                            <th>Description</th>
-                        </tr>
-                        {''.join([f'<tr><td>{analysis_id}</td><td>{contrast_id}</td><td>{self._get_contrast_description(analysis_id, contrast_id)}</td></tr>' for analysis_id, contrasts in self.deg_data.items() for contrast_id in contrasts.keys()])}
-                    </table>
-                    """}
+                    {contrast_details_html}
                 </div>
 
                 <div class="card">
