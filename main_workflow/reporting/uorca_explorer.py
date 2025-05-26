@@ -28,6 +28,12 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # ResultsIntegration.py is in the same directory
 from ResultsIntegration import ResultsIntegrator
 
+# Helper function for contrast labels
+def short_label(full_label: str) -> str:
+    """Create short labels for contrast multiselect display"""
+    # keeps 'KO_vs_WT' out of 'GSE12345:KO_vs_WT – long sentence …'
+    return full_label.split(":", 1)[-1].split(" –")[0].split(" - ")[0][:25]
+
 # Check if fragment is available (Streamlit >=1.33.0)
 # If not, fallback to experimental_fragment
 try:
@@ -45,7 +51,7 @@ except ImportError:
                 return func(*args, **kwargs)
             return wrapper
         st.fragment = fragment
-    
+
     # Add a cache for figure objects to improve performance in older versions
     @st.cache_data(hash_funcs={go.Figure: lambda _: None})
     def cached_figure_creation(func_name, *args, **kwargs):
@@ -64,17 +70,17 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Add CSS for dataframe text wrapping
+# Add CSS for dataframe text wrapping and compact multiselect tags
 st.markdown("""
 <style>
   /* Fix for text wrapping in dataframes */
-  .stDataFrame tbody tr td { 
-    white-space: normal !important; 
+  .stDataFrame tbody tr td {
+    white-space: normal !important;
     word-wrap: break-word !important;
     max-width: 300px;
   }
-  .stDataFrame th { 
-    white-space: normal !important; 
+  .stDataFrame th {
+    white-space: normal !important;
     word-wrap: break-word !important;
     max-width: 300px;
   }
@@ -82,6 +88,12 @@ st.markdown("""
   .stDataFrame td:nth-child(3) {
     min-width: 250px;
     max-width: 500px;
+  }
+  /* Compact multiselect tags */
+  span[data-baseweb="tag"] {
+    font-size: 11px !important;
+    padding: 0.25rem 0.5rem !important;
+    height: 1.2rem !important;
   }
 </style>
 """, unsafe_allow_html=True)
@@ -148,7 +160,7 @@ if ri and ri.cpm_data:
         # Add slider and number input side by side for precision
         col1, col2 = st.sidebar.columns([3, 1])
         with col1:
-            pvalue_thresh = st.slider("Adjusted P-value threshold", 0.0, 0.1, 0.05, 0.001, help="Use adjusted P-value (adj.P.Val) for filtering DEGs")
+            pvalue_thresh = st.slider("Adjusted P-value threshold", 0.0, 0.1, 0.05, 0.001, help="Genes must have adj.P.Val below this threshold to be considered significant")
         with col2:
             pvalue_text = st.text_input("", value=f"{pvalue_thresh:.3f}", key="pvalue_text")
             try:
@@ -166,10 +178,14 @@ if ri and ri.cpm_data:
             except ValueError:
                 pass
 
-        st.sidebar.subheader("Gene Selection Parameters")
+        st.sidebar.subheader("Auto-selection Parameters")
+        st.sidebar.markdown("**Auto-selection uses two strategies:**")
+        st.sidebar.markdown("1. **Frequent DEGs**: Genes significant across multiple contrasts")
+        st.sidebar.markdown("2. **Contrast-specific DEGs**: High fold-change genes unique to few contrasts")
+
         col1, col2 = st.sidebar.columns([3, 1])
         with col1:
-            top_frequent_genes = st.slider("Top frequently occurring genes", 5, 50, 20, help="Number of genes that appear across multiple contrasts")
+            top_frequent_genes = st.slider("Frequent DEGs to include", 5, 50, 20, help="Number of genes that are differentially expressed across the most contrasts")
         with col2:
             freq_text = st.text_input("", value=str(top_frequent_genes), key="freq_text")
             try:
@@ -179,9 +195,9 @@ if ri and ri.cpm_data:
 
         col1, col2 = st.sidebar.columns([3, 1])
         with col1:
-            top_unique_genes = st.slider("Top unique genes per contrast", 1, 20, 10, help="Number of genes unique to each contrast to include")
+            top_unique_genes = st.slider("Contrast-specific DEGs per contrast", 1, 20, 10, help="Number of high fold-change genes to select from each contrast that appear in few other contrasts")
         with col2:
-            unique_text = st.text_input("", value=str(top_unique_genes), key="unique_text")
+            unique_text = st.text_input("", value=str(top_unique_genes), key="unique_text_simple")
             try:
                 top_unique_genes = int(unique_text)
             except ValueError:
@@ -189,7 +205,7 @@ if ri and ri.cpm_data:
 
         col1, col2 = st.sidebar.columns([3, 1])
         with col1:
-            max_contrasts_unique = st.slider("Max contrasts for 'unique' genes", 1, 10, 2, help="Maximum number of contrasts a gene can appear in to be considered 'unique'")
+            max_contrasts_unique = st.slider("Max contrasts for 'contrast-specific'", 1, 10, 2, help="A gene is considered 'contrast-specific' if it appears as significant in this many contrasts or fewer")
         with col2:
             max_text = st.text_input("", value=str(max_contrasts_unique), key="max_text")
             try:
@@ -199,7 +215,7 @@ if ri and ri.cpm_data:
 
         col1, col2 = st.sidebar.columns([3, 1])
         with col1:
-            min_unique = st.slider("Min unique genes per contrast", 0, 10, 1, help="Minimum number of unique genes to select from each contrast")
+            min_unique = st.slider("Min contrast-specific DEGs per contrast", 0, 10, 1, help="Minimum number of contrast-specific genes that must be selected from each contrast (quality control)")
         with col2:
             min_text = st.text_input("", value=str(min_unique), key="min_text")
             try:
@@ -209,15 +225,45 @@ if ri and ri.cpm_data:
 
         st.sidebar.subheader("Visualization Options")
         hide_x_labels = st.sidebar.checkbox("Hide x-axis labels in expression plots", value=True)
-        
+
         st.sidebar.subheader("Heatmap Options")
-        use_dynamic_filtering = st.sidebar.checkbox("Use dynamic significance filtering in heatmap", value=True, help="Apply current p-value and LFC thresholds to heatmap display")
-        if use_dynamic_filtering:
-            st.sidebar.info("🎯 Heatmap will only show colored cells for genes meeting current significance thresholds")
+        use_separate_heatmap_filters = st.sidebar.checkbox("Use different significance filters for heatmap", value=False, help="By default, heatmap uses same filters as Auto-selected DEGs. Enable this to set different thresholds.")
+
+        if use_separate_heatmap_filters:
+            st.sidebar.markdown("**Heatmap-specific filters:**")
+            col1, col2 = st.sidebar.columns([3, 1])
+            with col1:
+                heatmap_pvalue_thresh = st.slider("Heatmap P-value threshold", 0.0, 0.1, 0.05, 0.001, help="P-value threshold for heatmap coloring")
+            with col2:
+                heatmap_pvalue_text = st.text_input("", value=f"{heatmap_pvalue_thresh:.3f}", key="heatmap_pvalue_text")
+                try:
+                    heatmap_pvalue_thresh = float(heatmap_pvalue_text)
+                except ValueError:
+                    pass
+
+            col1, col2 = st.sidebar.columns([3, 1])
+            with col1:
+                heatmap_lfc_thresh = st.slider("Heatmap LFC threshold", 0.0, 5.0, 1.0, 0.1, help="LFC threshold for heatmap coloring")
+            with col2:
+                heatmap_lfc_text = st.text_input("", value=f"{heatmap_lfc_thresh:.1f}", key="heatmap_lfc_text")
+                try:
+                    heatmap_lfc_thresh = float(heatmap_lfc_text)
+                except ValueError:
+                    pass
+
+            use_dynamic_filtering = True
+            effective_pvalue_thresh = heatmap_pvalue_thresh
+            effective_lfc_thresh = heatmap_lfc_thresh
+        else:
+            use_dynamic_filtering = True
+            effective_pvalue_thresh = pvalue_thresh
+            effective_lfc_thresh = lfc_thresh
+            st.sidebar.info("🎯 Heatmap uses same significance filters as Auto-selected DEGs")
+
         hide_empty_rows_cols = st.sidebar.checkbox("Hide genes/contrasts with no significant values", value=False, help="Remove rows/columns where no values meet significance criteria")
         if hide_empty_rows_cols:
             st.sidebar.info("🧹 Genes/contrasts with no significant values will be completely removed from the heatmap")
-        
+
         debug_mode = st.sidebar.checkbox("Debug mode", value=False)
 
     # Initialize session state for selections
@@ -231,68 +277,38 @@ if ri and ri.cpm_data:
     st.sidebar.subheader("Gene Selection")
     gene_select_method = st.sidebar.radio(
         "Selection method:",
-        ["From list", "Search", "Important genes"]
+        ["Auto-selected DEGs", "Custom"],
+        index=0  # Default to "Auto-selected DEGs"
     )
 
-    if gene_select_method == "From list":
-        col1, col2 = st.sidebar.columns([3, 1])
-        with col2:
-            st.write("")  # Add some spacing
-            if st.button("Select All", key="select_all_genes_list"):
-                st.session_state['gene_sel_list'] = all_genes[:30]  # Limit to max_selections
-                try:
-                    st.rerun()
-                except AttributeError:
-                    try:
-                        st.experimental_rerun()
-                    except AttributeError:
-                        pass
-        
-        # Use session state if "Select All" was clicked
-        default_genes = st.session_state.get('gene_sel_list', [])
-        gene_sel = st.sidebar.multiselect(
-            "Select genes:",
-            all_genes,
-            default=default_genes,
-            max_selections=30
+    if gene_select_method == "Custom":
+        st.sidebar.write("Enter genes (one per line):")
+        gene_input = st.sidebar.text_area(
+            "Gene list:",
+            height=150,
+            placeholder="MYCN\nALK\nPHOX2B\nATRX\nTP53\nTERT\nARID1A\nARID1B\nNF1\nBARD1",
+            label_visibility="collapsed"
         )
-        
-        # Clear the session state after use
-        if 'gene_sel_list' in st.session_state:
-            del st.session_state['gene_sel_list']
-    elif gene_select_method == "Search":
-        gene_search = st.sidebar.text_input("Search genes:")
-        matching_genes = [g for g in all_genes if gene_search.upper() in g.upper()]
-        if len(matching_genes) > 100:
-            st.sidebar.warning(f"Found {len(matching_genes)} matches. Showing first 100.")
-            matching_genes = matching_genes[:100]
-        
-        col1, col2 = st.sidebar.columns([3, 1])
-        with col2:
-            st.write("")  # Add some spacing
-            if st.button("Select All", key="select_all_genes_search") and matching_genes:
-                st.session_state['gene_sel_search'] = matching_genes[:30]  # Limit to max_selections
-                try:
-                    st.rerun()
-                except AttributeError:
-                    try:
-                        st.experimental_rerun()
-                    except AttributeError:
-                        pass
-        
-        # Use session state if "Select All" was clicked
-        default_genes = st.session_state.get('gene_sel_search', [])
-        gene_sel = st.sidebar.multiselect(
-            "Matching genes:",
-            matching_genes,
-            default=default_genes,
-            max_selections=30
-        )
-        
-        # Clear the session state after use
-        if 'gene_sel_search' in st.session_state:
-            del st.session_state['gene_sel_search']
-    else:  # Important genes
+
+        if gene_input.strip():
+            # Parse genes from textarea (one per line)
+            input_genes = [gene.strip() for gene in gene_input.strip().split('\n') if gene.strip()]
+            # Filter to only genes that exist in the data
+            gene_sel = [gene for gene in input_genes if gene in all_genes]
+
+            # Show validation info
+            if len(input_genes) != len(gene_sel):
+                missing_genes = [gene for gene in input_genes if gene not in all_genes]
+                st.sidebar.warning(f"⚠️ {len(missing_genes)} genes not found in data: {', '.join(missing_genes[:5])}{' ...' if len(missing_genes) > 5 else ''}")
+
+            if gene_sel:
+                st.sidebar.success(f"✅ {len(gene_sel)} genes selected")
+                st.sidebar.caption(f"🧬 {len(gene_sel)} genes selected")
+            else:
+                st.sidebar.error("❌ No valid genes found")
+        else:
+            gene_sel = []
+    elif gene_select_method == "Auto-selected DEGs":
         # Use p-value and lfc thresholds (these will be defined either here or in advanced options)
         if not show_advanced:
             # Add slider and number input side by side for precision
@@ -308,27 +324,31 @@ if ri and ri.cpm_data:
 
             col1, col2 = st.sidebar.columns([3, 1])
             with col1:
-                lfc_thresh = st.slider("abs(Log2FC) threshold", 0.0, 5.0, 1.0, 0.1, help="Absolute log2 fold change threshold")
+                lfc_thresh = st.slider("abs(Log2FC) threshold", 0.0, 5.0, 1.0, 0.1, help="Genes must have absolute log2 fold change above this threshold to be considered significant")
             with col2:
                 lfc_text = st.text_input("", value=f"{lfc_thresh:.1f}", key="lfc_text_simple")
                 try:
                     lfc_thresh = float(lfc_text)
                 except ValueError:
                     pass
-            
-            # Add heatmap options for simple mode too
-            st.sidebar.subheader("Heatmap Options")
-            use_dynamic_filtering = st.sidebar.checkbox("Use dynamic significance filtering in heatmap", value=True, help="Apply current p-value and LFC thresholds to heatmap display")
-            if use_dynamic_filtering:
-                st.sidebar.info("🎯 Heatmap will only show colored cells for genes meeting current significance thresholds")
+
+            # In simple mode, always use same filters for heatmap as important genes
+            use_dynamic_filtering = True
+            effective_pvalue_thresh = pvalue_thresh
+            effective_lfc_thresh = lfc_thresh
             hide_empty_rows_cols = st.sidebar.checkbox("Hide genes/contrasts with no significant values", value=False, help="Remove rows/columns where no values meet significance criteria")
             if hide_empty_rows_cols:
                 st.sidebar.info("🧹 Genes/contrasts with no significant values will be completely removed from the heatmap")
+            st.sidebar.info("🎯 Heatmap uses same significance filters as Auto-selected DEGs")
 
-            # Set default values for parameters with number inputs
+            # Auto-selection parameters
+            st.sidebar.markdown("**Auto-selection uses two strategies:**")
+            st.sidebar.markdown("1. **Frequent DEGs**: Genes significant across multiple contrasts")
+            st.sidebar.markdown("2. **Contrast-specific DEGs**: High fold-change genes unique to few contrasts")
+
             col1, col2 = st.sidebar.columns([3, 1])
             with col1:
-                top_frequent_genes = st.slider("Top frequently occurring genes", 5, 50, 20, help="Number of genes that appear across multiple contrasts")
+                top_frequent_genes = st.slider("Frequent DEGs to include", 5, 50, 20, help="Number of genes that are differentially expressed across the most contrasts")
             with col2:
                 freq_text = st.text_input("", value=str(top_frequent_genes), key="freq_text_simple")
                 try:
@@ -338,7 +358,7 @@ if ri and ri.cpm_data:
 
             col1, col2 = st.sidebar.columns([3, 1])
             with col1:
-                top_unique_genes = st.slider("Top unique genes per contrast", 1, 20, 10, help="Number of genes unique to each contrast to include")
+                top_unique_genes = st.slider("Contrast-specific DEGs per contrast", 1, 20, 10, help="Number of high fold-change genes to select from each contrast that appear in few other contrasts")
             with col2:
                 unique_text = st.text_input("", value=str(top_unique_genes), key="unique_text_simple")
                 try:
@@ -348,7 +368,7 @@ if ri and ri.cpm_data:
 
             col1, col2 = st.sidebar.columns([3, 1])
             with col1:
-                max_contrasts_unique = st.slider("Max contrasts for 'unique' genes", 1, 10, 2, help="Maximum number of contrasts a gene can appear in to be considered 'unique'")
+                max_contrasts_unique = st.slider("Max contrasts for 'contrast-specific'", 1, 10, 2, help="A gene is considered 'contrast-specific' if it appears as significant in this many contrasts or fewer")
             with col2:
                 max_text = st.text_input("", value=str(max_contrasts_unique), key="max_text_simple")
                 try:
@@ -369,8 +389,8 @@ if ri and ri.cpm_data:
         col1, col2 = st.sidebar.columns([3, 1])
         with col2:
             st.write("")  # Add some spacing
-            if st.button("Select All", key="select_all_genes_important") and top_genes:
-                st.session_state['gene_sel_important'] = top_genes[:100]  # Limit to max_selections
+            if st.button("Select All", key="select_all_genes_important") and limited_genes:
+                st.session_state['gene_sel_important'] = limited_genes  # Use limited and ranked genes
                 try:
                     st.rerun()
                 except AttributeError:
@@ -378,129 +398,64 @@ if ri and ri.cpm_data:
                         st.experimental_rerun()
                     except AttributeError:
                         pass
-        
-        # Use session state if "Select All" was clicked or use default selection
-        default_genes = st.session_state.get('gene_sel_important', top_genes[:min(50, len(top_genes))] if top_genes else [])
+
+        # Limit genes to 200 maximum, selecting by highest LFC if needed
+        if len(top_genes) > 200:
+            # Get LFC data for ranking
+            gene_lfc_map = {}
+            for analysis_id, contrasts in ri.deg_data.items():
+                for contrast_id, df in contrasts.items():
+                    if 'Gene' in df.columns and 'logFC' in df.columns:
+                        for _, row in df.iterrows():
+                            gene = row['Gene']
+                            if gene in top_genes:
+                                current_max = gene_lfc_map.get(gene, 0)
+                                gene_lfc_map[gene] = max(current_max, abs(row['logFC']))
+
+            # Sort by highest LFC and take top 200
+            sorted_genes = sorted(top_genes, key=lambda g: gene_lfc_map.get(g, 0), reverse=True)
+            limited_genes = sorted_genes[:200]
+            st.sidebar.warning(f"⚠️ Showing top 200 of {len(top_genes)} important genes (ranked by highest LFC). {len(top_genes)-200} genes excluded.")
+        else:
+            limited_genes = top_genes
+
+        # Use session state if "Select All" was clicked or use default selection (all limited genes)
+        default_genes = st.session_state.get('gene_sel_important', limited_genes if limited_genes else [])
         gene_sel = st.sidebar.multiselect(
-            "Important genes:",
-            top_genes,
+            "Auto-selected DEGs:",
+            limited_genes,
             default=default_genes,
-            max_selections=100
+            max_selections=200
         )
-        
+
+        # Add count badge
+        if gene_sel:
+            st.sidebar.caption(f"🧬 {len(gene_sel)} genes selected")
+
         # Clear the session state after use
         if 'gene_sel_important' in st.session_state:
             del st.session_state['gene_sel_important']
 
-    # Dataset selection
-    st.sidebar.subheader("Dataset Selection")
-    all_dsets = list(ri.cpm_data.keys())
 
-    # Use session state if available
-    default_datasets = st.session_state.get('datasets_selected', all_dsets)
-    if default_datasets is None:
-        default_datasets = all_dsets
-
-    col1, col2 = st.sidebar.columns([3, 1])
-    with col2:
-        st.write("")  # Add some spacing
-        if st.button("Select All", key="select_all_datasets"):
-            st.session_state['datasets_selected'] = all_dsets
-            try:
-                st.rerun()
-            except AttributeError:
-                try:
-                    st.experimental_rerun()
-                except AttributeError:
-                    pass
-
-    # Use session state if available, otherwise use default
-    current_datasets = st.session_state.get('datasets_selected', default_datasets)
-    ds_sel = st.sidebar.multiselect(
-        "Select datasets:",
-        all_dsets,
-        default=current_datasets
-    )
-
-    # Contrast selection
-    st.sidebar.subheader("Contrast Selection")
-    all_contr = []
-    contrast_map = {}  # Map display string to (analysis_id, contrast_id)
-    for aid, contrasts in ri.deg_data.items():
-        for cid in contrasts.keys():
-            # Get original contrast name and description if available
-            original_name = cid
-            desc = ""
-                
-            if hasattr(ri, "contrast_info") and cid in ri.contrast_info:
-                # Use name from contrast_info if available
-                if 'name' in ri.contrast_info[cid]:
-                    original_name = ri.contrast_info[cid]['name']
-                    
-                # Add description snippet
-                if 'description' in ri.contrast_info[cid]:
-                    desc_text = ri.contrast_info[cid]['description']
-                    if len(desc_text) > 30:
-                        desc = f" - {desc_text[:30]}..."
-                    else:
-                        desc = f" - {desc_text}"
-                
-            # Create display string with original name
-            display_string = f"{aid}:{original_name}{desc}"
-            all_contr.append(display_string)
-            contrast_map[display_string] = (aid, cid)
-
-    # Use session state if available
-    default_contrasts = st.session_state.get('contrasts_selected',
-                                           all_contr[:20] if len(all_contr) > 20 else all_contr)
-    if default_contrasts is None:
-        default_contrasts = all_contr[:15] if len(all_contr) > 15 else all_contr
-
-    # Filter default_contrasts to only include valid contrasts
-    default_contrasts = [c for c in default_contrasts if c in all_contr]
-
-    col1, col2 = st.sidebar.columns([3, 1])
-    with col2:
-        st.write("")  # Add some spacing
-        if st.button("Select All", key="select_all_contrasts"):
-            st.session_state['contrasts_selected'] = all_contr
-            try:
-                st.rerun()
-            except AttributeError:
-                try:
-                    st.experimental_rerun()
-                except AttributeError:
-                    pass
-
-    # Use session state if available, otherwise use default
-    current_contrasts = st.session_state.get('contrasts_selected', default_contrasts)
-    contr_sel = st.sidebar.multiselect(
-        "Select contrasts:",
-        all_contr,
-        default=current_contrasts
-    )
 
     # Visualization options
     st.sidebar.subheader("Plot Options")
-    plot_type = st.sidebar.radio(
-        "Expression plot type:",
-        ["violin", "box", "both"]
-    )
-    
+    plot_type = "violin"  # Always use violin plots
+
     # Add pagination controls if needed
     if gene_sel:
         genes_per_page = 30
         total_pages = (len(gene_sel) + genes_per_page - 1) // genes_per_page
-        
+
         if total_pages > 1:
             st.sidebar.markdown("---")
             st.sidebar.subheader("Gene Pagination")
-            
+
             st.sidebar.info(f"Your selection contains {len(gene_sel)} genes, showing {genes_per_page} per page.")
-            
+
             # Create three columns for pagination controls
             col1, col2, col3 = st.sidebar.columns([1, 2, 1])
-            
+
             with col1:
                 prev_disabled = 'page_num' in st.session_state and st.session_state.page_num <= 1
                 if st.button("◀", disabled=prev_disabled, key="prev_page"):
@@ -514,22 +469,22 @@ if ri and ri.cpm_data:
                         except AttributeError:
                             import streamlit.runtime.scriptrunner.magic as _m
                             _m._set_stop_thread(False)  # hidden API for very old versions
-            
+
             with col2:
                 # Initialize page_num in session state if not present
                 if 'page_num' not in st.session_state:
                     st.session_state.page_num = 1
-                    
+
                 page_num = st.number_input(
-                    "Page", 
-                    min_value=1, 
-                    max_value=total_pages, 
+                    "Page",
+                    min_value=1,
+                    max_value=total_pages,
                     value=st.session_state.page_num,
                     step=1,
                     key="page_input"
                 )
                 st.session_state.page_num = page_num
-                
+
             with col3:
                 next_disabled = 'page_num' in st.session_state and st.session_state.page_num >= total_pages
                 if st.button("▶", disabled=next_disabled, key="next_page"):
@@ -543,7 +498,7 @@ if ri and ri.cpm_data:
                         except AttributeError:
                             import streamlit.runtime.scriptrunner.magic as _m
                             _m._set_stop_thread(False)  # hidden API for very old versions
-                    
+
             # Show page indicator
             st.sidebar.caption(f"Page {st.session_state.page_num} of {total_pages}")
         else:
@@ -556,199 +511,344 @@ if ri and ri.cpm_data:
     # These options have been moved up in the UI
 
     # ---------- 2. main tabs ---------------------------------------
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Heat-map", "Expression", "Analysis Plots", "Datasets", "Contrasts"])
+    tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs(["Selections", "Heat-map", "Expression", "Analysis Plots", "Dataset Info", "Contrast Info"])
+
+    # Initialize session state for selections if not exists
+    if 'selected_datasets' not in st.session_state:
+        # Default to first 5 datasets
+        all_dataset_ids = list(ri.cpm_data.keys())
+        st.session_state['selected_datasets'] = set(all_dataset_ids[:5])
+
+    if 'selected_contrasts' not in st.session_state:
+        # Default to all contrasts for selected datasets
+        selected_contrasts = set()
+        for analysis_id, contrasts in ri.deg_data.items():
+            if analysis_id in st.session_state['selected_datasets']:
+                for contrast_id in contrasts.keys():
+                    selected_contrasts.add((analysis_id, contrast_id))
+        st.session_state['selected_contrasts'] = selected_contrasts
+
+
+
+    with tab_sel:
+        st.header("📊 Selections")
+        st.markdown("**Select datasets and contrasts for analysis.** Use the tables below to choose your data, then click 'Regenerate Plots' to update visualizations.")
+
+        # Dataset selection table
+        st.subheader("Choose Datasets")
+        dataset_rows = []
+        for analysis_id, info in ri.analysis_info.items():
+            title = getattr(ri, "dataset_info", {}).get(analysis_id, {}).get("title", "")
+            title_display = title[:100] + ("..." if len(title) > 100 else "") if title else "No title available"
+
+            dataset_rows.append({
+                "✔": analysis_id in st.session_state.get('selected_datasets', set()),
+                "Accession": info.get("accession", "Unknown"),
+                "Dataset ID": analysis_id,
+                "Title": title_display,
+                "Organism": info.get("organism", "Unknown"),
+                "Samples": info.get("number_of_samples", 0),
+                "Contrasts": info.get("number_of_contrasts", 0)
+            })
+
+        if dataset_rows:
+            ds_df = pd.DataFrame(dataset_rows)
+            edited_ds = st.data_editor(
+                ds_df,
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "✔": st.column_config.CheckboxColumn("Select", default=False),
+                    "Title": st.column_config.TextColumn("Title", width="large"),
+                    "Accession": st.column_config.TextColumn("Accession", width="medium"),
+                    "Dataset ID": st.column_config.TextColumn("Dataset ID", width="medium")
+                },
+                key="selections_dataset_editor"
+            )
+
+            # Update selected datasets based on edited data
+            if not edited_ds.empty:
+                selected_datasets = set(edited_ds.loc[edited_ds["✔"], "Dataset ID"].tolist())
+                st.session_state['selected_datasets'] = selected_datasets
+
+                st.caption(f"📊 {len(selected_datasets)} datasets selected")
+
+        # Contrast selection table
+        st.subheader("Choose Contrasts")
+        if st.session_state['selected_datasets']:
+            contrast_rows = []
+            for analysis_id, contrasts in ri.deg_data.items():
+                if analysis_id in st.session_state['selected_datasets']:
+                    for contrast_id in contrasts.keys():
+                        # Get description
+                        description = ri._get_contrast_description(analysis_id, contrast_id)
+                        if description.startswith("Contrast: "):
+                            description = description[10:]  # Remove "Contrast: " prefix
+
+                        # Count DEGs
+                        deg_count = 0
+                        if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
+                            df = ri.deg_data[analysis_id][contrast_id]
+                            if 'adj.P.Val' in df.columns and 'logFC' in df.columns:
+                                deg_count = ((df['adj.P.Val'] < pvalue_thresh) & (abs(df['logFC']) > lfc_thresh)).sum()
+
+                        contrast_rows.append({
+                            "✔": (analysis_id, contrast_id) in st.session_state.get('selected_contrasts', set()),
+                            "Dataset": analysis_id,
+                            "Accession": ri.analysis_info.get(analysis_id, {}).get("accession", "Unknown"),
+                            "Contrast": contrast_id,
+                            "Description": description[:150] + ("..." if len(description) > 150 else ""),
+                            "DEGs": deg_count
+                        })
+
+            if contrast_rows:
+                ctr_df = pd.DataFrame(contrast_rows)
+                edited_ctr = st.data_editor(
+                    ctr_df,
+                    hide_index=True,
+                    use_container_width=True,
+                    column_config={
+                        "✔": st.column_config.CheckboxColumn("Select", default=False),
+                        "Description": st.column_config.TextColumn("Description", width="large"),
+                        "Dataset": st.column_config.TextColumn("Dataset", width="medium"),
+                        "Contrast": st.column_config.TextColumn("Contrast", width="medium"),
+                        "DEGs": st.column_config.NumberColumn("DEGs", format="%d")
+                    },
+                    key="selections_contrast_editor"
+                )
+
+                # Update selected contrasts based on edited data
+                if not edited_ctr.empty:
+                    selected_contrasts = set()
+                    for _, row in edited_ctr.iterrows():
+                        if row["✔"]:
+                            selected_contrasts.add((row["Dataset"], row["Contrast"]))
+                    st.session_state['selected_contrasts'] = selected_contrasts
+
+                    st.caption(f"🔍 {len(selected_contrasts)} contrasts selected")
+            else:
+                st.info("No contrasts available for selected datasets.")
+        else:
+            st.info("Please select at least one dataset to see available contrasts.")
+
+        # Selection summary
+        st.markdown("---")
+        selected_datasets_count = len(st.session_state.get('selected_datasets', set()))
+        selected_contrasts_count = len(st.session_state.get('selected_contrasts', set()))
+        genes_count = len(gene_sel) if gene_sel else 0
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Datasets", selected_datasets_count)
+        with col2:
+            st.metric("Contrasts", selected_contrasts_count)
+        with col3:
+            st.metric("Genes", genes_count)
+
+        if selected_datasets_count > 0 and selected_contrasts_count > 0 and genes_count > 0:
+            st.success("✅ Ready for analysis! Switch to Heat-map or Expression tabs to view results.")
+        else:
+            missing = []
+            if selected_datasets_count == 0:
+                missing.append("datasets")
+            if selected_contrasts_count == 0:
+                missing.append("contrasts")
+            if genes_count == 0:
+                missing.append("genes")
+            st.info(f"ℹ️ Please select {', '.join(missing)} to enable plot generation.")
 
     with tab1:
         st.header("Differential Expression Heatmap")
+        st.markdown("**📊 Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Hover over cells for details. Use the sidebar to adjust significance thresholds and filtering options.")
+
+        # Display settings for heatmap
+        with st.sidebar.expander("🎨 Display Settings", expanded=False):
+            heatmap_font_size = st.slider("Font size", 8, 16, 12, key="heatmap_font")
+            show_grid_lines = st.checkbox("Show grid lines", value=True, key="heatmap_grid")
+            grid_opacity = st.slider("Grid opacity", 0.1, 1.0, 0.3, key="heatmap_grid_opacity")
+
+        selected_contrasts = list(st.session_state.get('selected_contrasts', set()))
 
         if not gene_sel:
-            st.info("Please select at least one gene from the sidebar.")
-        elif not contr_sel:
-            st.info("Please select at least one contrast from the sidebar.")
-
-        # Add option to show gene data directly
-        if show_advanced and debug_mode:
-            if st.checkbox("Show raw gene data", value=False):
-                # Get the DEG data for selected genes and contrasts
-                gene_data = {}
-                for aid, cid in sel_pairs:
-                    if aid in ri.deg_data and cid in ri.deg_data[aid]:
-                        df = ri.deg_data[aid][cid]
-                        if 'Gene' in df.columns and df[df['Gene'].isin(gene_sel)].shape[0] > 0:
-                            gene_data[f"{aid}:{cid}"] = df[df['Gene'].isin(gene_sel)]
-
-                # Display the data
-                if gene_data:
-                    for contrast, df in gene_data.items():
-                        st.write(f"### Data for {contrast}")
-                        st.dataframe(df)
-                else:
-                    st.warning("No matching gene data found in selected contrasts")
+            st.info("Please select genes from the sidebar.")
+        elif not selected_contrasts:
+            st.info("Please select contrasts in the 'Selections' tab.")
         else:
-            # Use the contrast map to get the correct analysis_id and contrast_id pairs
-            sel_pairs = [contrast_map[contr] for contr in contr_sel if contr in contrast_map]
+                # Create and display the heatmap using isolated fragment
+                @st.fragment
+                def draw_heatmap(gene_selection, contrast_pairs, show_debug=False, show_adv=False):
+                    with st.spinner("Generating heatmap..."):
+                        try:
+                            if show_adv and show_debug:
+                                st.info("Debug mode: Showing detailed heatmap generation info")
+                                import logging
+                                import io
 
-            # Keep original contrasts for the heatmap
-            # We'll handle the display in the heatmap function itself
+                                # Set up a string IO to capture log messages
+                                log_stream = io.StringIO()
+                                handler = logging.StreamHandler(log_stream)
+                                handler.setLevel(logging.DEBUG)
+                                formatter = logging.Formatter('%(levelname)s - %(message)s')
+                                handler.setFormatter(formatter)
 
-            # Create and display the heatmap using isolated fragment
-            @st.fragment
-            def draw_heatmap(gene_selection, contrast_pairs, show_debug=False, show_adv=False):
-                with st.spinner("Generating heatmap..."):
-                    try:
-                        if show_adv and show_debug:
-                            st.info("Debug mode: Showing detailed heatmap generation info")
-                            import logging
-                            import io
+                                # Add the handler to the logger
+                                logger = logging.getLogger("ResultsIntegration")
+                                logger.setLevel(logging.DEBUG)
+                                logger.addHandler(handler)
 
-                            # Set up a string IO to capture log messages
-                            log_stream = io.StringIO()
-                            handler = logging.StreamHandler(log_stream)
-                            handler.setLevel(logging.DEBUG)
-                            formatter = logging.Formatter('%(levelname)s - %(message)s')
-                            handler.setFormatter(formatter)
+                            # Create heatmap with possibly modified parameters
+                            # Use cached version if available for older Streamlit versions
+                            if 'cached_figure_creation' in globals():
+                                fig = cached_figure_creation("create_lfc_heatmap",
+                                                            gene_selection,
+                                                            contrast_pairs,
+                                                            None)
+                            else:
+                                # Apply dynamic filtering if enabled
+                                p_thresh = effective_pvalue_thresh if use_dynamic_filtering else None
+                                lfc_thresh_val = effective_lfc_thresh if use_dynamic_filtering else None
 
-                            # Add the handler to the logger
-                            logger = logging.getLogger("ResultsIntegration")
-                            logger.setLevel(logging.DEBUG)
-                            logger.addHandler(handler)
+                                fig = ri.create_lfc_heatmap(
+                                    genes=gene_selection,
+                                    contrasts=contrast_pairs,
+                                    output_file=None,
+                                    p_value_threshold=p_thresh,
+                                    lfc_threshold=lfc_thresh_val,
+                                    hide_empty_rows_cols=hide_empty_rows_cols,
+                                    font_size=heatmap_font_size,
+                                    show_grid_lines=show_grid_lines,
+                                    grid_opacity=grid_opacity
+                                )
 
-                        # Create heatmap with possibly modified parameters
-                        # Use cached version if available for older Streamlit versions
-                        if 'cached_figure_creation' in globals():
-                            fig = cached_figure_creation("create_lfc_heatmap", 
-                                                        gene_selection, 
-                                                        contrast_pairs, 
-                                                        None)
-                        else:
-                            # Apply dynamic filtering if enabled
-                            p_thresh = pvalue_thresh if use_dynamic_filtering else None
-                            lfc_thresh_val = lfc_thresh if use_dynamic_filtering else None
-                            
-                            fig = ri.create_lfc_heatmap(
-                                genes=gene_selection,
-                                contrasts=contrast_pairs,
-                                output_file=None,
-                                p_value_threshold=p_thresh,
-                                lfc_threshold=lfc_thresh_val,
-                                hide_empty_rows_cols=hide_empty_rows_cols
-                            )
+                            # Display settings are now handled in the create_lfc_heatmap function
 
-                        # Rename contrast labels to remove dataset prefix if there are multiple datasets
-                        # The ResultsIntegrator already simplified the contrast labels
-                        # No need to update x-axis labels here
+                            if show_adv and show_debug:
+                                # Remove the handler to avoid duplicates
+                                logger.removeHandler(handler)
 
-                        if show_adv and show_debug:
-                            # Remove the handler to avoid duplicates
-                            logger.removeHandler(handler)
+                                # Display the log
+                                st.expander("Debug Log", expanded=True).code(log_stream.getvalue())
 
-                            # Display the log
-                            st.expander("Debug Log", expanded=True).code(log_stream.getvalue())
+                            if fig:
+                                # Add notes about functionality
+                                info_messages = ["💡 Hover over cells in the heatmap to see contrast descriptions and gene information."]
+                                # if use_dynamic_filtering:
+                                #    if show_advanced and 'use_separate_heatmap_filters' in locals() and use_separate_heatmap_filters:
+                                #        info_messages.append(f"🎯 Only genes meeting heatmap-specific thresholds (p<{effective_pvalue_thresh:.3f}, #|LFC|>{effective_lfc_thresh:.1f}) are colored.")
+                                #    else:
+                                #        info_messages.append(f"🎯 Only genes meeting Auto-selected DEGs thresholds (p<{effective_pvalue_thresh:.3f}, |LFC|>{effective_lfc_thresh:.1f}) are colored.")
+                                #if hide_empty_rows_cols:
+                                #    info_messages.append("🧹 Genes/contrasts with no significant values have been removed.")
 
-                        if fig:
-                            # Add notes about functionality
-                            info_messages = ["💡 Hover over cells in the heatmap to see contrast descriptions and gene information."]
-                            if use_dynamic_filtering:
-                                info_messages.append("🎯 Only genes meeting current significance thresholds are colored.")
-                            if hide_empty_rows_cols:
-                                info_messages.append("🧹 Genes/contrasts with no significant values have been removed.")
-                            
-                            for msg in info_messages:
-                                st.info(msg)
-                            
-                            # Display the plot
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.error("Could not generate heatmap. Please check your selections.")
-                    except Exception as e:
-                        st.error(f"Error generating heatmap: {str(e)}")
-                        
-            # Call the fragment with just the input parameters
-            draw_heatmap(gene_sel, sel_pairs, debug_mode, show_advanced)
+                                for msg in info_messages:
+                                    st.info(msg)
+
+                                # Display the plot
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.error("Could not generate heatmap. Please check your selections.")
+                        except Exception as e:
+                            st.error(f"Error generating heatmap: {str(e)}")
+
+                # Call the fragment with just the input parameters
+                draw_heatmap(gene_sel, selected_contrasts, debug_mode, show_advanced)
 
     with tab2:
         st.header("Gene Expression Plots")
+        st.markdown("**🎻 Violin plots showing gene expression distributions across sample groups.** Each panel represents one gene, with samples grouped by experimental conditions.")
+
+        # Display settings for expression plots
+        with st.sidebar.expander("🎨 Display Settings", expanded=False):
+            facet_font_size = st.slider("Facet title size", 8, 16, 10, key="violin_font")
+            lock_y_axis = st.checkbox("Lock y-axis across genes", value=False, key="violin_lock_y")
+            show_raw_points = st.checkbox("Show raw points", value=True, key="violin_points")
+            legend_position = st.selectbox("Legend position", ["Bottom", "Right", "Top"], index=0, key="violin_legend")
+
+        selected_datasets = list(st.session_state.get('selected_datasets', set()))
 
         if not gene_sel:
-            st.info("Please select at least one gene from the sidebar.")
-        elif not ds_sel:
-            st.info("Please select at least one dataset from the sidebar.")
+            st.info("Please select genes from the sidebar.")
+        elif not selected_datasets:
+            st.info("Please select datasets in the 'Selections' tab.")
         else:
-            # Create and display the expression plots using isolated fragment
-            @st.fragment
-            def draw_expression_plots(gene_selection, dataset_selection, plot_style, hide_labels, page_num, total_pgs):
-                with st.spinner("Generating expression plots..."):
-                    try:
-                        # Calculate gene slice for the current page
-                        genes_per_page = 30
-                        current_page = page_num
-                        start_idx = (current_page - 1) * genes_per_page
-                        end_idx = min(start_idx + genes_per_page, len(gene_selection))
-                        current_genes = gene_selection[start_idx:end_idx]
-                        
-                        # Use cached version if available for older Streamlit versions
-                        if 'cached_figure_creation' in globals():
-                            fig2 = cached_figure_creation("create_expression_plots",
-                                                         current_genes,
-                                                         dataset_selection,
-                                                         None,
-                                                         hide_labels,
-                                                         page_num,
-                                                         plot_style=plot_style)
-                        else:
+                # Create and display the expression plots using isolated fragment
+                @st.fragment
+                def draw_expression_plots(gene_selection, dataset_selection, plot_style, hide_labels, page_num, total_pgs, facet_font_size, lock_y_axis, show_raw_points, legend_position):
+                    with st.spinner("Generating expression plots..."):
+                        try:
+                            # Calculate gene slice for the current page
+                            genes_per_page = 30
+                            current_page = page_num
+                            start_idx = (current_page - 1) * genes_per_page
+                            end_idx = min(start_idx + genes_per_page, len(gene_selection))
+                            current_genes = gene_selection[start_idx:end_idx]
+
                             fig2 = ri.create_expression_plots(
                                 genes=current_genes,
                                 analyses=dataset_selection,
-                                plot_type=plot_style,
+                                plot_type="violin",
                                 output_file=None,
                                 hide_x_labels=hide_labels,
-                                page_number=page_num
+                                page_number=page_num,
+                                facet_font_size=facet_font_size,
+                                lock_y_axis=lock_y_axis,
+                                show_raw_points=show_raw_points,
+                                legend_position=legend_position,
+                                show_grid_lines=True,
+                                grid_opacity=0.3
                             )
-                        if fig2:
-                            # Add page navigation info if we have multiple pages
-                            if total_pgs > 1:
-                                # Create pagination controls at the top of the plot for convenience
-                                cols = st.columns([2, 1, 1, 1, 2])
-                                with cols[1]:
-                                    prev_disabled = page_num <= 1
-                                    if st.button("◀ Previous", disabled=prev_disabled, key="prev_main"):
-                                        st.session_state.page_num = max(1, page_num - 1)
-                                        try:
-                                            st.rerun()
-                                        except AttributeError:
-                                            # Fallback for older Streamlit versions
+
+                            if fig2:
+                                # Add page navigation info if we have multiple pages
+                                if total_pgs > 1:
+                                    # Create pagination controls at the top of the plot for convenience
+                                    cols = st.columns([2, 1, 1, 1, 2])
+                                    with cols[1]:
+                                        prev_disabled = page_num <= 1
+                                        if st.button("◀ Previous", disabled=prev_disabled, key="prev_main"):
+                                            st.session_state.page_num = max(1, page_num - 1)
                                             try:
-                                                st.experimental_rerun()
+                                                st.rerun()
                                             except AttributeError:
-                                                import streamlit.runtime.scriptrunner.magic as _m
-                                                _m._set_stop_thread(False)  # hidden API for very old versions
-                                with cols[2]:
-                                    st.markdown(f"**Page {page_num}/{total_pgs}**")
-                                with cols[3]:
-                                    next_disabled = page_num >= total_pgs
-                                    if st.button("Next ▶", disabled=next_disabled, key="next_main"):
-                                        st.session_state.page_num = min(total_pgs, page_num + 1)
-                                        try:
-                                            st.rerun()
-                                        except AttributeError:
-                                            # Fallback for older Streamlit versions
+                                                # Fallback for older Streamlit versions
+                                                try:
+                                                    st.experimental_rerun()
+                                                except AttributeError:
+                                                    import streamlit.runtime.scriptrunner.magic as _m
+                                                    _m._set_stop_thread(False)  # hidden API for very old versions
+                                    with cols[2]:
+                                        st.markdown(f"**Page {page_num}/{total_pgs}**")
+                                    with cols[3]:
+                                        next_disabled = page_num >= total_pgs
+                                        if st.button("Next ▶", disabled=next_disabled, key="next_main"):
+                                            st.session_state.page_num = min(total_pgs, page_num + 1)
                                             try:
-                                                st.experimental_rerun()
+                                                st.rerun()
                                             except AttributeError:
-                                                import streamlit.runtime.scriptrunner.magic as _m
-                                                _m._set_stop_thread(False)  # hidden API for very old versions
-                            
-                            st.plotly_chart(fig2, use_container_width=True)
-                        else:
-                            st.error("Could not generate expression plots. Please check your selections.")
-                    except Exception as e:
-                        st.error(f"Error generating expression plots: {str(e)}")
-                        
-            # Call the fragment with just the input parameters
-            draw_expression_plots(gene_sel, ds_sel, plot_type, hide_x_labels, st.session_state.page_num, total_pages)
+                                                # Fallback for older Streamlit versions
+                                                try:
+                                                    st.experimental_rerun()
+                                                except AttributeError:
+                                                    import streamlit.runtime.scriptrunner.magic as _m
+                                                    _m._set_stop_thread(False)  # hidden API for very old versions
+
+                                st.plotly_chart(fig2, use_container_width=True)
+                            else:
+                                st.error("Could not generate expression plots. Please check your selections.")
+                        except Exception as e:
+                            st.error(f"Error generating expression plots: {str(e)}")
+
+                # Call the fragment with all input parameters including display settings
+                draw_expression_plots(gene_sel, selected_datasets, "violin", hide_x_labels, st.session_state.page_num, total_pages, facet_font_size, lock_y_axis, show_raw_points, legend_position)
 
     with tab3:
         st.header("RNA-seq Analysis Plots")
+        st.markdown("**📈 Quality control and differential expression plots from individual datasets.** View MDS plots, normalization diagnostics, volcano plots, and MA plots for detailed analysis.")
+
+        # Display settings for analysis plots
+        with st.sidebar.expander("🎨 Display Settings", expanded=False):
+            plot_font_size = st.slider("Font size", 8, 16, 12, key="analysis_font")
+            plot_grid = st.checkbox("Show grid lines", value=True, key="analysis_grid")
 
         # Select a dataset first - isolate this in a fragment to prevent full rerun
         @st.fragment
@@ -862,7 +962,7 @@ if ri and ri.cpm_data:
                     contrast_display_to_id = {}
                     for i, opt in enumerate(contrast_options):
                         contrast_display_to_id[opt] = contrast_dirs[i]
-                    
+
                     # Debug: Log available contrasts
                     if debug_mode:
                         st.write(f"Available contrasts: {', '.join(contrast_dirs)}")
@@ -927,7 +1027,7 @@ if ri and ri.cpm_data:
 
                                     # Create a copy for display, preserving original numeric types
                                     display_df = deg_df.copy()
-                                    
+
                                     # Format p-values for display while keeping them numeric for sorting
                                     column_config = {}
                                     if 'adj.P.Val' in display_df.columns:
@@ -973,7 +1073,7 @@ if ri and ri.cpm_data:
 
                                     # Show the dataframe with proper formatting
                                     st.dataframe(
-                                        display_df, 
+                                        display_df,
                                         use_container_width=True,
                                         column_config=column_config
                                     )
@@ -996,6 +1096,7 @@ if ri and ri.cpm_data:
 
     with tab4:
         st.header("Dataset Information")
+        st.markdown("**📋 Browse and filter dataset metadata.** View study details, organism information, sample counts, and experimental descriptions. Use filters to find specific datasets of interest.")
 
         # Isolate datasets tab with fragment to prevent recomputation
         @st.fragment
@@ -1019,7 +1120,7 @@ if ri and ri.cpm_data:
                     if isinstance(title, str) and title.startswith("Title:"):
                         title = title[6:].strip()
                     dataset_dict["Title"] = title
-                
+
                     dataset_dict["Summary"] = ri.dataset_info[analysis_id].get("summary", "")
                     dataset_dict["Design"] = ri.dataset_info[analysis_id].get("design", "")
 
@@ -1057,8 +1158,26 @@ if ri and ri.cpm_data:
 
                 # Display the filtered dataset information
                 if not filtered_df.empty:
+                    # Add checkbox column for selection
+                    display_df = filtered_df.copy()
+                    display_df["✔"] = display_df["Dataset ID"].isin(st.session_state.get('selected_datasets', set()))
+
                     # Display dataset information with dataframe for interactivity
-                    st.dataframe(filtered_df, use_container_width=True, height=400)
+                    edited_df = st.data_editor(
+                        display_df,
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "✔": st.column_config.CheckboxColumn("Select", default=False),
+                            "Dataset ID": st.column_config.TextColumn("Dataset ID", width="medium")
+                        },
+                        key="dataset_info_editor"
+                    )
+
+                    # Update selections based on checkboxes
+                    if not edited_df.empty:
+                        selected_from_info = set(edited_df.loc[edited_df["✔"], "Dataset ID"].tolist())
+                        st.session_state['selected_datasets'] = selected_from_info
 
                     # Show dataset details if available (always show by default)
                     if any(col in filtered_df.columns for col in ["Title", "Summary", "Design"]):
@@ -1069,23 +1188,23 @@ if ri and ri.cpm_data:
                                 if "Title" in filtered_df.columns and pd.notna(row.get("Title")):
                                     st.subheader("Title")
                                     st.markdown(str(row["Title"]))
-                                
+
                                 if "Summary" in filtered_df.columns and pd.notna(row.get("Summary")):
                                     st.subheader("Summary")
                                     st.markdown(str(row["Summary"]))
-                                    
+
                                 if "Design" in filtered_df.columns and pd.notna(row.get("Design")):
                                     st.subheader("Overall Design")
                                     st.markdown(str(row["Design"]))
 
-                    # Add dataset selection button
-                    if st.button("Select these datasets for analysis"):
-                        datasets_to_select = filtered_df["Dataset ID"].tolist() if "Dataset ID" in filtered_df.columns else filtered_df["Accession"].tolist()
-                        st.session_state['datasets_selected'] = datasets_to_select
+                    # Add quick selection button
+                    if st.button("Select all visible datasets", key="select_all_visible_datasets"):
+                        visible_datasets = set(display_df["Dataset ID"].tolist())
+                        st.session_state['selected_datasets'] = visible_datasets
                         # Reset page number when changing datasets
                         st.session_state.page_num = 1
-                        st.success(f"Selected {len(datasets_to_select)} datasets for analysis!")
-                        st.info("Switch to the Heat-map or Expression tab to view the analysis.")
+                        st.success(f"Selected {len(visible_datasets)} datasets for analysis!")
+                        st.info("Switch to the Heat-map or Expression tab to view updated visualizations.")
                 else:
                     st.info("No datasets match the current filters.")
             else:
@@ -1096,6 +1215,7 @@ if ri and ri.cpm_data:
 
     with tab5:
         st.header("Contrast Information")
+        st.markdown("**🔍 Browse and filter contrast details.** View contrast descriptions, DEG counts, and filter by dataset or significance. Use this to understand what each comparison represents.")
 
         # Isolate contrasts tab with fragment to prevent recomputation
         @st.fragment
@@ -1108,7 +1228,7 @@ if ri and ri.cpm_data:
                     # Get original contrast name and description
                     original_name = contrast_id
                     description = "No description available"
-                    
+
                     # Try to get information from contrast_info
                     if hasattr(ri, "contrast_info") and contrast_id in ri.contrast_info:
                         description = ri.contrast_info[contrast_id].get('description', "No description available")
@@ -1126,7 +1246,7 @@ if ri and ri.cpm_data:
                             p_value_col = 'adj.P.Val'  # Adjusted p-value (preferred)
                         elif 'P.Value' in df.columns:
                             p_value_col = 'P.Value'  # Unadjusted p-value (fallback)
-                        
+
                         lfc_col = 'logFC' if 'logFC' in df.columns else None
 
                         if p_value_col and lfc_col:
@@ -1189,57 +1309,49 @@ if ri and ri.cpm_data:
                     # Sort by DEG count by default
                     filtered_df = filtered_df.sort_values("DEGs", ascending=False)
 
-                    # Display contrast information with dataframe for interactivity
-                    st.dataframe(filtered_df, use_container_width=True, height=400)
+                    # Add checkbox column for selection
+                    display_df = filtered_df.copy()
+                    display_df["✔"] = display_df.apply(
+                        lambda row: (row['Dataset'], row.get('Original ID', row['Contrast'])) in st.session_state.get('selected_contrasts', set()),
+                        axis=1
+                    )
 
-                    # Add contrast selection button
-                    if st.button("Select these contrasts for analysis"):
-                        # Create list to store selected contrasts
-                        contrasts_to_select = []
-                        
-                        # Get the original contrast ID if available
-                        for _, row in filtered_df.iterrows():
-                            aid = row['Dataset']
-                        
-                            # Use Original ID if available, otherwise use Contrast
-                            if "Original ID" in row:
-                                cid = row["Original ID"]
-                            else:
-                                cid = row["Contrast"]
-                        
-                            # Try different formats for matching
-                            matched = False
-                        
-                            # Format 1: Try direct match
-                            for display_string, (a_id, c_id) in contrast_map.items():
-                                if a_id == aid and c_id == cid:
-                                    contrasts_to_select.append(display_string)
-                                    matched = True
-                                    break
-                                
-                            # Format 2: Try concatenated form "Dataset:Contrast"
-                            if not matched:
-                                combined_key = f"{aid}:{cid}"
-                                if combined_key in contrast_map:
-                                    contrasts_to_select.append(combined_key)
-                                    matched = True
-                        
-                            # Format 3: Try searching for partial matches
-                            if not matched:
-                                for display_string in contrast_map.keys():
-                                    if cid in display_string and (aid in display_string or row.get('Accession', '') in display_string):
-                                        contrasts_to_select.append(display_string)
-                                        matched = True
-                                        break
-                                        
-                        if contrasts_to_select:
-                            st.session_state['contrasts_selected'] = contrasts_to_select
-                            # Reset page number when changing contrasts
-                            st.session_state.page_num = 1
-                            st.success(f"Selected {len(contrasts_to_select)} contrasts for analysis!")
-                            st.info("Switch to the Heat-map tab to view the analysis.")
-                        else:
-                            st.warning("Could not match selected contrasts to display strings. Please try selecting them from the sidebar.")
+                    # Display contrast information with dataframe for interactivity
+                    edited_df = st.data_editor(
+                        display_df,
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "✔": st.column_config.CheckboxColumn("Select", default=False),
+                            "Dataset": st.column_config.TextColumn("Dataset", width="medium"),
+                            "Contrast": st.column_config.TextColumn("Contrast", width="medium"),
+                            "Original ID": st.column_config.TextColumn("Original ID", width="medium")
+                        },
+                        key="contrast_info_editor"
+                    )
+
+                    # Update selections based on checkboxes
+                    if not edited_df.empty:
+                        selected_from_info = set()
+                        for _, row in edited_df.iterrows():
+                            if row["✔"]:
+                                dataset = row['Dataset']
+                                contrast = row.get('Original ID', row['Contrast'])
+                                selected_from_info.add((dataset, contrast))
+                        st.session_state['selected_contrasts'] = selected_from_info
+
+                    # Add quick selection button
+                    if st.button("Select all visible contrasts", key="select_all_visible_contrasts"):
+                        visible_contrasts = set()
+                        for _, row in display_df.iterrows():
+                            dataset = row['Dataset']
+                            contrast = row.get('Original ID', row['Contrast'])
+                            visible_contrasts.add((dataset, contrast))
+                        st.session_state['selected_contrasts'] = visible_contrasts
+                        # Reset page number when changing contrasts
+                        st.session_state.page_num = 1
+                        st.success(f"Selected {len(visible_contrasts)} contrasts for analysis!")
+                        st.info("Switch to the Heat-map tab to view updated visualizations.")
                 else:
                     st.info("No contrasts match the current filters.")
             else:
@@ -1265,7 +1377,7 @@ if ri and ri.cpm_data:
                         output_dir = ri.create_integrated_report(
                             top_frequent=top_frequent_genes,
                             top_unique=top_unique_genes,
-                            plot_type=plot_type,
+                            plot_type="violin",
                             gene_list=gene_sel,
                             max_genes=100,
                             min_unique_per_contrast=min_unique,
@@ -1303,7 +1415,8 @@ if ri and ri.cpm_data:
 
                     with zipfile.ZipFile(buffer, 'w') as zf:
                         # Export gene expression data
-                        for dataset_id in ds_sel:
+                        selected_datasets = st.session_state.get('selected_datasets', set())
+                        for dataset_id in selected_datasets:
                             if dataset_id in ri.cpm_data:
                                 df = ri.cpm_data[dataset_id]
                                 if 'Gene' in df.columns:
@@ -1314,7 +1427,8 @@ if ri and ri.cpm_data:
                                     zf.writestr(f"{dataset_id}_expression.csv", csv_data)
 
                         # Export DEG data
-                        for aid, cid in sel_pairs:
+                        selected_contrasts = st.session_state.get('selected_contrasts', set())
+                        for aid, cid in selected_contrasts:
                             if aid in ri.deg_data and cid in ri.deg_data[aid]:
                                 df = ri.deg_data[aid][cid]
                                 if 'Gene' in df.columns:
