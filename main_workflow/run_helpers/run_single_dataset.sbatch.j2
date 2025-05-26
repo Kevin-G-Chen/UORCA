@@ -23,6 +23,5 @@ uv run {{ project_root }}/main_workflow/master.py \
     --accession {{ accession }} \
     --output_dir {{ output_dir }} \
     --resource_dir {{ resource_dir }} \
-    --organism {{ organism }} \
     {% if cleanup %}--cleanup{% endif %}
 echo "Completed run for {{ accession }} at $(date)"

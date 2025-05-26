@@ -14,6 +14,7 @@ from typing import List
 import pandas as pd
 from dotenv import load_dotenv
 import GEOparse as gp
+from Bio import Entrez
 from pydantic_ai import Agent, RunContext
 from shared import ExtractionContext, RNAseqCoreContext
 from shared.workflow_logging import log_tool, log_agent_tool
@@ -79,6 +80,32 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     with open(info_path, 'w') as f:
         f.write(dataset_information)
     logger.info("💾 Saved dataset information to %s", info_path)
+
+    # Extract species information from taxonomic ID
+    species_name = "Unknown"
+    try:
+        if 'sample_taxid' in gse.metadata and gse.metadata['sample_taxid']:
+            taxid = gse.metadata['sample_taxid'][0] if isinstance(gse.metadata['sample_taxid'], list) else gse.metadata['sample_taxid']
+            logger.info("🧬 Found taxonomic ID: %s", taxid)
+            
+            # Convert taxonomic ID to species name using Entrez
+            handle = Entrez.efetch(db="taxonomy", id=str(taxid), retmode="xml")
+            records = Entrez.read(handle)
+            handle.close()
+            
+            if records and len(records) > 0:
+                species_name = records[0]["ScientificName"]
+                logger.info("🔬 Identified species: %s", species_name)
+            else:
+                logger.warning("⚠️ No species information found for taxonomic ID: %s", taxid)
+        else:
+            logger.warning("⚠️ No taxonomic ID found in GEO metadata")
+    except Exception as e:
+        logger.warning("⚠️ Error extracting species information: %s", str(e))
+
+    # Store species in context
+    ctx.deps.organism = species_name
+    logger.info("🧬 Set organism to: %s", species_name)
 
     re_srx, re_srr = re.compile(r"(SR[XP]\d+)"), re.compile(r"(SRR\d+)")
 
