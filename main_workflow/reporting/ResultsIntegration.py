@@ -205,10 +205,10 @@ class ResultsIntegrator:
 
         # Load contrast information if available
         self.contrast_info = {}
-        
+
         # Try to load contrasts from each analysis directory as well as global locations
         analysis_folders = self.find_analysis_folders()
-        
+
         # First try to load from analysis-specific directories
         for analysis_folder in analysis_folders:
             analysis_id = os.path.basename(analysis_folder)
@@ -231,7 +231,7 @@ class ResultsIntegrator:
                         logger.info(f"Loaded contrasts from {contrasts_file}")
                     except Exception as e:
                         logger.warning(f"Error loading contrasts file {contrasts_file}: {str(e)}")
-        
+
         # Then try global locations as fallback
         for contrasts_file in [
             os.path.join(self.results_dir, "contrasts.csv"),
@@ -252,7 +252,7 @@ class ResultsIntegrator:
                     logger.info(f"Loaded contrasts from global file {contrasts_file}")
                 except Exception as e:
                     logger.warning(f"Error loading contrasts file {contrasts_file}: {str(e)}")
-        
+
         logger.info(f"Loaded information for {len(self.contrast_info)} total contrasts")
 
         # Load DEG data
@@ -314,7 +314,7 @@ class ResultsIntegrator:
 
         # Load dataset_info.txt files if available
         self._load_dataset_info()
-        
+
         logger.info(f"Data loading complete: {len(self.deg_data)} DEG datasets, {len(self.cpm_data)} CPM datasets")
 
     def identify_important_genes(self,
@@ -353,7 +353,7 @@ class ResultsIntegrator:
         # Use provided thresholds or fall back to instance defaults
         p_thresh = p_value_threshold if p_value_threshold is not None else self.pvalue_threshold
         lfc_thresh = lfc_threshold if lfc_threshold is not None else self.lfc_threshold
-        
+
         # Collect significant genes and their properties
         logger.info(f"Identifying important genes across {len(self.deg_data)} analyses")
         for analysis_id, contrasts in self.deg_data.items():
@@ -376,7 +376,7 @@ class ResultsIntegrator:
                 elif 'P.Value' in df.columns:
                     p_value_col = 'P.Value'  # Fall back to unadjusted p-value if adjusted not available
                     logger.info(f"Using unadjusted p-value column 'P.Value' for {contrast_key}")
-                
+
                 # Use exact column name from the DEG.csv file
                 lfc_col = 'logFC' if 'logFC' in df.columns else None
 
@@ -420,7 +420,7 @@ class ResultsIntegrator:
             # Sort by fold change and take top ones
             sorted_unique_genes = sorted(unique_genes.items(), key=lambda x: x[1], reverse=True)
             top_unique_genes = [gene for gene, _ in sorted_unique_genes[:top_unique]]
-            
+
             if len(top_unique_genes) >= min_unique_per_contrast:
                 important_genes.update(top_unique_genes)
                 logger.info(f"Selected {len(top_unique_genes)} unique genes with large fold changes from {contrast_key}")
@@ -438,19 +438,22 @@ class ResultsIntegrator:
             else:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 self.output_dir = os.path.join(self.results_dir, f"integrated_results_{timestamp}")
-            
+
             os.makedirs(self.output_dir, exist_ok=True)
             logger.info(f"Output will be saved to: {self.output_dir}")
-            
+
         return self.output_dir
-        
+
     def create_lfc_heatmap(self,
                          genes: List[str] = None,
                          contrasts: List[Tuple[str, str]] = None,
                          output_file: str = None,
                          p_value_threshold: float = None,
                          lfc_threshold: float = None,
-                         hide_empty_rows_cols: bool = False) -> go.Figure:
+                         hide_empty_rows_cols: bool = False,
+                         font_size: int = 12,
+                         show_grid_lines: bool = True,
+                         grid_opacity: float = 0.3) -> go.Figure:
         """
         Create an interactive heatmap of log fold changes for selected genes across contrasts.
 
@@ -468,6 +471,12 @@ class ResultsIntegrator:
             Log fold change threshold for significance filtering. If None, uses instance default.
         hide_empty_rows_cols : bool, optional
             If True, hide genes/contrasts where no significant values exist.
+        font_size : int, optional
+            Font size for labels and annotations
+        show_grid_lines : bool, optional
+            Whether to show grid lines
+        grid_opacity : float, optional
+            Opacity of grid lines
 
         Returns:
         --------
@@ -476,7 +485,7 @@ class ResultsIntegrator:
         # Use provided thresholds or fall back to instance defaults
         p_thresh = p_value_threshold if p_value_threshold is not None else self.pvalue_threshold
         lfc_thresh = lfc_threshold if lfc_threshold is not None else self.lfc_threshold
-        
+
         # If genes not provided, identify important genes
         if genes is None:
             try:
@@ -506,9 +515,23 @@ class ResultsIntegrator:
                     contrasts.append((analysis_id, contrast_id))
             logger.info(f"No contrasts specified, using all {len(contrasts)} contrasts")
 
-        # Create contrast labels
+        # Create simplified contrast labels for display
+        def simplify_contrast_label(analysis_id: str, contrast_id: str) -> str:
+            """Create simplified label for display"""
+            # Try to get original name from contrast_info if available
+            if hasattr(self, "contrast_info") and contrast_id in self.contrast_info:
+                original_name = self.contrast_info[contrast_id].get('name', contrast_id)
+            else:
+                original_name = contrast_id
+
+            # Remove dataset prefix and keep it short
+            simplified = original_name.split(":", 1)[-1].split(" –")[0].split(" - ")[0][:25]
+            return simplified
+
+        # Create both full and simplified contrast labels
         contrast_labels = [f"{a_id}_{c_id}" for a_id, c_id in contrasts]
-        logger.info(f"Using {len(contrast_labels)} contrast labels: {', '.join(contrast_labels[:5])}{' ...' if len(contrast_labels) > 5 else ''}")
+        simplified_labels = [simplify_contrast_label(a_id, c_id) for a_id, c_id in contrasts]
+        logger.info(f"Using {len(contrast_labels)} contrast labels: {', '.join(simplified_labels[:5])}{' ...' if len(simplified_labels) > 5 else ''}")
 
         # Extract log fold change values for each gene across contrasts
         for gene in genes:
@@ -517,24 +540,24 @@ class ResultsIntegrator:
             for (analysis_id, contrast_id), contrast_label in zip(contrasts, contrast_labels):
                 if analysis_id in self.deg_data and contrast_id in self.deg_data[analysis_id]:
                     df = self.deg_data[analysis_id][contrast_id]
-                    
+
                     if 'Gene' not in df.columns:
                         logger.warning(f"No 'Gene' column found in {analysis_id}/{contrast_id}")
                         row[contrast_label] = 0  # Skip this contrast
                         continue
-                    
+
                     # Find log fold change column
                     lfc_col = None
                     for col in ['logFC', 'log2FoldChange', 'log2FC', 'LogFC']:
                         if col in df.columns:
                             lfc_col = col
                             break
-                    
+
                     if lfc_col is None:
                         logger.warning(f"No log fold change column found in {analysis_id}/{contrast_id}")
                         row[contrast_label] = 0  # Skip this contrast
                         continue
-                    
+
                     # Use exact column names from the DEG.csv file
                     # Find adjusted p-value column first, fall back to unadjusted if necessary
                     p_value_col = None
@@ -544,11 +567,11 @@ class ResultsIntegrator:
                     elif 'P.Value' in df.columns:
                         p_value_col = 'P.Value'  # Fall back to unadjusted p-value if adjusted not available
                         logger.debug(f"Using unadjusted p-value column 'P.Value' for {analysis_id}/{contrast_id}")
-                    
+
                     if p_value_col is None:
                         logger.warning(f"No p-value column found in {analysis_id}/{contrast_id}")
                         # Continue anyway, we'll use the log fold change without significance filtering
-                    
+
                     # Find the gene and get its logFC, but set to 0 if not significant
                     gene_row = df[df['Gene'] == gene]
                     if not gene_row.empty:
@@ -576,37 +599,37 @@ class ResultsIntegrator:
 
         # Convert to DataFrame
         heatmap_df = pd.DataFrame(heatmap_data)
-        
+
         # Log the shape of the data
         if len(heatmap_data) > 0:
             logger.info(f"Heatmap data shape: {len(heatmap_df)} rows (genes) × {len(heatmap_df.columns)} columns (including Gene column)")
             if len(heatmap_df.columns) > 1:
                 logger.info(f"Heatmap columns: {', '.join(heatmap_df.columns[:10])}{' ...' if len(heatmap_df.columns) > 10 else ''}")
-        
+
         if len(heatmap_df) == 0:
             logger.warning("No data for heatmap visualization - no matching genes found. Try selecting more genes or adjusting thresholds.")
             return None
         elif len(heatmap_df.columns) <= 1:
             logger.warning("Not enough data for heatmap visualization - no contrast data found")
             return None
-            
+
         # Count non-zero values to ensure we have meaningful data
         if 'Gene' in heatmap_df.columns:
             heatmap_df_values = heatmap_df.drop(columns=['Gene'])
         else:
             heatmap_df_values = heatmap_df
-            
+
         if heatmap_df_values.shape[1] == 0:
             logger.warning("No contrast columns found in heatmap data. Please select at least one valid contrast.")
             return None
-            
+
         # Count non-zero entries
         non_zero_count = (heatmap_df_values != 0).sum().sum()
         total_cells = heatmap_df_values.size
         non_zero_percent = (non_zero_count / total_cells) * 100 if total_cells > 0 else 0
-        
+
         logger.info(f"Heatmap contains {non_zero_count}/{total_cells} non-zero values ({non_zero_percent:.1f}%)")
-        
+
         # Ensure we have at least some non-zero values
         if non_zero_count == 0:
             logger.warning("No non-zero values found in heatmap data - all genes may be non-significant")
@@ -616,23 +639,23 @@ class ResultsIntegrator:
         if 'Gene' in heatmap_df.columns:
             heatmap_df = heatmap_df.set_index('Gene')
         heatmap_df = heatmap_df.fillna(0)
-        
+
         # Remove empty rows/columns if requested
         if hide_empty_rows_cols:
             # Remove genes (rows) where all values are 0
             non_zero_rows = (heatmap_df != 0).any(axis=1)
             heatmap_df = heatmap_df[non_zero_rows]
-            
+
             # Remove contrasts (columns) where all values are 0
             non_zero_cols = (heatmap_df != 0).any(axis=0)
             heatmap_df = heatmap_df.loc[:, non_zero_cols]
-            
+
             # Update contrasts list to match remaining columns
             if len(heatmap_df.columns) < len(contrasts):
                 remaining_contrast_indices = [i for i, label in enumerate(contrast_labels) if label in heatmap_df.columns]
                 contrasts = [contrasts[i] for i in remaining_contrast_indices]
                 logger.info(f"After filtering empty rows/columns: {len(heatmap_df)} genes × {len(heatmap_df.columns)} contrasts")
-        
+
         # Check if we still have data after filtering
         if len(heatmap_df) == 0:
             logger.warning("No genes remain after filtering empty rows")
@@ -706,43 +729,52 @@ class ResultsIntegrator:
         # Improve layout
         fig.update_layout(
             margin=dict(l=250, r=20, t=60, b=120),
-            coloraxis_colorbar=dict(title="Log2FC")
-            # tickangle is now set in the update_xaxes call
+            coloraxis_colorbar=dict(title="Log2FC"),
+            font_family="Inter, sans-serif",
+            font_size=font_size
         )
 
+        # Configure grid lines
+        if show_grid_lines:
+            fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor=f"rgba(200,200,200,{grid_opacity})")
+            fig.update_xaxes(showgrid=True, gridwidth=0.5, gridcolor=f"rgba(200,200,200,{grid_opacity})")
+        else:
+            fig.update_yaxes(showgrid=False)
+            fig.update_xaxes(showgrid=False)
+
         # We'll create custom hover data with descriptions in the update_traces call below
-        
+
         # Create a 3D array with gene logFC, contrast description, accession info, and original contrast name
         # First dimension: rows (genes)
         # Second dimension: columns (contrasts)
         # Third dimension: data types (0: contrast description, 1: accession, 2: original contrast name)
         hover_info = np.empty((*heatmap_df.shape, 3), dtype=object)
-        
+
         # Keep track of original contrast names for both hover and axis labels
         original_contrast_names = []
-        
+
         # Fill with contrast descriptions and accession info
         for i, gene in enumerate(heatmap_df.index):
             for j, col_idx in enumerate(heatmap_df.columns):
                 # Get contrast information from the original contrasts list
                 analysis_id, contrast_id = contrasts[j]
-                
+
                 # Get contrast description using the helper method
                 description = self._get_contrast_description(analysis_id, contrast_id)
-                
+
                 # Get accession ID
                 accession = self.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
-                
-                # Get original contrast name from contrasts.csv if available
-                original_name = contrast_id
+
+                # Get simplified name for hover consistency
+                simplified_name = simplified_labels[j]
                 if j == 0 and i == 0:  # Only collect once per contrast
-                    original_contrast_names.append(original_name)
-                
-                # Store description, accession, and original contrast name
+                    original_contrast_names.append(simplified_name)
+
+                # Store description, accession, and simplified contrast name
                 hover_info[i, j, 0] = description
                 hover_info[i, j, 1] = accession
-                hover_info[i, j, 2] = original_name
-        
+                hover_info[i, j, 2] = simplified_name
+
         # Update hover template with conditional formatting, accession, and description
         hover_template = (
             "<b>Gene:</b> %{y}<br>" +
@@ -759,41 +791,28 @@ class ResultsIntegrator:
             hoverlabel=dict(bgcolor="white", font_size=12, font_family="Arial")
         )
 
-        # Use the original contrast names for axis labels to ensure consistency
-        # between the hover information and the axis labels
-        original_contrast_names = []
-        
-        # Collect original contrast names from contrasts.csv or from the contrast IDs
-        for analysis_id, cid in contrasts:
-            # Get the contrast name from contrast.csv if available
-            if hasattr(self, "contrast_info") and cid in self.contrast_info:
-                # If we have a "name" field in contrast_info, use that
-                original_name = self.contrast_info[cid].get('name', cid)
-            else:
-                # Otherwise use the original contrast ID
-                original_name = cid
-                
-            # Add the original name
-            original_contrast_names.append(original_name)
-                
-        # Update x-axis with original contrast names
-        if original_contrast_names:
-            # Log original contrast names for debugging
+        # Update x-axis with simplified contrast names
+        if simplified_labels:
+            # Log simplified contrast names for debugging
             logger.debug(f"Original contrast IDs: {[cid for _, cid in contrasts]}")
-            logger.debug(f"Using original contrast names: {original_contrast_names}")
-            
+            logger.debug(f"Using simplified contrast names: {simplified_labels}")
+
             # Ensure we have labels for all contrasts
-            assert len(original_contrast_names) == len(contrasts), "Mismatch between number of contrasts and original names"
-            
+            assert len(simplified_labels) == len(contrasts), "Mismatch between number of contrasts and simplified names"
+
+            # Build new tick positions after clustering (need to map to clustered order)
+            clustered_simplified_labels = [simplified_labels[contrast_labels.index(col)] for col in clustered_contrasts]
+
             # Build new tick positions after clustering
-            tick_vals = list(range(len(original_contrast_names)))
+            tick_vals = list(range(len(clustered_simplified_labels)))
             fig.update_xaxes(
                 tickmode="array",
                 tickvals=tick_vals,
-                ticktext=original_contrast_names,
-                tickangle=45
+                ticktext=clustered_simplified_labels,
+                tickangle=45,
+                title="Biological contrast"
             )
-            
+
         # Save to file if specified
         if output_file is not None:
             self._ensure_output_dir()
@@ -808,7 +827,13 @@ class ResultsIntegrator:
                               analyses: List[str] = None,
                               output_file: str = None,
                               hide_x_labels: bool = False,
-                              page_number: int = 1) -> go.Figure:
+                              page_number: int = 1,
+                              facet_font_size: int = 10,
+                              lock_y_axis: bool = False,
+                              show_raw_points: bool = True,
+                              legend_position: str = "Bottom",
+                              show_grid_lines: bool = True,
+                              grid_opacity: float = 0.3) -> go.Figure:
         """
         Create interactive expression plots for selected genes across samples.
 
@@ -822,6 +847,18 @@ class ResultsIntegrator:
             List of analysis IDs to include. If None, all analyses are used.
         output_file : str, optional
             Path to save the interactive HTML output. If None, no file is saved (useful for Streamlit).
+        facet_font_size : int, optional
+            Font size for facet titles
+        lock_y_axis : bool, optional
+            Whether to use same y-axis range across all facets
+        show_raw_points : bool, optional
+            Whether to show individual data points
+        legend_position : str, optional
+            Legend position: "Bottom", "Right", or "Top"
+        show_grid_lines : bool, optional
+            Whether to show grid lines
+        grid_opacity : float, optional
+            Opacity of grid lines
 
         Returns:
         --------
@@ -842,14 +879,14 @@ class ResultsIntegrator:
         genes_per_page = 30
         # Save original gene list
         gene_list = genes.copy() if genes is not None else []
-        
+
         # If no genes are provided, return None
         if not gene_list:
             logger.warning("No genes provided for expression plots")
             return None
-            
+
         gene_pages = [gene_list[i:i + genes_per_page] for i in range(0, len(gene_list), genes_per_page)]
-        
+
         if len(gene_pages) > 1:
             logger.info(f"Splitting {len(gene_list)} genes into {len(gene_pages)} pages for visualization")
             # Process first page only
@@ -894,7 +931,7 @@ class ResultsIntegrator:
                 os.path.join(self.results_dir, "edger_analysis_samples.csv"),
                 os.path.join(os.path.dirname(self.results_dir), "edger_analysis_samples.csv")
             ]
-            
+
             edger_samples_file = first_existing(sample_file_locations)
             if edger_samples_file:
                 logger.info(f"Found sample mapping file at {edger_samples_file}")
@@ -903,15 +940,15 @@ class ResultsIntegrator:
                 try:
                     # First try loading the file to check its structure
                     sample_mapping_df = pd.read_csv(edger_samples_file, nrows=0)
-                        
+
                     # If the first column has no name or starts with 'Unnamed', it's probably an index
                     first_col = sample_mapping_df.columns[0]
                     has_index = first_col == '' or first_col.startswith('Unnamed')
-                        
+
                     # Now load the full file with appropriate index_col setting
                     sample_mapping_df = pd.read_csv(edger_samples_file, index_col=0 if has_index else None)
                     logger.info(f"Loaded sample mapping with columns: {', '.join(sample_mapping_df.columns)}")
-                        
+
                     # Find the group column
                     group_col = None
                     if self.analysis_info and analysis_id in self.analysis_info and 'analysis_column' in self.analysis_info[analysis_id]:
@@ -926,12 +963,12 @@ class ResultsIntegrator:
                                 group_col = col
                                 logger.info(f"Using '{col}' column as group")
                                 break
-                        
+
                     if group_col and group_col in sample_mapping_df.columns:
                         # Look for a 'Sample1', 'Sample2', etc. naming pattern in CPM columns
                         cpm_columns = self.cpm_data[analysis_id].columns.tolist()
                         sample_cols = [col for col in cpm_columns if col.startswith('Sample') and col != 'Gene']
-                            
+
                         if sample_cols:
                             # Create a mapping from sample name to group
                             for i in range(len(sample_mapping_df)):
@@ -962,7 +999,7 @@ class ResultsIntegrator:
 
             # Add analysis ID
             melted_df['Analysis'] = analysis_id
-            
+
             # Create a more descriptive sample label for hover info
             melted_df['SampleLabel'] = melted_df['Analysis'] + ":" + melted_df['Sample']
 
@@ -995,7 +1032,7 @@ class ResultsIntegrator:
 
         # Determine facet column wrapping (4 columns max)
         facet_col_wrap = min(4, genes_found)
-        
+
         # Calculate rows for height
         n_rows = math.ceil(genes_found / facet_col_wrap)
 
@@ -1012,66 +1049,77 @@ class ResultsIntegrator:
         # Use simple consistent spacing values that work well across different panel counts
         facet_row_spacing = 0.03
         facet_col_spacing = 0.03
-        
+
         # Add sample label for hover info
         if 'SampleLabel' not in plot_df.columns:
             plot_df['SampleLabel'] = plot_df['Analysis'] + ":" + plot_df['Sample']
 
-        # Create the plot using Plotly Express with adjusted spacing
-        if plot_type in ['violin', 'both']:
-            fig = px.violin(
-                plot_df,
-                x='Group',
-                y='LogExpression',
-                color='Analysis',
-                facet_col='Gene',
-                facet_col_wrap=facet_col_wrap,
-                hover_data=['SampleLabel', 'Expression', 'Group'],
-                box=True,
-                points="all",
-                title=f"Gene Expression Across Samples (Page {page_number} of {len(gene_pages)})",
-                labels={'LogExpression': y_axis_title, 'Group': 'Group', 'Analysis': 'Dataset'},
-                facet_row_spacing=facet_row_spacing,
-                facet_col_spacing=facet_col_spacing
-            )
-        else:  # box plot
-            fig = px.box(
-                plot_df,
-                x='Group',
-                y='LogExpression',
-                color='Analysis',
-                facet_col='Gene',
-                facet_col_wrap=facet_col_wrap,
-                hover_data=['SampleLabel', 'Expression'],
-                points="all",
-                title=f"Gene Expression Across Samples (Page {page_number} of {len(gene_pages)})",
-                labels={'LogExpression': y_axis_title, 'Group': 'Group', 'Analysis': 'Dataset'},
-                facet_row_spacing=facet_row_spacing,
-                facet_col_spacing=facet_col_spacing
-            )
+        # Create violin plot using Plotly Express with adjusted spacing
+        fig = px.violin(
+            plot_df,
+            x='Group',
+            y='LogExpression',
+            color='Analysis',
+            facet_col='Gene',
+            facet_col_wrap=facet_col_wrap,
+            hover_data=['SampleLabel', 'Group'],
+            box=True,
+            points="all",
+            title=f"Gene Expression Across Samples (Page {page_number} of {len(gene_pages)})",
+            labels={'LogExpression': y_axis_title, 'Group': 'Group', 'Analysis': 'Dataset'},
+            facet_row_spacing=facet_row_spacing,
+            facet_col_spacing=facet_col_spacing
+        )
 
         # Layout adjustments optimized for readability
         fig.update_layout(
-            height=220 * n_rows,  # 220px per row
+            height=350 * n_rows,  # 350px per row for more vertical space
             width=320 * facet_col_wrap,  # 320px per column
             legend_title_text="Dataset",
             margin=dict(l=40, r=20, t=80, b=40),
-            legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+            font_family="Inter, sans-serif"
         )
-        
+
+        # Configure legend position
+        if legend_position == "Bottom":
+            fig.update_layout(legend=dict(orientation="h", y=-0.35, x=0.5, xanchor="center", yanchor="top"))
+        elif legend_position == "Right":
+            fig.update_layout(legend=dict(orientation="v", x=1.02, y=0.5, xanchor="left", yanchor="middle"))
+        elif legend_position == "Top":
+            fig.update_layout(legend=dict(orientation="h", y=1.15, x=0.5, xanchor="center", yanchor="bottom"))
+        else:  # Default to bottom
+            fig.update_layout(legend=dict(orientation="h", y=-0.35, x=0.5, xanchor="center", yanchor="top"))
+
         # Improve axis appearance
         fig.update_xaxes(categoryorder="category ascending")
         fig.update_layout(xaxis_title="")
-        
-        # Ensure points are visible even with many data points
-        fig.update_traces(marker=dict(size=3, opacity=0.7), jitter=0.3)
+
+        # Configure grid lines
+        if show_grid_lines:
+            fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor=f"rgba(200,200,200,{grid_opacity})")
+        else:
+            fig.update_yaxes(showgrid=False)
+
+        # Configure points visibility and transparency
+        if show_raw_points:
+            fig.update_traces(marker=dict(size=4, opacity=0.5), jitter=0.3)
+        else:
+            fig.update_traces(marker=dict(size=0), jitter=0.3)
 
         # Update facet formatting (remove "Gene=" prefix and adjust font size)
         fig.for_each_annotation(lambda a: a.update(
             text=a.text.split("=")[1],
-            font=dict(size=12, color="black", family="Arial")
+            font=dict(size=facet_font_size, color="#333", family="Inter, sans-serif")
         ))
-        
+
+        # Lock y-axis if requested
+        if lock_y_axis and not plot_df.empty:
+            global_min = plot_df['LogExpression'].min()
+            global_max = plot_df['LogExpression'].max()
+            # Add some padding
+            padding = (global_max - global_min) * 0.05
+            fig.update_yaxes(range=[global_min - padding, global_max + padding])
+
         # Hide x-axis labels if requested
         if hide_x_labels:
             fig.update_xaxes(showticklabels=False)
@@ -1109,7 +1157,7 @@ class ResultsIntegrator:
         # Try exact match first
         if hasattr(self, "contrast_info") and contrast_id in self.contrast_info:
             return self.contrast_info[contrast_id].get('description', f"Contrast: {contrast_id}")
-        
+
         # Try simplified pattern matching (without dataset/accession prefix)
         if "_" in contrast_id:
             # Try parts after potential prefixes
@@ -1118,7 +1166,7 @@ class ResultsIntegrator:
                 possible_id = "_".join(parts[i:])
                 if hasattr(self, "contrast_info") and possible_id in self.contrast_info:
                     return self.contrast_info[possible_id].get('description', f"Contrast: {possible_id}")
-        
+
         # Try to look in an analysis-specific contrasts file (check multiple locations)
         for contrasts_file in [
             os.path.join(self.results_dir, analysis_id, "contrasts.csv"),
@@ -1132,7 +1180,7 @@ class ResultsIntegrator:
                     match = contrasts_df[contrasts_df['name'] == contrast_id]
                     if not match.empty:
                         return match.iloc[0].get('description', f"Contrast: {contrast_id}")
-                    
+
                     # Try parts of the contrast ID for partial matches
                     if "_" in contrast_id:
                         parts = contrast_id.split("_")
@@ -1143,23 +1191,23 @@ class ResultsIntegrator:
                                 return match.iloc[0].get('description', f"Contrast: {possible_id}")
                 except Exception as e:
                     logger.debug(f"Error loading contrasts from {contrasts_file}: {str(e)}")
-                
+
         return f"Contrast: {contrast_id}"
 
     def _load_dataset_info(self):
         """
         Load dataset_info.txt files for each analysis and extract title, summary, and design sections.
-        
+
         The expected format of dataset_info.txt is:
         - Title at the beginning
         - Summary in the middle section
         - Overall design at the end (usually starts with "Overall design:")
-        
+
         The function attempts to parse these sections using both regex patterns and fallback line-by-line parsing.
         """
         import re  # Ensure re is imported for pattern matching
         analysis_folders = self.find_analysis_folders()
-        
+
         for folder in analysis_folders:
             analysis_id = os.path.basename(folder)
             # Look for dataset_info.txt in various possible locations
@@ -1172,41 +1220,41 @@ class ResultsIntegrator:
                     try:
                         with open(info_path, 'r') as f:
                             content = f.read()
-                            
+
                         # Initialize dataset info with empty values
                         self.dataset_info[analysis_id] = {
                             "title": "",
                             "summary": "",
                             "design": ""
                         }
-                        
+
                         # Try to extract sections using common patterns
                         import re
-                        
+
                         # Match common section patterns
                         title_match = re.search(r'^(.*?)(?=\n\s*\n|\n*Overall design:|\n*Summary:|\Z)', content, re.DOTALL | re.IGNORECASE)
                         design_match = re.search(r'(?:Overall design:)(.*?)(?=\n\s*\n|\Z)', content, re.DOTALL | re.IGNORECASE)
-                        
+
                         # If we can't find the design section explicitly, look for it at the end
                         if not design_match:
                             design_match = re.search(r'(?:Overall design\s*[-:])?(.*?)(?=\Z)', content, re.DOTALL | re.IGNORECASE)
-                        
+
                         # Extract the summary (everything between title and design)
                         if title_match:
                             title_end = title_match.end()
                             design_start = design_match.start() if design_match else len(content)
                             summary_text = content[title_end:design_start].strip()
-                            
+
                             # Clean up summary text - remove any "Summary:" prefix
                             summary_text = re.sub(r'^Summary:\s*', '', summary_text, flags=re.IGNORECASE)
-                            
+
                             # Store the extracted sections (remove "Title:" prefix if present)
                             title_text = title_match.group(1).strip()
                             if title_text.startswith("Title:"):
                                 title_text = title_text[6:].strip()
                             self.dataset_info[analysis_id]["title"] = title_text
                             self.dataset_info[analysis_id]["summary"] = summary_text
-                        
+
                             if design_match:
                                 design_text = design_match.group(1).strip()
                                 self.dataset_info[analysis_id]["design"] = design_text
@@ -1216,7 +1264,7 @@ class ResultsIntegrator:
                             title_lines = []
                             summary_lines = []
                             design_lines = []
-                            
+
                             section = "title"
                             for line in lines:
                                 if section == "title":
@@ -1225,7 +1273,7 @@ class ResultsIntegrator:
                                     else:
                                         title_lines.append(line)
                                 elif section == "summary":
-                                    if (line.lower().startswith("overall design:") or 
+                                    if (line.lower().startswith("overall design:") or
                                         line.lower().startswith("overall design") or
                                         line.lower().strip() == "overall design"):
                                         section = "design"
@@ -1235,7 +1283,7 @@ class ResultsIntegrator:
                                         summary_lines.append(line)
                                 else:  # design section
                                     design_lines.append(line)
-                            
+
                             # Store the extracted sections
                             title_text = '\n'.join(title_lines).strip()
                             if title_text.startswith("Title:"):
@@ -1243,18 +1291,18 @@ class ResultsIntegrator:
                             self.dataset_info[analysis_id]["title"] = title_text
                             self.dataset_info[analysis_id]["summary"] = '\n'.join(summary_lines).strip()
                             self.dataset_info[analysis_id]["design"] = '\n'.join(design_lines).strip()
-                        
+
                         logger.info(f"Loaded and parsed dataset info for {analysis_id}")
                         break
                     except Exception as e:
                         logger.warning(f"Error loading dataset info from {info_path}: {str(e)}")
-        
+
         logger.info(f"Loaded dataset info for {len(self.dataset_info)} analyses")
-        
+
         # Log contrast info for debugging
         if hasattr(self, "contrast_info") and self.contrast_info:
             logger.info(f"Available contrast IDs: {', '.join(self.contrast_info.keys())}")
-    
+
     def create_integrated_report(self,
                                top_frequent: int = 20,
                                top_unique: int = 10,
@@ -1304,7 +1352,7 @@ class ResultsIntegrator:
         if output_dir is not None:
             self._output_dir_requested = output_dir
             self.output_dir = None
-            
+
         # Now ensure the output directory exists
         self._ensure_output_dir()
 
@@ -1370,7 +1418,7 @@ class ResultsIntegrator:
                 start_idx = page * genes_per_page
                 end_idx = min(start_idx + genes_per_page, len(gene_list))
                 page_genes = gene_list[start_idx:end_idx]
-            
+
                 try:
                     output_path = os.path.join(plots_dir, f"expression_{plot_type}_page{page+1}.html")
                     self.create_expression_plots(
