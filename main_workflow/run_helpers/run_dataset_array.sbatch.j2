@@ -20,9 +20,8 @@ CSV_FILE="{{ csv_file }}"
 # Skip header; SLURM_ARRAY_TASK_ID is zero‑based
 LINE=$(awk -F, "NR==${SLURM_ARRAY_TASK_ID}+2 {print \$0}" "$CSV_FILE")
 accession=$(echo "$LINE" | cut -d',' -f1)
-organism=$(echo "$LINE"  | cut -d',' -f2)
 
-echo "Running accession=$accession organism=$organism"
+echo "Running accession=$accession"
 
 export PYTHONPATH="{{ project_root }}:$PYTHONPATH"
 export R_LIBS_USER=~/R/library
@@ -31,7 +30,6 @@ uv run {{ project_root }}/main_workflow/master.py \
     --accession "$accession" \
     --output_dir {{ base_output_dir }} \
     --resource_dir {{ resource_dir }} \
-    --organism "$organism" \
     {% if cleanup %}--cleanup{% endif %}
 
 echo "Finished $accession at $(date)"

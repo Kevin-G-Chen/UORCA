@@ -9,7 +9,7 @@ class RNAseqCoreContext(BaseModel):
     output_dir: str = Field(..., description="Output directory for the run")
     fastq_dir: Optional[str] = Field(None, description="Directory for FASTQ files")
     metadata_path: Optional[str] = Field(None, description="Path to sample metadata file")
-    organism: str = Field(..., description="Organism name")
+    organism: Optional[str] = Field(None, description="Organism name (determined during extraction)")
     resource_dir: Optional[str] = Field(None, description="Directory containing resources such as Kallisto indices and transcript to gene (t2g) mapping files")
     files: Optional[List[str]] = Field(None, description="List of identified files in the system")
     dataset_information: Optional[str] = Field(None, description="Information about the dataset being identified")

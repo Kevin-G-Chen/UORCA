@@ -171,10 +171,9 @@ Everything you need for running UORCA lives under the `main_workflow/` folder.  
 ### Agentic workflow
 
 1. **Master agent (`master.py`)**
-   Reads your CLI inputs (accession, output folder, organism, resources) and then in turn invokes:
-   - `extract()` → Extraction agent
+   Reads your CLI inputs (accession, output folder, resources) and then in turn invokes:
+   - `extract()` → Extraction agent (automatically determines organism from GEO taxonomic metadata)
    - `analyse()` → Analysis (and metadata) agents
-   - `report()` → Reporting agent
 
 2. **Extraction agent (`agents/extraction.py`)**
    Tools:
@@ -270,7 +269,7 @@ uv run main_workflow/additional_scripts/submit_datasets.py \
 #### CSV file format:
 The CSV should contain at least two columns:
 1. `Accession`: GEO accession numbers (e.g., GSE123456)
-2. `organism`: Organism name (e.g., human, mouse)
+2. `organism`: Organism name (e.g., human, mouse) - this is maintained for multi-dataset processing but will be automatically determined for individual analyses
 
 Additional columns can be included, but will be ignored by the script. The script will automatically generate a new CSV file with the following columns.
 

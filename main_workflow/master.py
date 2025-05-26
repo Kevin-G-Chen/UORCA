@@ -6,7 +6,7 @@ from dotenv import load_dotenv, find_dotenv
 import os, pathlib
 import datetime
 import json
-from shared import ExtractionContext, AnalysisContext, ReportingContext, RNAseqCoreContext
+from shared import ExtractionContext, AnalysisContext, RNAseqCoreContext
 import argparse
 
 # ── load env once ───────────────────────────
@@ -653,31 +653,7 @@ async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
 
     return summary
 
-@master.tool
-async def report(ctx: RunContext[ReportingContext]) -> str:
-    if not isinstance(ctx.deps, ReportingContext):
-        ctx.deps = ReportingContext(**ctx.deps.dict())  # copies all existing attrs
-    if not ctx.deps.png_dir:
-        # Look for plot directories in the new RNAseqAnalysis directory structure
-        plot_dir = f"{ctx.deps.output_dir}/RNAseqAnalysis"
-        ctx.deps.png_dir = plot_dir
 
-    if not ctx.deps.rst_folder:
-        ctx.deps.rst_folder = f"{ctx.deps.output_dir}/report/rst"
-
-    if not ctx.deps.sphinx_output_folder:
-        ctx.deps.sphinx_output_folder = f"{ctx.deps.output_dir}/report/sphinx"
-
-    if not ctx.deps.log_path:
-        ctx.deps.log_path = f"{ctx.deps.output_dir}/report/sphinx_build.log"
-
-    os.makedirs(ctx.deps.rst_folder, exist_ok=True)
-    os.makedirs(os.path.dirname(ctx.deps.log_path), exist_ok=True)
-
-    r = await reporting.run_agent_async(
-        "Generate a report", deps=ctx.deps, usage=ctx.usage
-    )
-    return r.output
 
 def cleanup_large_files(output_dir, logger):
     """
@@ -740,8 +716,7 @@ def main():
     ap.add_argument("--accession", required=True)
     ap.add_argument("--output_dir", default=None)
     ap.add_argument("--resource_dir", default=None)
-    ap.add_argument("--organism", required=True,
-                       help="Name of the organism to be analysed (must be supplied)")
+
     ap.add_argument("--cleanup", action="store_true",
                        help="Clean up large FASTQ and SRA files after successful completion")
 
@@ -767,21 +742,20 @@ def main():
     logger.info("📚 Importing agent modules")
     globals()["extraction"] = importlib.import_module("agents.extraction")
     globals()["analysis"]   = importlib.import_module("agents.analysis")
-    globals()["reporting"]  = importlib.import_module("agents.reporting")
     logger.info("✅ All agent modules imported successfully")
 
     # -------- build the initial CoreContext and run the orchestrator --------
     ctx = RNAseqCoreContext(
         accession=args.accession,
         output_dir=output_dir,
-        organism=args.organism,
+        organism="Unknown",  # Will be determined during extraction
         resource_dir=args.resource_dir,
     )
 
     logger.info("🧩 Built initial context with accession: %s", args.accession)
 
     initial_prompt = (
-        f"Analyse {args.accession}, an RNAseq dataset for looking at the {args.organism} species, by first extracting the data, performing an analysis on it, then finally generating a report. Skip any steps if the data already exists and is up to date. Document each tool invocation and output."
+        f"Analyse {args.accession}, an RNAseq dataset by first extracting the data and performing an analysis on it. The organism will be automatically determined during data extraction. Skip any steps if the data already exists and is up to date. Document each tool invocation and output."
     )
 
     logger.info("🤖 Running master agent with prompt: %s", initial_prompt)
