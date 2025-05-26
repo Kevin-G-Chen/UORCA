@@ -422,35 +422,47 @@ tmux attach -t uorca-explorer
 ### Features
 
 **Gene Selection:**
-- Select genes from a complete list with "Select All" option
-- Search for genes by name/pattern
-- Automatically identify important differentially expressed genes
+- **Auto-selected DEGs** (default): Automatically identify important differentially expressed genes using two strategies:
+  - *Frequent DEGs*: Genes significant across multiple contrasts
+  - *Contrast-specific DEGs*: High fold-change genes unique to few contrasts
+- **Custom input**: Enter your own gene list (one gene per line) with validation and feedback
 - Dynamic significance filtering with adjustable p-value and fold-change thresholds
+- Up to 200 genes can be selected (automatically ranked by fold-change if more are available)
 
 **Dataset and Contrast Selection:**
-- Filter to specific datasets with comprehensive metadata display
-- Select contrasts of interest with descriptions and DEG counts
-- "Select All" shortcuts for quick selection
-- Interactive filtering and search capabilities
+- **Dedicated "Selections" Tab**: Full-width tables for easy browsing of datasets and contrasts
+- **Interactive Data Tables**: Sortable, searchable tables with checkboxes for selection
+- **Synchronized Selection**: Checkboxes stay in sync across Selections, Dataset Info, and Contrast Info tabs
+- **Smart Defaults**: First 5 datasets and all their contrasts selected by default
+- **Automatic Updates**: Plots update automatically when selections change
+- **Rich Metadata Display**: Full dataset titles, descriptions, accession numbers, and DEG counts visible without truncation
 
 **Visualization Options:**
 - Interactive heatmap for differential expression with dynamic significance filtering
-- Violin or box plots for gene expression across samples
+- Violin plots for gene expression across samples with increased vertical space
 - Customizable plot settings and pagination for large gene sets
 - Real-time analysis plots (volcano, MA, heatmaps) from individual datasets
+- Tab descriptions explaining the purpose of each visualization type
+- **Display Settings**: Font size controls, grid line options, legend positioning
+- **Professional Styling**: Consistent fonts (Inter), optimized spacing, and clean design
+- **Performance Optimized**: Fragment isolation prevents unnecessary recomputation while maintaining responsive UI
 
 **Advanced Options:**
 - Adjustable significance thresholds (p-value and log fold change)
 - Gene selection parameters for automatic identification
-- Visualization customization options
+- **Per-tab Display Settings**: Customize font sizes, grid opacity, legend position
+- **Violin Plot Options**: Lock y-axis across genes, toggle raw points, adjust transparency
+- **Heatmap Customization**: Grid line control, font sizing, simplified contrast labels
 - Debug mode for troubleshooting
 
 ### Performance Features
 
-- **Optimized tab isolation**: Uses Streamlit fragments to isolate different tabs, so switching between Analysis Plots, Datasets, and Contrasts tabs won't trigger expensive recomputations
+- **Optimized tab isolation**: Uses Streamlit fragments to isolate different tabs, so switching between tabs won't trigger expensive recomputations
 - **Efficient caching**: The ResultsIntegrator object is cached using `@st.cache_resource`, keeping your data loaded throughout the session
+- **Fragment isolation**: Expensive plot generation is isolated to prevent costly recomputation on UI changes
 - **Automatic pagination**: Large gene sets are automatically paginated (30 genes per page) for optimal performance
-- **Interactive plot caching**: Plots are cached to avoid regeneration when possible
+- **Scalable selection interface**: Table-based selection handles hundreds of datasets/contrasts without UI performance issues
+- **Professional styling**: Consistent fonts (Inter), optimized grid lines, and responsive design
 
 ### Troubleshooting
 
@@ -461,7 +473,8 @@ tmux attach -t uorca-explorer
 - **Browser freezes**: The app now automatically paginates large gene selections and uses fragment isolation to prevent freezes
 
 **Performance Tips:**
-- Use the gene search or "Important genes" features instead of scrolling through all genes
-- The app automatically limits visualizations to prevent performance issues
-- Use "Select All" shortcuts for quick selection of genes, datasets, or contrasts
-- If selecting many genes, the app will automatically paginate for optimal performance
+- Use the "Auto-selected DEGs" feature or custom gene input for efficient gene selection
+- Use the "Selections" tab for choosing datasets and contrasts - it's optimized for large numbers of items  
+- Plots update automatically when you change selections - fragment isolation keeps the interface responsive
+- The app automatically paginates large gene sets and limits visualizations to prevent performance issues
+- Take advantage of synchronized checkboxes across tabs for consistent selection management
