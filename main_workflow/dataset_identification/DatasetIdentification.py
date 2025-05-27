@@ -34,6 +34,7 @@ from tqdm import tqdm
 import xml.etree.ElementTree as ET
 import hdbscan
 from sklearn.preprocessing import normalize
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ----------------------
 # Environment & prompts
@@ -357,19 +358,37 @@ def get_geo_uid(acc: str) -> str:
 
 
 def get_sra_uid(geo_uid: str) -> str:
-    with Entrez.elink(dbfrom="gds", db="sra", id=geo_uid) as h:
-        rec = Entrez.read(h)
-    # Apply rate limiting to follow NCBI guidelines
-    time.sleep(args.ncbi_api_delay)
-    return rec[0]['LinkSetDb'][0]['Link'][0]['Id']
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with Entrez.elink(dbfrom="gds", db="sra", id=geo_uid) as h:
+                rec = Entrez.read(h)
+            # Apply rate limiting to follow NCBI guidelines
+            time.sleep(args.ncbi_api_delay)
+            return rec[0]['LinkSetDb'][0]['Link'][0]['Id']
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"Failed to get SRA UID for {geo_uid}, attempt {attempt + 1}/{max_retries}: {e}")
+                time.sleep(10)  # Wait 10 seconds before retry
+            else:
+                raise
 
 
 def fetch_sra_xml(uid: str) -> str:
-    with Entrez.efetch(db="sra", id=uid, rettype="xml", retmode="text") as h:
-        xml_data = h.read()
-    # Apply rate limiting to follow NCBI guidelines
-    time.sleep(args.ncbi_api_delay)
-    return xml_data
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with Entrez.efetch(db="sra", id=uid, rettype="xml", retmode="text") as h:
+                xml_data = h.read()
+            # Apply rate limiting to follow NCBI guidelines
+            time.sleep(args.ncbi_api_delay)
+            return xml_data
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"Failed to fetch SRA XML for {uid}, attempt {attempt + 1}/{max_retries}: {e}")
+                time.sleep(10)  # Wait 10 seconds before retry
+            else:
+                raise
 
 
 def parse_bioproject(xml_str: str) -> str:
@@ -385,19 +404,88 @@ def parse_bioproject(xml_str: str) -> str:
 
 
 def fetch_runinfo(proj_acc: str) -> pd.DataFrame:
-    with Entrez.esearch(db="sra", term=proj_acc) as h:
-        rec = Entrez.read(h)
-    uid = rec['IdList'][0]
-    # Apply rate limiting to follow NCBI guidelines
-    time.sleep(args.ncbi_api_delay)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with Entrez.esearch(db="sra", term=proj_acc) as h:
+                rec = Entrez.read(h)
+            uid = rec['IdList'][0]
+            # Apply rate limiting to follow NCBI guidelines
+            time.sleep(args.ncbi_api_delay)
 
-    with Entrez.efetch(db="sra", id=uid, rettype="runinfo", retmode="text") as h:
-        df = pd.read_csv(h, low_memory=False)
-    # Apply rate limiting to follow NCBI guidelines
-    time.sleep(0.4)
+            with Entrez.efetch(db="sra", id=uid, rettype="runinfo", retmode="text") as h:
+                df = pd.read_csv(h, low_memory=False)
+            # Apply rate limiting to follow NCBI guidelines
+            time.sleep(0.4)
 
-    logger.info(f"Fetched {len(df)} SRA runs for {proj_acc}")
-    return df
+            logger.info(f"Fetched {len(df)} SRA runs for {proj_acc}")
+            return df
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"Failed to fetch runinfo for {proj_acc}, attempt {attempt + 1}/{max_retries}: {e}")
+                time.sleep(10)  # Wait 10 seconds before retry
+            else:
+                raise
+
+def fetch_srr_size(srr: str) -> Optional[int]:
+    """Call vdb-dump to get the 'size' of one SRR run."""
+    try:
+        proc = subprocess.run(
+            ["vdb-dump", srr, "--info"],
+            capture_output=True, text=True, check=True, timeout=60
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+
+    for line in proc.stdout.splitlines():
+        if line.lower().startswith("size"):
+            # line like: size   : 1,275,960,942
+            _, val = line.split(":", 1)
+            val = val.strip().replace(",", "")
+            if val.isdigit():
+                return int(val)
+    return None
+
+def calculate_dataset_size(srr_list: List[str], max_workers: int = 8) -> Tuple[int, Dict[str, int]]:
+    """
+    Calculate total dataset size by fetching size for each SRR using parallel vdb-dump calls.
+    
+    Returns:
+        Tuple of (total_size, size_dict) where size_dict maps SRR to size in bytes
+    """
+    logger.info(f"Calculating dataset size for {len(srr_list)} SRR runs using {max_workers} workers")
+    
+    sizes = {}
+    
+    def fetch_size_with_retry(srr: str) -> Tuple[str, Optional[int]]:
+        """Fetch size for a single SRR with retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            size = fetch_srr_size(srr)
+            if size is not None:
+                return srr, size
+            if attempt < max_retries - 1:
+                logger.debug(f"Retry {attempt + 1} for {srr}")
+                time.sleep(2)  # Short delay between retries
+        return srr, None
+    
+    # Use ThreadPoolExecutor for parallel vdb-dump calls
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all tasks
+        future_to_srr = {executor.submit(fetch_size_with_retry, srr): srr for srr in srr_list}
+        
+        # Process results as they complete
+        for future in tqdm(as_completed(future_to_srr), total=len(srr_list), desc="Fetching SRR sizes"):
+            srr, size = future.result()
+            if size is not None:
+                sizes[srr] = size
+            else:
+                logger.warning(f"Could not get size for {srr}")
+    
+    total_size = sum(sizes.values())
+    logger.info(f"Dataset size calculation complete: {len(sizes)}/{len(srr_list)} SRRs sized, total: {total_size:,} bytes ({total_size/(1024**3):.2f} GB)")
+    
+    return total_size, sizes
 
 # ----------------------
 # Main
@@ -436,6 +524,8 @@ def main():
                        help='Save clustering information to a separate file')
     parser.add_argument('--ncbi-api-delay', type=float, default=0.4,
                        help='Delay between NCBI API calls in seconds to respect rate limits')
+    parser.add_argument('--size-calc-workers', type=int, default=8,
+                       help='Number of parallel workers for dataset size calculation')
 
     global args
     args = parser.parse_args()
@@ -576,15 +666,42 @@ def main():
             total_runs_fetched += len(df_run)
             logger.info(f"Fetched {len(df_run)} runs for {acc}")
         except Exception as e:
-            logger.warning(f'Warning, skipping {acc}: {e}')
+            logger.info(f'Warning, skipping {acc}: {e}')
 
-    if runs:
-        sra_df = pd.concat(runs, ignore_index=True)
-        logger.info(f"Successfully processed {successful_datasets}/{len(to_fetch['Accession'].unique())} GEO datasets")
-        logger.info(f"Retrieved metadata for {total_runs_fetched} total SRA runs")
+        if runs:
+            sra_df = pd.concat(runs, ignore_index=True)
+            logger.info(f"Successfully processed {successful_datasets}/{len(to_fetch['Accession'].unique())} GEO datasets")
+            logger.info(f"Retrieved metadata for {total_runs_fetched} total SRA runs")
+        else:
+            sra_df = pd.DataFrame(columns=['GEO_Accession'])
+            logger.warning("No SRA runs were successfully fetched")
+
+        # Calculate dataset sizes for successfully fetched datasets
+        dataset_sizes = {}
+        if not sra_df.empty and 'Run' in sra_df.columns:
+            logger.info("🔍 Calculating dataset sizes for fetched datasets...")
+        
+            # Group SRRs by GEO accession
+            for geo_acc in sra_df['GEO_Accession'].unique():
+                if pd.notna(geo_acc):
+                    srr_list = sra_df[sra_df['GEO_Accession'] == geo_acc]['Run'].dropna().tolist()
+                    if srr_list:
+                        total_size, _ = calculate_dataset_size(srr_list, max_workers=args.size_calc_workers)
+                        dataset_sizes[geo_acc] = total_size
+                        logger.info(f"Dataset {geo_acc}: {total_size:,} bytes ({total_size/(1024**3):.2f} GB)")
+    
+        logger.info(f"Dataset size calculation completed for {len(dataset_sizes)} datasets")
+
+    # Add dataset sizes to geo_full before merging
+    if dataset_sizes:
+        geo_full['DatasetSizeBytes'] = geo_full['Accession'].map(dataset_sizes)
+        geo_full['DatasetSizeGB'] = geo_full['DatasetSizeBytes'] / (1024**3)
+        # Fill NaN values with 0 for datasets where size couldn't be calculated
+        geo_full['DatasetSizeBytes'] = geo_full['DatasetSizeBytes'].fillna(0)
+        geo_full['DatasetSizeGB'] = geo_full['DatasetSizeGB'].fillna(0.0)
     else:
-        sra_df = pd.DataFrame(columns=['GEO_Accession'])
-        logger.warning("No SRA runs were successfully fetched")
+        geo_full['DatasetSizeBytes'] = 0
+        geo_full['DatasetSizeGB'] = 0.0
 
     # Merge all GEO datasets with fetched SRA info
     merged = geo_full.merge(
@@ -704,7 +821,7 @@ def main():
         print(message)
 
     if args.generate_multi_csv:
-        multi_df = final[['Accession', 'Species', 'PrimaryPubMedID', 'RelevanceScore', 'Valid']].copy()
+        multi_df = final[['Accession', 'Species', 'PrimaryPubMedID', 'RelevanceScore', 'Valid', 'DatasetSizeBytes', 'DatasetSizeGB']].copy()
         multi_df = multi_df[multi_df['Valid'] == 'Yes']
         multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
         multi_df = multi_df.rename(columns={'Species': 'organism'})
