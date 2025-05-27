@@ -5,8 +5,8 @@
 #SBATCH --partition=tki_agpdev
 #SBATCH --constraint="knl"
 #SBATCH -t 0-6:00
-#SBATCH -o {{ logs_dir }}/run_master.out
-#SBATCH -e {{ logs_dir }}/run_master.out.err
+#SBATCH -o {{ logs_dir }}/run_{{ accession }}.out
+#SBATCH -e {{ logs_dir }}/run_{{ accession }}.err
 
 source ~/.bashrc
 module load R/4.1.2-gcc-blas-fullsupport
@@ -25,3 +25,23 @@ uv run {{ project_root }}/main_workflow/master.py \
     --resource_dir {{ resource_dir }} \
     {% if cleanup %}--cleanup{% endif %}
 echo "Completed run for {{ accession }} at $(date)"
+
+# Update job status to completed
+STATUS_DIR="{{ output_dir }}/job_status"
+STATUS_FILE="$STATUS_DIR/{{ accession }}_status.json"
+if [ -f "$STATUS_FILE" ]; then
+    python3 -c "
+import json
+import os
+from datetime import datetime
+
+status_file = '$STATUS_FILE'
+if os.path.exists(status_file):
+    with open(status_file, 'r') as f:
+        status = json.load(f)
+    status['state'] = 'completed'
+    status['completed_time'] = datetime.now().isoformat()
+    with open(status_file, 'w') as f:
+        json.dump(status, f, indent=2)
+"
+fi
