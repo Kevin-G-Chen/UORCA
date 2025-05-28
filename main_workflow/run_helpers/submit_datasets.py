@@ -3,14 +3,52 @@ import argparse, os, pathlib, subprocess, pandas as pd, time, json
 from jinja2 import Environment, FileSystemLoader
 from datetime import datetime
 
+def display_scheduling_order(df_sorted, max_storage_gb):
+    """Display the dataset scheduling order and storage analysis."""
+    print(f"\n{'='*60}")
+    print(f"DATASET SCHEDULING ORDER (Largest First)")
+    print(f"{'='*60}")
+    print(f"Maximum storage limit: {max_storage_gb:.2f} GB")
+    print(f"Total datasets: {len(df_sorted)}")
+
+    total_storage = df_sorted['SafeStorageGB'].sum()
+    print(f"Total storage needed: {total_storage:.2f} GB")
+
+    # Show largest 10 datasets
+    print(f"\nLargest 10 datasets (will be prioritized first):")
+    for i, row in df_sorted.head(10).iterrows():
+        print(f"  {i+1:2d}. {row['Accession']:12s} - {row['SafeStorageGB']:6.2f} GB")
+
+    if len(df_sorted) > 10:
+        print(f"  ... and {len(df_sorted)-10} more datasets")
+
+    # Show smallest 5 datasets
+    print(f"\nSmallest 5 datasets (will be processed last):")
+    for i, row in df_sorted.tail(5).iterrows():
+        pos = len(df_sorted) - (len(df_sorted.tail(5)) - list(df_sorted.tail(5).index).index(i))
+        print(f"  {pos:2d}. {row['Accession']:12s} - {row['SafeStorageGB']:6.2f} GB")
+
+    # Storage analysis
+    datasets_that_fit = df_sorted[df_sorted['SafeStorageGB'] <= max_storage_gb]
+    datasets_too_large = df_sorted[df_sorted['SafeStorageGB'] > max_storage_gb]
+
+    print(f"\nStorage Analysis:")
+    print(f"  Datasets that fit individually: {len(datasets_that_fit)}/{len(df_sorted)}")
+    if len(datasets_too_large) > 0:
+        print(f"  Datasets too large for storage limit:")
+        for _, row in datasets_too_large.iterrows():
+            print(f"    {row['Accession']:12s} - {row['SafeStorageGB']:6.2f} GB (exceeds {max_storage_gb:.2f} GB limit)")
+
+    print(f"{'='*60}\n")
+
 def get_running_jobs_storage(output_dir):
     """Calculate total storage being used by currently running jobs."""
     total_storage = 0
     status_dir = os.path.join(output_dir, "job_status")
-    
+
     if not os.path.exists(status_dir):
         return total_storage
-    
+
     for status_file in os.listdir(status_dir):
         if status_file.endswith("_status.json"):
             status_path = os.path.join(status_dir, status_file)
@@ -21,19 +59,19 @@ def get_running_jobs_storage(output_dir):
                     total_storage += status.get('storage_bytes', 0)
             except (json.JSONDecodeError, FileNotFoundError):
                 continue
-    
+
     return total_storage
 
 def submit_single_dataset(accession, dataset_size_bytes, output_dir, resource_dir, cleanup, project_root):
     """Submit a single dataset for analysis."""
     logs_dir = os.path.join(output_dir, "logs")
     os.makedirs(logs_dir, exist_ok=True)
-    
+
     status_dir = os.path.join(output_dir, "job_status")
     os.makedirs(status_dir, exist_ok=True)
-    
+
     env = Environment(loader=FileSystemLoader("main_workflow/run_helpers"))
-    
+
     script_txt = env.get_template("run_single_dataset.sbatch.j2").render(
         accession=accession,
         output_dir=output_dir,
@@ -42,15 +80,15 @@ def submit_single_dataset(accession, dataset_size_bytes, output_dir, resource_di
         project_root=project_root,
         logs_dir=logs_dir,
     )
-    
+
     script_path = pathlib.Path(f"run_{accession}.sbatch")
     script_path.write_text(script_txt)
     script_path.chmod(0o755)
-    
+
     # Submit job and capture job ID
     result = subprocess.run(["sbatch", str(script_path)], capture_output=True, text=True, check=True)
     job_id = result.stdout.strip().split()[-1]  # Extract job ID from "Submitted batch job XXXXXX"
-    
+
     # Track job status
     status_info = {
         'job_id': job_id,
@@ -61,11 +99,11 @@ def submit_single_dataset(accession, dataset_size_bytes, output_dir, resource_di
         'submitted_time': datetime.now().isoformat(),
         'script_path': str(script_path)
     }
-    
+
     status_file = os.path.join(status_dir, f"{accession}_status.json")
     with open(status_file, 'w') as f:
         json.dump(status_info, f, indent=2)
-    
+
     print(f"Submitted {accession} (Job ID: {job_id}, Size: {dataset_size_bytes/(1024**3):.2f} GB)")
     return job_id
 
@@ -76,13 +114,13 @@ def extract_analysis_results(accession, output_dir):
         'reflection_iterations': 0,
         'error_message': None
     }
-    
+
     # Check analysis_info.json for success status
     analysis_info_paths = [
         os.path.join(output_dir, accession, "metadata", "analysis_info.json"),
         os.path.join(output_dir, accession, "analysis_info.json")
     ]
-    
+
     for info_path in analysis_info_paths:
         if os.path.exists(info_path):
             try:
@@ -92,20 +130,20 @@ def extract_analysis_results(accession, output_dir):
                 break
             except (json.JSONDecodeError, FileNotFoundError):
                 continue
-    
+
     # Check log files for reflection iterations
     log_dir = os.path.join(output_dir, "logs")
     log_file = os.path.join(log_dir, f"run_{accession}.out")
-    
+
     if os.path.exists(log_file):
         try:
             with open(log_file, 'r') as f:
                 log_content = f.read()
-            
+
             # Count reflection iterations
             reflection_count = log_content.count("❌ Analysis attempt")
             results['reflection_iterations'] = max(0, reflection_count)
-            
+
             # Extract error messages if analysis failed
             if not results['success']:
                 error_lines = []
@@ -116,55 +154,158 @@ def extract_analysis_results(accession, output_dir):
                     results['error_message'] = '; '.join(error_lines[-3:])  # Last 3 error lines
         except Exception as e:
             results['error_message'] = f"Could not read log file: {str(e)}"
-    
+
     return results
 
 def update_job_statuses(output_dir):
-    """Update status of all tracked jobs."""
+    """Update status of all tracked jobs with robust error detection."""
     status_dir = os.path.join(output_dir, "job_status")
-    
+
     if not os.path.exists(status_dir):
         return
-    
+
     for status_file in os.listdir(status_dir):
         if status_file.endswith("_status.json"):
             status_path = os.path.join(status_dir, status_file)
             try:
                 with open(status_path, 'r') as f:
                     status = json.load(f)
-                
+
                 if status.get('state') == 'running':
                     job_id = status.get('job_id')
                     accession = status.get('accession')
-                    
-                    # Check job status using squeue
-                    result = subprocess.run(
-                        ["squeue", "-j", job_id, "-h", "-o", "%T"],
+
+                    # First check job status using squeue with more detailed info
+                    squeue_result = subprocess.run(
+                        ["squeue", "-j", job_id, "-h", "-o", "%T,%R"],
                         capture_output=True, text=True
                     )
-                    
-                    if result.returncode != 0:
-                        # Job not found in queue, likely completed
+
+                    job_still_running = False
+                    job_failed = False
+                    failure_reason = None
+
+                    if squeue_result.returncode == 0 and squeue_result.stdout.strip():
+                        # Job is still in the queue
+                        job_info = squeue_result.stdout.strip().split(',')
+                        job_state = job_info[0] if job_info else "UNKNOWN"
+
+                        if job_state in ["RUNNING", "PENDING", "CONFIGURING"]:
+                            job_still_running = True
+                        elif job_state in ["FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL"]:
+                            job_failed = True
+                            failure_reason = f"SLURM state: {job_state}"
+                            if len(job_info) > 1:
+                                failure_reason += f", Reason: {job_info[1]}"
+                    else:
+                        # Job not in queue - check if it completed or failed
+                        # Use sacct to get completion status if available
+                        sacct_result = subprocess.run(
+                            ["sacct", "-j", job_id, "-n", "-o", "State,ExitCode", "--parsable2"],
+                            capture_output=True, text=True
+                        )
+
+                        if sacct_result.returncode == 0 and sacct_result.stdout.strip():
+                            sacct_lines = sacct_result.stdout.strip().split('\n')
+                            for line in sacct_lines:
+                                if line and not line.endswith('.batch') and not line.endswith('.extern'):
+                                    parts = line.split('|')
+                                    if len(parts) >= 2:
+                                        state = parts[0]
+                                        exit_code = parts[1]
+
+                                        if state in ["FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL"] or exit_code != "0:0":
+                                            job_failed = True
+                                            failure_reason = f"SLURM state: {state}, Exit code: {exit_code}"
+                                        break
+
+                    # Check SLURM output files for immediate errors
+                    if not job_still_running:
+                        logs_dir = os.path.join(output_dir, "logs")
+                        error_file = os.path.join(logs_dir, f"run_{accession}.err")
+                        output_file = os.path.join(logs_dir, f"run_{accession}.out")
+
+                        # Check error file for obvious failures
+                        error_content = ""
+                        if os.path.exists(error_file):
+                            try:
+                                with open(error_file, 'r') as f:
+                                    error_content = f.read()
+
+                                # Look for common error patterns
+                                error_patterns = [
+                                    "IndentationError", "SyntaxError", "ImportError",
+                                    "ModuleNotFoundError", "FileNotFoundError",
+                                    "command not found", "No such file or directory",
+                                    "Permission denied", "Traceback (most recent call last)"
+                                ]
+
+                                for pattern in error_patterns:
+                                    if pattern in error_content:
+                                        job_failed = True
+                                        if not failure_reason:
+                                            failure_reason = f"Error detected in SLURM stderr: {pattern}"
+                                        break
+                            except Exception:
+                                pass
+
+                        # Also check if the job produced any output at all
+                        if not job_failed and os.path.exists(output_file):
+                            try:
+                                with open(output_file, 'r') as f:
+                                    output_content = f.read()
+
+                                # If there's very little output and errors, likely failed early
+                                if len(output_content.strip()) < 100 and error_content:
+                                    job_failed = True
+                                    if not failure_reason:
+                                        failure_reason = "Job produced minimal output with errors"
+                            except Exception:
+                                pass
+
+                    if job_still_running:
+                        # Job is still running, no update needed
+                        continue
+                    elif job_failed:
+                        # Job failed
+                        status['state'] = 'failed'
+                        status['completed_time'] = datetime.now().isoformat()
+                        status['failure_reason'] = failure_reason or "Unknown failure"
+                        status['success'] = False
+
+                        # Still try to extract what results we can
+                        analysis_results = extract_analysis_results(accession, output_dir)
+                        status.update(analysis_results)
+
+                        with open(status_path, 'w') as f:
+                            json.dump(status, f, indent=2)
+
+                        print(f"Job {job_id} ({accession}) FAILED ❌ - {failure_reason}")
+
+                    else:
+                        # Job completed (hopefully successfully)
                         status['state'] = 'completed'
                         status['completed_time'] = datetime.now().isoformat()
-                        
+
                         # Extract analysis results
                         analysis_results = extract_analysis_results(accession, output_dir)
                         status.update(analysis_results)
-                        
+
                         with open(status_path, 'w') as f:
                             json.dump(status, f, indent=2)
-                        
-                        success_indicator = "✅" if status['success'] else "❌"
-                        reflection_info = f" ({status['reflection_iterations']} reflections)" if status['reflection_iterations'] > 0 else ""
+
+                        success_indicator = "✅" if status.get('success', False) else "❌"
+                        reflection_info = f" ({status.get('reflection_iterations', 0)} reflections)" if status.get('reflection_iterations', 0) > 0 else ""
                         print(f"Job {job_id} ({accession}) completed {success_indicator}{reflection_info}")
-                        
-                        # Clean up script file
+
+                    # Clean up script file for completed/failed jobs
+                    if not job_still_running:
                         script_path = status.get('script_path')
                         if script_path and os.path.exists(script_path):
                             os.remove(script_path)
-            
-            except (json.JSONDecodeError, FileNotFoundError, subprocess.SubprocessError):
+
+            except (json.JSONDecodeError, FileNotFoundError, subprocess.SubprocessError) as e:
+                print(f"Warning: Error updating status for {status_file}: {str(e)}")
                 continue
 
 def main():
@@ -182,25 +323,25 @@ def main():
     args = ap.parse_args()
 
     df = pd.read_csv(args.csv_file)
-    
+
     # Validate CSV structure
     required_columns = ['Accession']
     if not all(col in df.columns for col in required_columns):
         print(f"Error: CSV must contain columns: {required_columns}")
         print(f"Found columns: {list(df.columns)}")
         exit(1)
-    
+
     # Check for dataset size columns
     if 'DatasetSizeBytes' not in df.columns:
         if args.max_storage_gb is not None:
             print("Warning: DatasetSizeBytes column not found in CSV. Storage limits will be ignored.")
             args.max_storage_gb = None
         df['DatasetSizeBytes'] = 0
-    
+
     # Double the dataset sizes for safety as requested
     df['SafeStorageBytes'] = df['DatasetSizeBytes'] * 2
     df['SafeStorageGB'] = df['SafeStorageBytes'] / (1024**3)
-    
+
     if args.max_storage_gb is None:
         print("No storage limit specified. Using traditional array job submission...")
         # Fall back to original array job submission
@@ -226,37 +367,80 @@ def main():
 
         subprocess.run(["sbatch", str(script_path)], check=True)
         return
-    
+
     print(f"Storage-aware submission enabled. Maximum storage: {args.max_storage_gb:.2f} GB")
     print(f"Will submit {len(df)} datasets with storage management")
-    
+
     max_storage_bytes = args.max_storage_gb * (1024**3)
     project_root = os.getcwd()
-    
-    # Sort datasets by size (smallest first) to maximize utilization
-    df_sorted = df.sort_values('SafeStorageBytes').reset_index(drop=True)
-    
-    submitted_count = 0
+
+    # Sort datasets by size (largest first) to optimize completion time
+    df_sorted = df.sort_values('SafeStorageBytes', ascending=False).reset_index(drop=True)
+
+    # Validate datasets against storage limits
+    oversized_datasets = df_sorted[df_sorted['SafeStorageGB'] > args.max_storage_gb]
+    if len(oversized_datasets) > 0:
+        print(f"\n⚠️  WARNING: {len(oversized_datasets)} dataset(s) exceed storage limit ({args.max_storage_gb:.2f} GB):")
+        for _, row in oversized_datasets.iterrows():
+            print(f"   {row['Accession']:12s} - {row['SafeStorageGB']:6.2f} GB")
+
+        print(f"\nThese datasets will be skipped. Consider:")
+        print(f"  1. Increasing --max_storage_gb to accommodate larger datasets")
+        print(f"  2. Processing these datasets separately with higher storage limits")
+        print(f"  3. Using the array job submission (remove --max_storage_gb) for unlimited storage")
+
+        # Remove oversized datasets from processing
+        df_sorted = df_sorted[df_sorted['SafeStorageGB'] <= args.max_storage_gb].reset_index(drop=True)
+
+        if len(df_sorted) == 0:
+            print(f"\n❌ ERROR: No datasets can fit within the storage limit of {args.max_storage_gb:.2f} GB")
+            print(f"Please increase --max_storage_gb or remove the storage limit.")
+            exit(1)
+
+        print(f"\nContinuing with {len(df_sorted)} datasets that fit within storage limits...\n")
+
+    # Display scheduling order and analysis
+    display_scheduling_order(df_sorted, args.max_storage_gb)
+
     pending_datasets = df_sorted.to_dict('records')
-    
-    print(f"\nDataset submission summary:")
-    for dataset in pending_datasets:
-        print(f"  {dataset['Accession']}: {dataset['SafeStorageGB']:.2f} GB (doubled for safety)")
-    print()
-    
-    while pending_datasets or submitted_count > 0:
+
+    while pending_datasets:
         # Update job statuses
         update_job_statuses(args.output_dir)
-        
-        # Calculate current storage usage
+
+        # Calculate current storage usage and running job count
         current_storage = get_running_jobs_storage(args.output_dir)
-        
-        # Try to submit new datasets
+        status_dir = os.path.join(args.output_dir, "job_status")
+        running_jobs_count = 0
+        if os.path.exists(status_dir):
+            for status_file in os.listdir(status_dir):
+                if status_file.endswith("_status.json"):
+                    status_path = os.path.join(status_dir, status_file)
+                    try:
+                        with open(status_path, 'r') as f:
+                            status = json.load(f)
+                        if status.get('state') == 'running':
+                            running_jobs_count += 1
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        continue
+
+        # Check if we can submit more jobs
+        if running_jobs_count >= args.max_parallel:
+            print(f"At maximum parallel jobs ({args.max_parallel}), waiting for completions...")
+            time.sleep(args.check_interval)
+            continue
+
+        # Try to submit datasets starting with largest that fits
+        datasets_submitted_this_round = []
         datasets_to_remove = []
+
         for i, dataset in enumerate(pending_datasets):
             dataset_storage = dataset['SafeStorageBytes']
-            
-            if current_storage + dataset_storage <= max_storage_bytes:
+
+            # Check if this dataset fits within storage and job constraints
+            if (current_storage + dataset_storage <= max_storage_bytes and
+                running_jobs_count < args.max_parallel):
+
                 # Submit this dataset
                 job_id = submit_single_dataset(
                     dataset['Accession'],
@@ -266,41 +450,47 @@ def main():
                     args.cleanup,
                     project_root
                 )
-                
+
                 current_storage += dataset_storage
-                submitted_count += 1
+                running_jobs_count += 1
                 datasets_to_remove.append(i)
-                
+                datasets_submitted_this_round.append(dataset['Accession'])
+
                 print(f"Storage usage: {current_storage/(1024**3):.2f}/{args.max_storage_gb:.2f} GB")
-                
-                # Check if we've hit max parallel jobs
-                running_jobs = len([f for f in os.listdir(os.path.join(args.output_dir, "job_status", "")) 
-                                  if f.endswith("_status.json")])
-                if running_jobs >= args.max_parallel:
+
+                # Stop if we've reached max parallel jobs
+                if running_jobs_count >= args.max_parallel:
                     print(f"Reached maximum parallel jobs ({args.max_parallel})")
                     break
-        
+
         # Remove submitted datasets from pending list (reverse order to maintain indices)
         for i in reversed(datasets_to_remove):
             pending_datasets.pop(i)
-        
-        if pending_datasets:
-            print(f"Waiting for jobs to complete... ({len(pending_datasets)} datasets pending)")
+
+        # If no datasets were submitted this round, wait for jobs to complete
+        if not datasets_submitted_this_round:
+            if pending_datasets:
+                largest_pending = pending_datasets[0]  # First item is largest due to sorting
+                print(f"⏳ No datasets fit current constraints. Largest pending: {largest_pending['Accession']} "
+                      f"({largest_pending['SafeStorageGB']:.2f} GB). Waiting for jobs to complete...")
+                print(f"📊 Current usage: {current_storage/(1024**3):.2f}/{args.max_storage_gb:.2f} GB, "
+                      f"Running jobs: {running_jobs_count}/{args.max_parallel}")
             time.sleep(args.check_interval)
-        elif submitted_count == 0:
-            print("All datasets submitted!")
-            break
-    
+        else:
+            print(f"✅ Submitted {len(datasets_submitted_this_round)} datasets: {', '.join(datasets_submitted_this_round)}")
+            if pending_datasets:
+                print(f"📋 {len(pending_datasets)} datasets remaining in queue")
+
     print(f"\nSubmission complete! Submitted {len(df)} datasets total.")
     print(f"Monitor progress with: watch 'ls {args.output_dir}/job_status/*.json | wc -l'")
-    
+
     # Wait for all jobs to complete and generate final summary
     print("\nWaiting for all jobs to complete...")
     while True:
         status_dir = os.path.join(args.output_dir, "job_status")
         if not os.path.exists(status_dir):
             break
-            
+
         running_jobs = []
         for status_file in os.listdir(status_dir):
             if status_file.endswith("_status.json"):
@@ -312,70 +502,96 @@ def main():
                         running_jobs.append(status.get('accession', 'unknown'))
                 except:
                     continue
-        
+
         if not running_jobs:
             break
-        
+
         print(f"Still running: {len(running_jobs)} jobs ({', '.join(running_jobs[:5])}{'...' if len(running_jobs) > 5 else ''})")
         time.sleep(args.check_interval)
         update_job_statuses(args.output_dir)
-    
+
     # Generate final summary report
     generate_summary_report(args.output_dir)
 
 def generate_summary_report(output_dir):
     """Generate a summary report of all dataset analyses."""
     status_dir = os.path.join(output_dir, "job_status")
-    
+
     if not os.path.exists(status_dir):
         print("No job status directory found.")
         return
-    
+
     successful = []
     failed = []
+    running = []
     total_reflections = 0
-    
+
     for status_file in os.listdir(status_dir):
         if status_file.endswith("_status.json"):
             status_path = os.path.join(status_dir, status_file)
             try:
                 with open(status_path, 'r') as f:
                     status = json.load(f)
-                
+
                 accession = status.get('accession', 'unknown')
                 reflections = status.get('reflection_iterations', 0)
                 total_reflections += reflections
-                
-                if status.get('success', False):
+                job_state = status.get('state', 'unknown')
+
+                if job_state == 'running':
+                    running.append({
+                        'accession': accession,
+                        'storage_gb': status.get('storage_gb', 0),
+                        'submitted_time': status.get('submitted_time', 'Unknown')
+                    })
+                elif status.get('success', False):
                     successful.append({
                         'accession': accession,
                         'reflections': reflections,
                         'storage_gb': status.get('storage_gb', 0)
                     })
                 else:
+                    # Job failed or completed unsuccessfully
+                    error_info = status.get('error_message', 'Unknown error')
+                    failure_reason = status.get('failure_reason', None)
+
+                    # Combine error information
+                    if failure_reason and failure_reason not in error_info:
+                        error_info = f"{failure_reason}; {error_info}" if error_info != 'Unknown error' else failure_reason
+
                     failed.append({
                         'accession': accession,
                         'reflections': reflections,
-                        'error': status.get('error_message', 'Unknown error'),
-                        'storage_gb': status.get('storage_gb', 0)
+                        'error': error_info,
+                        'storage_gb': status.get('storage_gb', 0),
+                        'state': job_state,
+                        'failure_reason': failure_reason
                     })
-            except:
+            except Exception as e:
+                print(f"Warning: Could not read status file {status_file}: {str(e)}")
                 continue
-    
+
     # Write summary to file
     summary_path = os.path.join(output_dir, "batch_analysis_summary.txt")
     with open(summary_path, 'w') as f:
         f.write(f"UORCA Batch Analysis Summary\n")
         f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"=" * 50 + "\n\n")
-        
+
+        total_jobs = len(successful) + len(failed) + len(running)
+        completed_jobs = len(successful) + len(failed)
+
         f.write(f"Overall Results:\n")
-        f.write(f"  Total datasets: {len(successful) + len(failed)}\n")
-        f.write(f"  Successful: {len(successful)} ({len(successful)/(len(successful)+len(failed))*100:.1f}%)\n")
-        f.write(f"  Failed: {len(failed)} ({len(failed)/(len(successful)+len(failed))*100:.1f}%)\n")
-        f.write(f"  Total reflection iterations: {total_reflections}\n")
-        f.write(f"  Average reflections per dataset: {total_reflections/(len(successful)+len(failed)):.1f}\n\n")
-        
+        f.write(f"  Total datasets: {total_jobs}\n")
+        f.write(f"  Completed: {completed_jobs}\n")
+        f.write(f"  Still running: {len(running)}\n")
+        f.write(f"  Successful: {len(successful)} ({len(successful)/completed_jobs*100:.1f}% of completed)\n")
+        f.write(f"  Failed: {len(failed)} ({len(failed)/completed_jobs*100:.1f}% of completed)\n")
+        if completed_jobs > 0:
+            f.write(f"  Total reflection iterations: {total_reflections}\n")
+            f.write(f"  Average reflections per completed dataset: {total_reflections/completed_jobs:.1f}\n")
+        f.write("\n")
+
         if successful:
             f.write(f"Successful Analyses:\n")
             total_size_successful = sum(s['storage_gb'] for s in successful)
@@ -383,30 +599,56 @@ def generate_summary_report(output_dir):
             for s in sorted(successful, key=lambda x: x['reflections']):
                 f.write(f"  {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB\n")
             f.write("\n")
-        
+
+        if running:
+            f.write(f"Still Running:\n")
+            for s in running:
+                f.write(f"  {s['accession']}: {s['storage_gb']:.2f} GB, submitted at {s['submitted_time']}\n")
+            f.write("\n")
+
         if failed:
             f.write(f"Failed Analyses:\n")
-            for s in sorted(failed, key=lambda x: x['reflections'], reverse=True):
-                f.write(f"  {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB\n")
-                f.write(f"    Error: {s['error'][:100]}{'...' if len(s['error']) > 100 else ''}\n")
-    
+            # Group failures by type
+            slurm_failures = [s for s in failed if s.get('failure_reason') and 'SLURM' in s.get('failure_reason', '')]
+            analysis_failures = [s for s in failed if s not in slurm_failures]
+
+            if slurm_failures:
+                f.write(f"  SLURM/System Failures ({len(slurm_failures)}):\n")
+                for s in slurm_failures:
+                    f.write(f"    {s['accession']}: {s['storage_gb']:.2f} GB\n")
+                    f.write(f"      Reason: {s.get('failure_reason', 'Unknown')}\n")
+                f.write("\n")
+
+            if analysis_failures:
+                f.write(f"  Analysis Failures ({len(analysis_failures)}):\n")
+                for s in sorted(analysis_failures, key=lambda x: x['reflections'], reverse=True):
+                    f.write(f"    {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB\n")
+                    f.write(f"      Error: {s['error'][:100]}{'...' if len(s['error']) > 100 else ''}\n")
+
     print(f"\n" + "=" * 50)
     print(f"BATCH ANALYSIS SUMMARY")
     print(f"=" * 50)
-    print(f"Total datasets: {len(successful) + len(failed)}")
-    print(f"Successful: {len(successful)} ({len(successful)/(len(successful)+len(failed))*100:.1f}%)")
-    print(f"Failed: {len(failed)} ({len(failed)/(len(successful)+len(failed))*100:.1f}%)")
-    print(f"Total reflection iterations: {total_reflections}")
-    print(f"Average reflections per dataset: {total_reflections/(len(successful)+len(failed)):.1f}")
+    total_jobs = len(successful) + len(failed) + len(running)
+    completed_jobs = len(successful) + len(failed)
+    print(f"Total datasets: {total_jobs}")
+    print(f"Completed: {completed_jobs}")
+    print(f"Still running: {len(running)}")
+    if completed_jobs > 0:
+        print(f"Successful: {len(successful)} ({len(successful)/completed_jobs*100:.1f}% of completed)")
+        print(f"Failed: {len(failed)} ({len(failed)/completed_jobs*100:.1f}% of completed)")
+        print(f"Total reflection iterations: {total_reflections}")
+        print(f"Average reflections per completed dataset: {total_reflections/completed_jobs:.1f}")
+    else:
+        print("No jobs have completed yet.")
     # Write detailed CSV for easy processing
     csv_path = os.path.join(output_dir, "batch_analysis_results.csv")
     import csv
-    
+
     with open(csv_path, 'w', newline='') as csvfile:
         fieldnames = ['accession', 'success', 'reflection_iterations', 'storage_gb', 'error_message']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
-        
+
         # Write successful datasets
         for s in successful:
             writer.writerow({
@@ -416,7 +658,17 @@ def generate_summary_report(output_dir):
                 'storage_gb': s['storage_gb'],
                 'error_message': ''
             })
-        
+
+        # Write still running datasets
+        for s in running:
+            writer.writerow({
+                'accession': s['accession'],
+                'success': None,
+                'reflection_iterations': 0,
+                'storage_gb': s['storage_gb'],
+                'error_message': 'Still running'
+            })
+
         # Write failed datasets
         for s in failed:
             writer.writerow({
@@ -426,16 +678,34 @@ def generate_summary_report(output_dir):
                 'storage_gb': s['storage_gb'],
                 'error_message': s['error']
             })
-    
+
     print(f"\nDetailed summary saved to: {summary_path}")
     print(f"CSV results saved to: {csv_path}")
-    
+
+    if running:
+        print(f"\nStill running datasets:")
+        for s in running[:5]:  # Show first 5 running
+            print(f"  {s['accession']}: {s['storage_gb']:.2f} GB")
+        if len(running) > 5:
+            print(f"  ... and {len(running)-5} more")
+
     if failed:
         print(f"\nFailed datasets:")
-        for s in failed[:5]:  # Show first 5 failures
-            print(f"  {s['accession']}: {s['reflections']} reflections")
-        if len(failed) > 5:
-            print(f"  ... and {len(failed)-5} more (see {summary_path} for details)")
+        slurm_failures = [s for s in failed if s.get('failure_reason') and 'SLURM' in s.get('failure_reason', '')]
+        analysis_failures = [s for s in failed if s not in slurm_failures]
+
+        if slurm_failures:
+            print(f"  SLURM/System failures: {len(slurm_failures)}")
+            for s in slurm_failures[:3]:
+                print(f"    {s['accession']}: {s.get('failure_reason', 'Unknown')}")
+
+        if analysis_failures:
+            print(f"  Analysis failures: {len(analysis_failures)}")
+            for s in analysis_failures[:3]:
+                print(f"    {s['accession']}: {s['reflections']} reflections")
+
+        if len(failed) > 6:
+            print(f"  ... and {len(failed)-6} more (see {summary_path} for details)")
 
 if __name__ == "__main__":
     main()

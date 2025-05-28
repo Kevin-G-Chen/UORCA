@@ -3,6 +3,9 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
+# Entrez utilities for API access with rate limiting
+from .entrez_utils import configure_entrez, fetch_taxonomy_info, search_sra_runs, safe_entrez_call
+
 # --- Core context; minimal fields shared everywhere ---
 class RNAseqCoreContext(BaseModel):
     accession: str = Field(..., description="NCBI GEO Accession ID for the run")

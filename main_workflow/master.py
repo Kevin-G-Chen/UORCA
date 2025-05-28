@@ -7,11 +7,19 @@ import os, pathlib
 import datetime
 import json
 from shared import ExtractionContext, AnalysisContext, RNAseqCoreContext
+from shared.entrez_utils import configure_entrez
 import argparse
 
 # ── load env once ───────────────────────────
 load_dotenv(find_dotenv())
 assert os.getenv("OPENAI_API_KEY"), "API key missing"
+
+# ── configure entrez with rate limiting ─────
+try:
+    configure_entrez()
+except Exception as e:
+    print(f"Warning: Failed to configure Entrez: {e}")
+    print("Please ensure ENTREZ_EMAIL is set in your .env file")
 
 # ── master agent definition ─────────────────
 
