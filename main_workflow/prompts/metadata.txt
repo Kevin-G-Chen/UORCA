@@ -26,6 +26,14 @@ General Guidelines:
 		- Melanoma_5uM_vs_Melanoma_DMSO
 		- Treated_Day7_vs_Treated_Day0
 	•   For example, the following contrast name: phenotype_resistant_resistant_vs_phenotype_parental_parental , could be simplified to: resistant_vs_parental, depending on the context and clarity needed.In general, contrast names should be concise, readable, and reflect the biological context of the analysis.
+	•	IMPORTANT: When providing contrast descriptions, ensure they are completely self-contained and can be understood without prior knowledge of the dataset. The description should:
+		- Clearly explain what biological conditions or treatments are being compared
+		- Define any technical terms, cell types, or experimental conditions mentioned
+		- Explain the biological significance or rationale for the comparison
+		- Include relevant context about the experimental system (organism, tissue type, etc.)
+		- Be comprehensive enough that a researcher unfamiliar with the study can understand the comparison's purpose and interpret results
+		- Example: Instead of "KO vs WT", use "STIM1 knockout pancreatic beta cells compared to wild-type control beta cells under high-fat diet conditions, examining the role of STIM1 protein in calcium signaling and insulin secretion"
+		- Please note that this should ONLY apply to the descriptions, and not the name or expression
 
 ⸻
 
