@@ -520,9 +520,10 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
             analysis_df[col] = [metadata_df.loc[matched_samples[s]
                                                 ['metadata_row'], col] for s in analysis_df.index]
 
-        # Save the analysis dataframe for later use
-        analysis_df_path = os.path.join(
-            ctx.deps.output_dir, "edger_analysis_samples.csv")
+        # Save the analysis dataframe for later use in metadata directory
+        metadata_dir = os.path.join(ctx.deps.output_dir, "metadata")
+        os.makedirs(metadata_dir, exist_ok=True)
+        analysis_df_path = os.path.join(metadata_dir, "edger_analysis_samples.csv")
         analysis_df.to_csv(analysis_df_path)
 
         # Store in a registry for later reference:
@@ -647,7 +648,9 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
                 # Save contrasts to a CSV file if not already done
                 contrast_path = getattr(ctx.deps, 'contrast_path', None)
                 if contrast_path is None:
-                    contrast_path = os.path.join(ctx.deps.output_dir, "contrasts.csv")
+                    metadata_dir = os.path.join(ctx.deps.output_dir, "metadata")
+                    os.makedirs(metadata_dir, exist_ok=True)
+                    contrast_path = os.path.join(metadata_dir, "contrasts.csv")
                     pd.DataFrame(contrast_data).to_csv(contrast_path, index=False)
                     setattr(ctx.deps, 'contrast_path', contrast_path)
                     logger.info("💾 Saved contrasts to %s", contrast_path)
@@ -903,10 +906,11 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
             setattr(ctx.deps, 'contrast_matrix_df', pd.DataFrame(contrast_data))
             logger.info("📊 Created contrast matrix with %d contrasts", len(contrast_data))
 
-            # Save contrasts to a CSV file for later use
+            # Save contrasts to a CSV file in metadata directory for later use
             output_dir = getattr(ctx.deps, 'output_dir', '.')
-            os.makedirs(output_dir, exist_ok=True)
-            contrast_path = os.path.join(output_dir, "contrasts.csv")
+            metadata_dir = os.path.join(output_dir, "metadata")
+            os.makedirs(metadata_dir, exist_ok=True)
+            contrast_path = os.path.join(metadata_dir, "contrasts.csv")
             pd.DataFrame(contrast_data).to_csv(contrast_path, index=False)
             setattr(ctx.deps, 'contrast_path', contrast_path)
             logger.info("💾 Saved contrasts to %s", contrast_path)
