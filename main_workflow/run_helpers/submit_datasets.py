@@ -69,6 +69,56 @@ def submit_single_dataset(accession, dataset_size_bytes, output_dir, resource_di
     print(f"Submitted {accession} (Job ID: {job_id}, Size: {dataset_size_bytes/(1024**3):.2f} GB)")
     return job_id
 
+def extract_analysis_results(accession, output_dir):
+    """Extract analysis results from log files and analysis_info.json."""
+    results = {
+        'success': False,
+        'reflection_iterations': 0,
+        'error_message': None
+    }
+    
+    # Check analysis_info.json for success status
+    analysis_info_paths = [
+        os.path.join(output_dir, accession, "metadata", "analysis_info.json"),
+        os.path.join(output_dir, accession, "analysis_info.json")
+    ]
+    
+    for info_path in analysis_info_paths:
+        if os.path.exists(info_path):
+            try:
+                with open(info_path, 'r') as f:
+                    analysis_info = json.load(f)
+                results['success'] = analysis_info.get('analysis_success', False)
+                break
+            except (json.JSONDecodeError, FileNotFoundError):
+                continue
+    
+    # Check log files for reflection iterations
+    log_dir = os.path.join(output_dir, "logs")
+    log_file = os.path.join(log_dir, f"run_{accession}.out")
+    
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, 'r') as f:
+                log_content = f.read()
+            
+            # Count reflection iterations
+            reflection_count = log_content.count("❌ Analysis attempt")
+            results['reflection_iterations'] = max(0, reflection_count)
+            
+            # Extract error messages if analysis failed
+            if not results['success']:
+                error_lines = []
+                for line in log_content.split('\n'):
+                    if 'ERROR' in line or 'FAILED' in line or 'Exception' in line:
+                        error_lines.append(line.strip())
+                if error_lines:
+                    results['error_message'] = '; '.join(error_lines[-3:])  # Last 3 error lines
+        except Exception as e:
+            results['error_message'] = f"Could not read log file: {str(e)}"
+    
+    return results
+
 def update_job_statuses(output_dir):
     """Update status of all tracked jobs."""
     status_dir = os.path.join(output_dir, "job_status")
@@ -85,6 +135,7 @@ def update_job_statuses(output_dir):
                 
                 if status.get('state') == 'running':
                     job_id = status.get('job_id')
+                    accession = status.get('accession')
                     
                     # Check job status using squeue
                     result = subprocess.run(
@@ -97,10 +148,16 @@ def update_job_statuses(output_dir):
                         status['state'] = 'completed'
                         status['completed_time'] = datetime.now().isoformat()
                         
+                        # Extract analysis results
+                        analysis_results = extract_analysis_results(accession, output_dir)
+                        status.update(analysis_results)
+                        
                         with open(status_path, 'w') as f:
                             json.dump(status, f, indent=2)
                         
-                        print(f"Job {job_id} ({status['accession']}) completed")
+                        success_indicator = "✅" if status['success'] else "❌"
+                        reflection_info = f" ({status['reflection_iterations']} reflections)" if status['reflection_iterations'] > 0 else ""
+                        print(f"Job {job_id} ({accession}) completed {success_indicator}{reflection_info}")
                         
                         # Clean up script file
                         script_path = status.get('script_path')
@@ -236,6 +293,149 @@ def main():
     
     print(f"\nSubmission complete! Submitted {len(df)} datasets total.")
     print(f"Monitor progress with: watch 'ls {args.output_dir}/job_status/*.json | wc -l'")
+    
+    # Wait for all jobs to complete and generate final summary
+    print("\nWaiting for all jobs to complete...")
+    while True:
+        status_dir = os.path.join(args.output_dir, "job_status")
+        if not os.path.exists(status_dir):
+            break
+            
+        running_jobs = []
+        for status_file in os.listdir(status_dir):
+            if status_file.endswith("_status.json"):
+                status_path = os.path.join(status_dir, status_file)
+                try:
+                    with open(status_path, 'r') as f:
+                        status = json.load(f)
+                    if status.get('state') == 'running':
+                        running_jobs.append(status.get('accession', 'unknown'))
+                except:
+                    continue
+        
+        if not running_jobs:
+            break
+        
+        print(f"Still running: {len(running_jobs)} jobs ({', '.join(running_jobs[:5])}{'...' if len(running_jobs) > 5 else ''})")
+        time.sleep(args.check_interval)
+        update_job_statuses(args.output_dir)
+    
+    # Generate final summary report
+    generate_summary_report(args.output_dir)
+
+def generate_summary_report(output_dir):
+    """Generate a summary report of all dataset analyses."""
+    status_dir = os.path.join(output_dir, "job_status")
+    
+    if not os.path.exists(status_dir):
+        print("No job status directory found.")
+        return
+    
+    successful = []
+    failed = []
+    total_reflections = 0
+    
+    for status_file in os.listdir(status_dir):
+        if status_file.endswith("_status.json"):
+            status_path = os.path.join(status_dir, status_file)
+            try:
+                with open(status_path, 'r') as f:
+                    status = json.load(f)
+                
+                accession = status.get('accession', 'unknown')
+                reflections = status.get('reflection_iterations', 0)
+                total_reflections += reflections
+                
+                if status.get('success', False):
+                    successful.append({
+                        'accession': accession,
+                        'reflections': reflections,
+                        'storage_gb': status.get('storage_gb', 0)
+                    })
+                else:
+                    failed.append({
+                        'accession': accession,
+                        'reflections': reflections,
+                        'error': status.get('error_message', 'Unknown error'),
+                        'storage_gb': status.get('storage_gb', 0)
+                    })
+            except:
+                continue
+    
+    # Write summary to file
+    summary_path = os.path.join(output_dir, "batch_analysis_summary.txt")
+    with open(summary_path, 'w') as f:
+        f.write(f"UORCA Batch Analysis Summary\n")
+        f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"=" * 50 + "\n\n")
+        
+        f.write(f"Overall Results:\n")
+        f.write(f"  Total datasets: {len(successful) + len(failed)}\n")
+        f.write(f"  Successful: {len(successful)} ({len(successful)/(len(successful)+len(failed))*100:.1f}%)\n")
+        f.write(f"  Failed: {len(failed)} ({len(failed)/(len(successful)+len(failed))*100:.1f}%)\n")
+        f.write(f"  Total reflection iterations: {total_reflections}\n")
+        f.write(f"  Average reflections per dataset: {total_reflections/(len(successful)+len(failed)):.1f}\n\n")
+        
+        if successful:
+            f.write(f"Successful Analyses:\n")
+            total_size_successful = sum(s['storage_gb'] for s in successful)
+            f.write(f"  Total size processed: {total_size_successful:.2f} GB\n")
+            for s in sorted(successful, key=lambda x: x['reflections']):
+                f.write(f"  {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB\n")
+            f.write("\n")
+        
+        if failed:
+            f.write(f"Failed Analyses:\n")
+            for s in sorted(failed, key=lambda x: x['reflections'], reverse=True):
+                f.write(f"  {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB\n")
+                f.write(f"    Error: {s['error'][:100]}{'...' if len(s['error']) > 100 else ''}\n")
+    
+    print(f"\n" + "=" * 50)
+    print(f"BATCH ANALYSIS SUMMARY")
+    print(f"=" * 50)
+    print(f"Total datasets: {len(successful) + len(failed)}")
+    print(f"Successful: {len(successful)} ({len(successful)/(len(successful)+len(failed))*100:.1f}%)")
+    print(f"Failed: {len(failed)} ({len(failed)/(len(successful)+len(failed))*100:.1f}%)")
+    print(f"Total reflection iterations: {total_reflections}")
+    print(f"Average reflections per dataset: {total_reflections/(len(successful)+len(failed)):.1f}")
+    # Write detailed CSV for easy processing
+    csv_path = os.path.join(output_dir, "batch_analysis_results.csv")
+    import csv
+    
+    with open(csv_path, 'w', newline='') as csvfile:
+        fieldnames = ['accession', 'success', 'reflection_iterations', 'storage_gb', 'error_message']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        # Write successful datasets
+        for s in successful:
+            writer.writerow({
+                'accession': s['accession'],
+                'success': True,
+                'reflection_iterations': s['reflections'],
+                'storage_gb': s['storage_gb'],
+                'error_message': ''
+            })
+        
+        # Write failed datasets
+        for s in failed:
+            writer.writerow({
+                'accession': s['accession'],
+                'success': False,
+                'reflection_iterations': s['reflections'],
+                'storage_gb': s['storage_gb'],
+                'error_message': s['error']
+            })
+    
+    print(f"\nDetailed summary saved to: {summary_path}")
+    print(f"CSV results saved to: {csv_path}")
+    
+    if failed:
+        print(f"\nFailed datasets:")
+        for s in failed[:5]:  # Show first 5 failures
+            print(f"  {s['accession']}: {s['reflections']} reflections")
+        if len(failed) > 5:
+            print(f"  ... and {len(failed)-5} more (see {summary_path} for details)")
 
 if __name__ == "__main__":
     main()
