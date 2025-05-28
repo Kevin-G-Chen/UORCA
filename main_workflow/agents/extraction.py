@@ -18,6 +18,7 @@ from Bio import Entrez
 from pydantic_ai import Agent, RunContext
 from shared import ExtractionContext, RNAseqCoreContext
 from shared.workflow_logging import log_tool, log_agent_tool
+from shared.entrez_utils import fetch_taxonomy_info, configure_entrez
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +85,14 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
             taxid = gse.metadata['sample_taxid'][0] if isinstance(gse.metadata['sample_taxid'], list) else gse.metadata['sample_taxid']
             logger.info("🧬 Found taxonomic ID: %s", taxid)
             
-            # Convert taxonomic ID to species name using Entrez
-            handle = Entrez.efetch(db="taxonomy", id=str(taxid), retmode="xml")
-            records = Entrez.read(handle)
-            handle.close()
+            # Convert taxonomic ID to species name using rate-limited Entrez
+            taxonomy_info = fetch_taxonomy_info(str(taxid))
             
-            if records and len(records) > 0:
-                species_name = records[0]["ScientificName"]
+            if taxonomy_info:
+                species_name = taxonomy_info['scientific_name']
                 logger.info("🔬 Identified species: %s", species_name)
+                if taxonomy_info.get('common_name'):
+                    logger.info("🔬 Common name: %s", taxonomy_info['common_name'])
             else:
                 logger.warning("⚠️ No species information found for taxonomic ID: %s", taxid)
         else:
@@ -114,13 +115,13 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
                 return hit.group(1)
         return None
 
-  # ── wide sample table (now uses GEOparse phenotype_data) ────────────────
-  meta_wide = (
-      gse.phenotype_data
-        .reset_index()              # GSM ID becomes its own column
-        .rename(columns={"index": "GSM"})
-  )
-  logger.info("meta_wide.csv prepared (%d rows, %d cols)", len(meta_wide), meta_wide.shape[1])
+    # ── wide sample table (now uses GEOparse phenotype_data) ────────────────
+    meta_wide = (
+        gse.phenotype_data
+          .reset_index()              # GSM ID becomes its own column
+          .rename(columns={"index": "GSM"})
+    )
+    logger.info("meta_wide.csv prepared (%d rows, %d cols)", len(meta_wide), meta_wide.shape[1])
 
 
     # ── long GSM↔SRX↔SRR table ──────────────────────────────────────────────

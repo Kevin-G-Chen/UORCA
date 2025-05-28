@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
+#SBATCH --cpus-per-task=12
 #SBATCH --mem=16G
 #SBATCH --partition=tki_agpdev
-#SBATCH --constraint="knl"
+#SBATCH --constraint="clx"
 #SBATCH -t 0-6:00
 #SBATCH --array=0-{{ array_size }}%{{ max_parallel }}
 #SBATCH -o {{ logs_dir }}/run_%A_%a.out
