@@ -51,11 +51,14 @@ def save_analysis_info(ctx: RunContext[RNAseqCoreContext]):
         "kallisto_index_used": getattr(ctx.deps, 'kallisto_index_used', None),
         "tx2gene_file_used": getattr(ctx.deps, 'tx2gene_file_used', None),
         "analysis_success": getattr(ctx.deps, 'analysis_success', False),
+        "dataset_information": getattr(ctx.deps, 'dataset_information', None),
         "timestamp": datetime.datetime.now().isoformat()
     }
 
-    # Save to file
-    info_file = os.path.join(ctx.deps.output_dir, "analysis_info.json")
+    # Save to file in metadata directory
+    metadata_dir = os.path.join(ctx.deps.output_dir, "metadata")
+    os.makedirs(metadata_dir, exist_ok=True)
+    info_file = os.path.join(metadata_dir, "analysis_info.json")
     with open(info_file, "w") as f:
         json.dump(analysis_info, f, indent=2)
 

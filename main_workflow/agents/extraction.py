@@ -75,11 +75,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     ctx.deps.dataset_information = dataset_information
     logger.info("📑 Captured dataset information from GEO metadata")
 
-    # Save to a file for reference
-    info_path = meta_dir / "dataset_info.txt"
-    with open(info_path, 'w') as f:
-        f.write(dataset_information)
-    logger.info("💾 Saved dataset information to %s", info_path)
+    logger.info("💾 Dataset information captured in context for downstream use")
 
     # Extract species information from taxonomic ID
     species_name = "Unknown"
@@ -119,12 +115,12 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
         return None
 
   # ── wide sample table (now uses GEOparse phenotype_data) ────────────────
-    meta_wide = (
-        gse.phenotype_data
-          .reset_index()              # GSM ID becomes its own column
-          .rename(columns={"index": "GSM"})
-    )
-    logger.info("meta_wide.csv prepared (%d rows, %d cols)", len(meta_wide), meta_wide.shape[1])
+  meta_wide = (
+      gse.phenotype_data
+        .reset_index()              # GSM ID becomes its own column
+        .rename(columns={"index": "GSM"})
+  )
+  logger.info("meta_wide.csv prepared (%d rows, %d cols)", len(meta_wide), meta_wide.shape[1])
 
 
     # ── long GSM↔SRX↔SRR table ──────────────────────────────────────────────
@@ -161,7 +157,6 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
         how="left",
         validate="many_to_one"
     )
-    out_df.to_csv(meta_dir / "meta_long.csv", index=False)
 
     metadata_filename = f"{accession}_metadata.csv"
     out_df.to_csv(meta_dir / metadata_filename, index=False)
@@ -170,7 +165,21 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
 
     # expose merged table to downstream agents
     ctx.deps.metadata_df = out_df
-    ctx.deps.metadata_path = str(meta_dir / "meta_long.csv")
+    ctx.deps.metadata_path = str(meta_dir / metadata_filename)
+
+    # Clean up temporary files created by GEOparse
+    logger.info("🧹 Cleaning up temporary files")
+    cleanup_count = 0
+    for temp_file in meta_dir.glob("*.soft.gz"):
+        try:
+            temp_file.unlink()
+            cleanup_count += 1
+            logger.debug(f"Removed temporary file: {temp_file}")
+        except Exception as e:
+            logger.warning(f"Could not remove temporary file {temp_file}: {e}")
+    
+    if cleanup_count > 0:
+        logger.info(f"✅ Cleaned up {cleanup_count} temporary files")
 
     return (
         f"Fetched {len(gsms)} GSM samples.\n"
@@ -257,11 +266,8 @@ async def download_fastqs(
         }
 
     if need_prefetch:
-        lst = out_root / "srr_to_fetch.txt"
-        lst.write_text("\n".join(need_prefetch) + "\n")
-
-        # Use parallel prefetch if there are many SRRs
-        if len(need_prefetch) > 5:
+        # Use parallel prefetch for all cases to avoid creating temporary files
+        if len(need_prefetch) > 0:
             logger.info("🔄 Prefetching %d SRRs in parallel batches", len(need_prefetch))
             # Create batches of SRRs to avoid overwhelming the system
             batch_size = min(10, max(1, len(need_prefetch) // 2))
@@ -283,22 +289,6 @@ async def download_fastqs(
                         logger.error("❌ Failed to prefetch %s", res["srr"])
 
             logger.info("✅ Prefetch completed - %d/%d successful", successful_prefetch, len(need_prefetch))
-        else:
-            # For small numbers, use the original command to maintain compatibility
-            cmd = f"prefetch --option-file {lst} -O {prefetch_dir} -t https --progress"
-            logger.info("▶ Running prefetch: %s", cmd)
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await proc.communicate()
-            if stdout:
-                logger.info("📤 Prefetch stdout: %s", stdout.decode().strip())
-            if stderr:
-                logger.info("📤 Prefetch stderr: %s", stderr.decode().strip())
-            if proc.returncode != 0:
-                raise RuntimeError(f"prefetch failed with code {proc.returncode}")
 
     # Check which SRRs we need to convert to FASTQ
     need_conversion = [srr for srr in srrs if not fastq_ready(srr) and sra_path(srr).exists()]
