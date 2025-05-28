@@ -138,9 +138,19 @@ class ResultsIntegrator:
 
         for folder in analysis_folders:
             analysis_id = os.path.basename(folder)
-            info_file = os.path.join(folder, "analysis_info.json")
+            # Check both old and new locations for analysis_info.json
+            info_file_locations = [
+                os.path.join(folder, "metadata", "analysis_info.json"),  # New location
+                os.path.join(folder, "analysis_info.json")  # Old location for backward compatibility
+            ]
+            
+            info_file = None
+            for location in info_file_locations:
+                if os.path.isfile(location):
+                    info_file = location
+                    break
 
-            if os.path.isfile(info_file):
+            if info_file:
                 try:
                     with open(info_file, 'r') as f:
                         info = json.load(f)
@@ -213,8 +223,8 @@ class ResultsIntegrator:
         for analysis_folder in analysis_folders:
             analysis_id = os.path.basename(analysis_folder)
             for contrasts_file in [
-                os.path.join(analysis_folder, "contrasts.csv"),
-                os.path.join(analysis_folder, "metadata", "contrasts.csv")
+                os.path.join(analysis_folder, "metadata", "contrasts.csv"),  # New primary location
+                os.path.join(analysis_folder, "contrasts.csv")  # Old location for backward compatibility
             ]:
                 if os.path.isfile(contrasts_file):
                     try:
@@ -234,9 +244,9 @@ class ResultsIntegrator:
 
         # Then try global locations as fallback
         for contrasts_file in [
+            os.path.join(self.results_dir, "metadata", "contrasts.csv"),
             os.path.join(self.results_dir, "contrasts.csv"),
-            os.path.join(os.path.dirname(self.results_dir), "contrasts.csv"),
-            os.path.join(self.results_dir, "metadata", "contrasts.csv")
+            os.path.join(os.path.dirname(self.results_dir), "contrasts.csv")
         ]:
             if os.path.isfile(contrasts_file):
                 try:
@@ -926,8 +936,8 @@ class ResultsIntegrator:
             # Look inside the current analysis directory first
             analysis_dir = os.path.join(self.results_dir, analysis_id)
             sample_file_locations = [
-                os.path.join(analysis_dir, "edger_analysis_samples.csv"),
-                os.path.join(analysis_dir, "metadata", "edger_analysis_samples.csv"),
+                os.path.join(analysis_dir, "metadata", "edger_analysis_samples.csv"),  # New primary location
+                os.path.join(analysis_dir, "edger_analysis_samples.csv"),  # Old location for backward compatibility
                 os.path.join(self.results_dir, "edger_analysis_samples.csv"),
                 os.path.join(os.path.dirname(self.results_dir), "edger_analysis_samples.csv")
             ]
@@ -1169,8 +1179,8 @@ class ResultsIntegrator:
 
         # Try to look in an analysis-specific contrasts file (check multiple locations)
         for contrasts_file in [
-            os.path.join(self.results_dir, analysis_id, "contrasts.csv"),
-            os.path.join(self.results_dir, analysis_id, "metadata", "contrasts.csv"),
+            os.path.join(self.results_dir, analysis_id, "metadata", "contrasts.csv"),  # New primary location
+            os.path.join(self.results_dir, analysis_id, "contrasts.csv"),  # Old location for backward compatibility
             os.path.join(self.results_dir, "contrasts.csv")  # Also check global location
         ]:
             if os.path.isfile(contrasts_file):
@@ -1208,12 +1218,12 @@ class ResultsIntegrator:
         import re  # Ensure re is imported for pattern matching
         analysis_folders = self.find_analysis_folders()
 
-        for folder in analysis_folders:
-            analysis_id = os.path.basename(folder)
-            # Look for dataset_info.txt in various possible locations
+        for analysis_folder in analysis_folders:
+            analysis_id = os.path.basename(analysis_folder)
+            # Look for dataset_info.txt in various possible locations (though it's now stored in analysis_info.json)
             for info_path in [
-                os.path.join(folder, "metadata", "dataset_info.txt"),
-                os.path.join(folder, "dataset_info.txt"),
+                os.path.join(analysis_folder, "metadata", "dataset_info.txt"),
+                os.path.join(analysis_folder, "dataset_info.txt"),
                 os.path.join(self.results_dir, "metadata", "dataset_info.txt")
             ]:
                 if os.path.isfile(info_path):

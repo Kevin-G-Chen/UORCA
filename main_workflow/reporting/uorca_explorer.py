@@ -1482,10 +1482,8 @@ else:
         ### Troubleshooting
         - Make sure the path contains valid UORCA analysis results
         - Each analysis should have a directory structure with:
-          - RNAseqAnalysis/ directory
-          - CPM.csv file
-          - contrasts.csv file
-          - edger_analysis_samples.csv file
+          - RNAseqAnalysis/ directory with CPM.csv file
+          - metadata/ directory with contrasts.csv and edger_analysis_samples.csv files
         """
     )
 
