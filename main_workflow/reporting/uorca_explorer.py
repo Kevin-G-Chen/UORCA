@@ -21,18 +21,509 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 import sys
+import json
 from datetime import datetime
+from dataclasses import dataclass
+from typing import List, Dict, Any, Optional, Tuple, Set
+import statistics
+import numpy as np
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    # Try loading from current directory first, then parent directories
+    load_dotenv()
+    # Also try loading from project root
+    project_root = Path(__file__).parent.parent.parent
+    env_file = project_root / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+except ImportError:
+    # dotenv not available, continue without it
+    pass
 
 # Use current directory to import ResultsIntegration
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # ResultsIntegration.py is in the same directory
 from ResultsIntegration import ResultsIntegrator
 
+# AI Landing Page functionality - integrated directly
+try:
+    import openai
+    from openai import OpenAI
+    LANDING_PAGE_AVAILABLE = True
+except ImportError as e:
+    LANDING_PAGE_AVAILABLE = False
+    # Only show warning in sidebar, not main area
+
 # Helper function for contrast labels
 def short_label(full_label: str) -> str:
     """Create short labels for contrast multiselect display"""
     # keeps 'KO_vs_WT' out of 'GSE12345:KO_vs_WT – long sentence …'
     return full_label.split(":", 1)[-1].split(" –")[0].split(" - ")[0][:25]
+
+# ========================================================================
+# AI LANDING PAGE FUNCTIONALITY - INTEGRATED
+# ========================================================================
+
+@dataclass
+class ContrastSelection:
+    """Container for selected contrast with justification"""
+    analysis_id: str
+    contrast_id: str
+    relevance_score: float
+    justification: str
+    deg_count: int
+
+@dataclass
+class ThresholdSelection:
+    """Container for automatically selected statistical thresholds"""
+    fdr_cutoff: float
+    logfc_cutoff: float
+    min_frequency: int
+    justification: str
+
+@dataclass
+class LandingPageData:
+    """Container for all landing page data"""
+    selected_contrasts: List[ContrastSelection]
+    thresholds: ThresholdSelection
+    top_genes: List[str]
+    heatmap_fig: Optional[go.Figure]
+    gene_table: pd.DataFrame
+    narrative: str
+
+def generate_ai_landing_page(integrator, biological_prompt: str, max_contrasts: int = 8, max_genes: int = 50) -> Optional[LandingPageData]:
+    """
+    Generate AI-assisted landing page data using the provided integrator.
+    """
+    try:
+        # Step 1: Select relevant contrasts
+        selected_contrasts = select_relevant_contrasts(integrator, biological_prompt, max_contrasts)
+        if not selected_contrasts:
+            return None
+
+        # Step 2: Select optimal thresholds
+        thresholds = select_optimal_thresholds(selected_contrasts, biological_prompt)
+
+        # Step 3: Aggregate and rank genes
+        top_genes = aggregate_and_rank_genes(integrator, selected_contrasts, thresholds, max_genes)
+
+        # Step 4: Create visualizations
+        heatmap_fig = create_landing_heatmap(integrator, top_genes, selected_contrasts, thresholds)
+        gene_table = create_gene_table(integrator, top_genes, selected_contrasts, thresholds)
+
+        # Step 5: Generate narrative
+        narrative = generate_narrative(selected_contrasts, thresholds, top_genes, biological_prompt)
+
+        return LandingPageData(
+            selected_contrasts=selected_contrasts,
+            thresholds=thresholds,
+            top_genes=top_genes,
+            heatmap_fig=heatmap_fig,
+            gene_table=gene_table,
+            narrative=narrative
+        )
+
+    except Exception as e:
+        st.error(f"Error generating AI landing page: {str(e)}")
+        return None
+
+def select_relevant_contrasts(integrator, biological_prompt: str, max_contrasts: int) -> List[ContrastSelection]:
+    """Select the most relevant contrasts using AI scoring or fallback methods."""
+
+    # Get all available contrasts
+    all_contrasts = []
+    for analysis_id, contrasts in integrator.deg_data.items():
+        for contrast_id in contrasts.keys():
+            description = integrator._get_contrast_description(analysis_id, contrast_id)
+
+            # Count potential DEGs
+            df = contrasts[contrast_id]
+            deg_count = 0
+            if 'adj.P.Val' in df.columns and 'logFC' in df.columns:
+                deg_count = ((df['adj.P.Val'] < 0.1) & (abs(df['logFC']) > 0.5)).sum()
+
+            all_contrasts.append({
+                'analysis_id': analysis_id,
+                'contrast_id': contrast_id,
+                'description': description,
+                'deg_count': deg_count
+            })
+
+    if not all_contrasts:
+        return []
+
+    # Try AI scoring first, fall back to heuristic if needed
+    try:
+        if LANDING_PAGE_AVAILABLE and os.getenv("OPENAI_API_KEY"):
+            return score_contrasts_with_ai(all_contrasts, biological_prompt, max_contrasts)
+        else:
+            return score_contrasts_heuristic(all_contrasts, max_contrasts)
+    except Exception as e:
+        st.warning(f"AI scoring failed, using fallback: {str(e)}")
+        return score_contrasts_heuristic(all_contrasts, max_contrasts)
+
+def score_contrasts_with_ai(contrasts: List[Dict], biological_prompt: str, max_contrasts: int) -> List[ContrastSelection]:
+    """Score contrasts using OpenAI API."""
+
+    client = OpenAI()
+
+    # Prepare contrast descriptions
+    contrast_descriptions = []
+    for i, contrast in enumerate(contrasts):
+        contrast_descriptions.append(
+            f"{i+1}. {contrast['analysis_id']}_{contrast['contrast_id']}: "
+            f"{contrast['description']} (Potential DEGs: {contrast['deg_count']})"
+        )
+
+    prompt = f"""
+You are an expert RNA-seq analyst. Score the biological relevance of these differential expression contrasts for the research context: "{biological_prompt}"
+
+Available contrasts:
+{chr(10).join(contrast_descriptions)}
+
+For each contrast, provide:
+1. Relevance score (0-10, where 10 is most relevant)
+2. Brief justification (1-2 sentences)
+
+Consider:
+- Biological significance for the research question
+- Number of potential DEGs (more is generally better)
+- Clarity of experimental design
+- Scientific interest and interpretability
+
+Respond in JSON format:
+{{
+  "scored_contrasts": [
+    {{
+      "contrast_number": 1,
+      "relevance_score": 8.5,
+      "justification": "This contrast directly addresses the research question by comparing..."
+    }},
+    ...
+  ]
+}}
+"""
+
+    try:
+        response = client.chat.completions.create(
+            model="o4-mini",
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"}
+        )
+
+        result = json.loads(response.choices[0].message.content)
+        scored_contrasts = []
+
+        for score_data in result.get("scored_contrasts", []):
+            idx = score_data["contrast_number"] - 1
+            if 0 <= idx < len(contrasts):
+                contrast = contrasts[idx]
+                scored_contrasts.append(ContrastSelection(
+                    analysis_id=contrast['analysis_id'],
+                    contrast_id=contrast['contrast_id'],
+                    relevance_score=score_data["relevance_score"],
+                    justification=score_data["justification"],
+                    deg_count=contrast['deg_count']
+                ))
+
+        # Sort by relevance score and return top ones
+        scored_contrasts.sort(key=lambda x: x.relevance_score, reverse=True)
+        return scored_contrasts[:max_contrasts]
+
+    except Exception as e:
+        raise Exception(f"OpenAI API call failed: {str(e)}")
+
+def score_contrasts_heuristic(contrasts: List[Dict], max_contrasts: int) -> List[ContrastSelection]:
+    """Fallback scoring based on DEG counts and description informativeness."""
+
+    scored_contrasts = []
+
+    for contrast in contrasts:
+        # Simple heuristic: score based on DEG count and description
+        base_score = min(8, contrast['deg_count'] / 100 * 6)  # Up to 6 points for DEG count
+        desc_score = min(2, len(contrast['description'].split()) / 20 * 2)  # Up to 2 points for description
+
+        total_score = base_score + desc_score
+        justification = f"Selected based on {contrast['deg_count']} potential DEGs and experimental design clarity."
+
+        scored_contrasts.append(ContrastSelection(
+            analysis_id=contrast['analysis_id'],
+            contrast_id=contrast['contrast_id'],
+            relevance_score=total_score,
+            justification=justification,
+            deg_count=contrast['deg_count']
+        ))
+
+    # Sort by score and return top ones
+    scored_contrasts.sort(key=lambda x: x.relevance_score, reverse=True)
+    return scored_contrasts[:max_contrasts]
+
+def select_optimal_thresholds(selected_contrasts: List[ContrastSelection], biological_prompt: str) -> ThresholdSelection:
+    """Select optimal statistical thresholds."""
+
+    total_contrasts = len(selected_contrasts)
+    median_degs = np.median([c.deg_count for c in selected_contrasts]) if selected_contrasts else 0
+
+    # Try AI threshold selection first
+    try:
+        if LANDING_PAGE_AVAILABLE and os.getenv("OPENAI_API_KEY"):
+            return select_thresholds_with_ai(total_contrasts, median_degs, biological_prompt)
+        else:
+            return select_thresholds_heuristic(total_contrasts, median_degs)
+    except Exception:
+        return select_thresholds_heuristic(total_contrasts, median_degs)
+
+def select_thresholds_with_ai(n_contrasts: int, median_degs: float, biological_prompt: str) -> ThresholdSelection:
+    """Use AI to select optimal thresholds."""
+
+    client = OpenAI()
+
+    prompt = f"""
+You are an expert statistician selecting optimal thresholds for RNA-seq differential expression analysis.
+
+Dataset characteristics:
+- Number of contrasts: {n_contrasts}
+- Median potential DEGs per contrast: {median_degs:.0f}
+- Research context: {biological_prompt}
+
+Select appropriate thresholds considering:
+1. FDR cutoff: Stricter if few contrasts or small samples (0.01-0.1 range)
+2. Log fold change cutoff: Higher for well-powered studies (0.5-2.0 range)
+3. Minimum frequency: How many contrasts a gene must appear in (1 to {max(1, n_contrasts//3)})
+
+Provide scientific justification for each choice.
+
+Respond in JSON format:
+{{
+  "fdr_cutoff": 0.05,
+  "logfc_cutoff": 1.0,
+  "min_frequency": 2,
+  "justification": "Selected FDR=0.05 for balanced sensitivity/specificity given the dataset size..."
+}}
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"}
+    )
+
+    result = json.loads(response.choices[0].message.content)
+    return ThresholdSelection(
+        fdr_cutoff=result["fdr_cutoff"],
+        logfc_cutoff=result["logfc_cutoff"],
+        min_frequency=result["min_frequency"],
+        justification=result["justification"]
+    )
+
+def select_thresholds_heuristic(n_contrasts: int, median_degs: float) -> ThresholdSelection:
+    """Fallback threshold selection using heuristics."""
+
+    if n_contrasts < 3 or median_degs < 20:
+        fdr_cutoff = 0.01
+        logfc_cutoff = 1.5
+    elif median_degs > 100:
+        fdr_cutoff = 0.05
+        logfc_cutoff = 1.0
+    else:
+        fdr_cutoff = 0.05
+        logfc_cutoff = 1.2
+
+    min_frequency = max(1, min(3, n_contrasts // 3))
+
+    justification = f"Heuristic selection: FDR={fdr_cutoff} and logFC={logfc_cutoff} based on {n_contrasts} contrasts and median {median_degs:.0f} DEGs."
+
+    return ThresholdSelection(
+        fdr_cutoff=fdr_cutoff,
+        logfc_cutoff=logfc_cutoff,
+        min_frequency=min_frequency,
+        justification=justification
+    )
+
+def aggregate_and_rank_genes(integrator, selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection, max_genes: int) -> List[str]:
+    """Aggregate DEGs across contrasts and rank by frequency and effect size."""
+
+    gene_stats = {}
+
+    for contrast in selected_contrasts:
+        if contrast.analysis_id in integrator.deg_data:
+            if contrast.contrast_id in integrator.deg_data[contrast.analysis_id]:
+                df = integrator.deg_data[contrast.analysis_id][contrast.contrast_id]
+
+                if 'Gene' in df.columns and 'adj.P.Val' in df.columns and 'logFC' in df.columns:
+                    # Filter significant genes
+                    sig_genes = df[
+                        (df['adj.P.Val'] < thresholds.fdr_cutoff) &
+                        (abs(df['logFC']) > thresholds.logfc_cutoff)
+                    ]
+
+                    for _, row in sig_genes.iterrows():
+                        gene = row['Gene']
+                        logfc = abs(row['logFC'])
+
+                        if gene not in gene_stats:
+                            gene_stats[gene] = {'frequency': 0, 'max_logfc': 0}
+
+                        gene_stats[gene]['frequency'] += 1
+                        gene_stats[gene]['max_logfc'] = max(gene_stats[gene]['max_logfc'], logfc)
+
+    # Filter by minimum frequency
+    filtered_genes = {
+        gene: stats for gene, stats in gene_stats.items()
+        if stats['frequency'] >= thresholds.min_frequency
+    }
+
+    # Rank by frequency then by max log fold change
+    ranked_genes = sorted(
+        filtered_genes.items(),
+        key=lambda x: (x[1]['frequency'], x[1]['max_logfc']),
+        reverse=True
+    )
+
+    return [gene for gene, _ in ranked_genes[:max_genes]]
+
+def create_landing_heatmap(integrator, top_genes: List[str], selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection) -> Optional[go.Figure]:
+    """Create heatmap for landing page."""
+
+    try:
+        contrast_pairs = [(c.analysis_id, c.contrast_id) for c in selected_contrasts]
+
+        fig = integrator.create_lfc_heatmap(
+            genes=top_genes,
+            contrasts=contrast_pairs,
+            output_file=None,
+            p_value_threshold=thresholds.fdr_cutoff,
+            lfc_threshold=thresholds.logfc_cutoff,
+            hide_empty_rows_cols=True,
+            font_size=11
+        )
+
+        if fig:
+            fig.update_layout(
+                title="Key Differentially Expressed Genes Across Selected Contrasts",
+                title_font_size=16,
+                height=max(400, min(800, len(top_genes) * 20))
+            )
+
+        return fig
+    except Exception as e:
+        st.error(f"Error creating heatmap: {str(e)}")
+        return None
+
+def create_gene_table(integrator, top_genes: List[str], selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection) -> pd.DataFrame:
+    """Create gene summary table."""
+
+    gene_data = []
+
+    for gene in top_genes:
+        appearances = 0
+        max_logfc = 0
+        min_pval = 1.0
+        contrast_list = []
+
+        for contrast in selected_contrasts:
+            if contrast.analysis_id in integrator.deg_data:
+                if contrast.contrast_id in integrator.deg_data[contrast.analysis_id]:
+                    df = integrator.deg_data[contrast.analysis_id][contrast.contrast_id]
+
+                    if 'Gene' in df.columns:
+                        gene_row = df[df['Gene'] == gene]
+                        if not gene_row.empty:
+                            row = gene_row.iloc[0]
+
+                            if ('adj.P.Val' in df.columns and 'logFC' in df.columns and
+                                row['adj.P.Val'] < thresholds.fdr_cutoff and
+                                abs(row['logFC']) > thresholds.logfc_cutoff):
+
+                                appearances += 1
+                                max_logfc = max(max_logfc, abs(row['logFC']))
+                                min_pval = min(min_pval, row['adj.P.Val'])
+                                contrast_list.append(f"{contrast.analysis_id}_{contrast.contrast_id}")
+
+        if appearances > 0:
+            gene_data.append({
+                'Gene': gene,
+                'Frequency': appearances,
+                'Max_LogFC': round(max_logfc, 2),
+                'Min_AdjPVal': f"{min_pval:.2e}" if min_pval < 0.01 else f"{min_pval:.3f}",
+                'Contrasts': '; '.join(contrast_list[:3]) + ('...' if len(contrast_list) > 3 else '')
+            })
+
+    df = pd.DataFrame(gene_data)
+    if not df.empty:
+        df = df.sort_values(['Frequency', 'Max_LogFC'], ascending=[False, False])
+    return df
+
+def generate_narrative(selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection, top_genes: List[str], biological_prompt: str) -> str:
+    """Generate interpretive narrative."""
+
+    try:
+        if LANDING_PAGE_AVAILABLE and os.getenv("OPENAI_API_KEY"):
+            return generate_narrative_with_ai(selected_contrasts, thresholds, top_genes, biological_prompt)
+        else:
+            return generate_narrative_fallback(selected_contrasts, thresholds, top_genes, biological_prompt)
+    except Exception:
+        return generate_narrative_fallback(selected_contrasts, thresholds, top_genes, biological_prompt)
+
+def generate_narrative_with_ai(selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection, top_genes: List[str], biological_prompt: str) -> str:
+    """Generate narrative using AI."""
+
+    client = OpenAI()
+
+    contrast_summaries = []
+    for contrast in selected_contrasts:
+        contrast_summaries.append(f"- {contrast.contrast_id}: (Score: {contrast.relevance_score:.1f})")
+
+    gene_list_str = ', '.join(top_genes[:10])
+    if len(top_genes) > 10:
+        gene_list_str += f' and {len(top_genes)-10} others'
+
+    prompt = f"""
+You are an expert computational biologist writing a clear, accessible summary of RNA-seq differential expression results.
+
+Research Context: {biological_prompt}
+
+Analysis Summary:
+- {len(selected_contrasts)} biologically relevant contrasts were automatically selected
+- Statistical thresholds: FDR < {thresholds.fdr_cutoff}, |log2FC| > {thresholds.logfc_cutoff}
+- {len(top_genes)} key differentially expressed genes identified
+
+Selected Contrasts:
+{chr(10).join(contrast_summaries)}
+
+Top Genes: {gene_list_str}
+
+Write a 2-3 paragraph narrative that:
+1. Summarizes the key findings in accessible language
+2. Highlights the most important genes and patterns
+3. Provides biological context and potential significance
+4. Maintains scientific accuracy while being readable
+
+Focus on biological insights rather than technical details.
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=1000
+    )
+
+    return response.choices[0].message.content.strip()
+
+def generate_narrative_fallback(selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection, top_genes: List[str], biological_prompt: str) -> str:
+    """Fallback narrative generation."""
+
+    narrative = f"""
+This analysis automatically identified {len(selected_contrasts)} biologically relevant experimental contrasts related to {biological_prompt}. Using statistically rigorous thresholds (FDR < {thresholds.fdr_cutoff}, |log2FC| > {thresholds.logfc_cutoff}), we discovered {len(top_genes)} key genes that show consistent differential expression patterns.
+
+The most frequently dysregulated genes include {', '.join(top_genes[:5])}{'and others' if len(top_genes) > 5 else ''}. These genes appear across multiple experimental conditions, suggesting they may play central roles in the biological processes under investigation.
+
+The results provide a foundation for understanding the molecular mechanisms underlying the observed phenotypes and suggest potential targets for further experimental validation.
+"""
+
+    return narrative
 
 # Check if fragment is available (Streamlit >=1.33.0)
 # If not, fallback to experimental_fragment
@@ -102,9 +593,11 @@ st.markdown("""
 st.sidebar.title("🧬 UORCA Explorer")
 
 # Get the default results directory
-default_dir = os.path.join(os.path.dirname(os.path.dirname(script_dir)), "UORCA_results")
-if not os.path.exists(default_dir):
-    default_dir = os.path.dirname(os.path.dirname(script_dir))
+default_dir = os.getenv("UORCA_DEFAULT_RESULTS_DIR")
+if not default_dir:
+    default_dir = os.path.join(os.path.dirname(os.path.dirname(script_dir)), "UORCA_results")
+    if not os.path.exists(default_dir):
+        default_dir = os.path.dirname(os.path.dirname(script_dir))
 
 # absolute path on the server
 results_dir = st.sidebar.text_input(
@@ -132,6 +625,57 @@ with st.sidebar.status("Loading data...", expanded=True) as status:
         status.update(label="No data found. Please check the directory path.", state="error")
     else:
         status.update(label=f"✅ Loaded {len(ri.cpm_data)} datasets", state="complete")
+
+# Show AI landing page availability status
+api_key_available = bool(os.getenv("OPENAI_API_KEY"))
+
+if LANDING_PAGE_AVAILABLE and api_key_available:
+    st.sidebar.success("🤖 AI Landing Page: Fully Available")
+elif LANDING_PAGE_AVAILABLE and not api_key_available:
+    st.sidebar.warning("🤖 AI Landing Page: Partial (Heuristic Mode)")
+    with st.sidebar.expander("ℹ️ Enable Full AI Features", expanded=False):
+        st.markdown("""
+        **Current Status:** OpenAI package installed ✅, but API key missing ⚠️
+
+        **Available:** Heuristic contrast selection and gene ranking
+        **Missing:** AI-powered relevance scoring and narrative generation
+
+        **To enable full AI features:**
+
+        Option 1 - Environment variable:
+        ```bash
+        export OPENAI_API_KEY=your_key_here
+        ```
+
+        Option 2 - .env file (recommended):
+        Create a `.env` file in the project root:
+        ```
+        OPENAI_API_KEY=your_key_here
+        ```
+
+        The landing page works without API key but uses simpler algorithms.
+        """)
+else:
+    st.sidebar.error("🤖 AI Landing Page: Not Available")
+    with st.sidebar.expander("ℹ️ Enable AI Features", expanded=False):
+        st.markdown("""
+        **Current Status:** OpenAI package not available ❌
+
+        **To enable AI landing page:**
+        ```bash
+        uv add openai
+        ```
+
+        Then set your API key:
+        - Environment: `export OPENAI_API_KEY=your_key`
+        - .env file: Add `OPENAI_API_KEY=your_key` to `.env`
+
+        AI features provide:
+        - Automatic contrast relevance scoring
+        - Optimal threshold selection
+        - Biological narrative generation
+        - Interpretive summaries
+        """)
 
 # Only show the rest of the UI if we successfully loaded data
 if ri and ri.cpm_data:
@@ -511,7 +1055,7 @@ if ri and ri.cpm_data:
     # These options have been moved up in the UI
 
     # ---------- 2. main tabs ---------------------------------------
-    tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs(["Selections", "Heat-map", "Expression", "Analysis Plots", "Dataset Info", "Contrast Info"])
+    tab_landing, tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎨 Landing Page", "📊 Selections", "🌡️ Heat-map", "🎻 Expression", "📈 Analysis Plots", "📋 Dataset Info", "🔍 Contrast Info"])
 
     # Initialize session state for selections if not exists
     if 'selected_datasets' not in st.session_state:
@@ -529,6 +1073,260 @@ if ri and ri.cpm_data:
         st.session_state['selected_contrasts'] = selected_contrasts
 
 
+
+    with tab_landing:
+        st.header("🎨 AI-Assisted Landing Page")
+        st.markdown("""
+        **Generate intelligent summaries of your RNA-seq results with minimal interaction.**
+
+        This AI-powered landing page automatically selects the most relevant contrasts, determines optimal statistical thresholds,
+        and creates interpretive narratives for your differential expression analysis.
+        """)
+
+        # Landing page controls
+        col1, col2 = st.columns([2, 1])
+
+        with col1:
+            biological_prompt = st.text_area(
+                "🧬 Research Context",
+                value="General differential expression analysis",
+                height=100,
+                help="Describe your biological research question. This guides the AI in selecting relevant contrasts and generating interpretations.",
+                placeholder="e.g., 'MYCN amplification effects in neuroblastoma tumors' or 'immune checkpoint response in melanoma'"
+            )
+
+        with col2:
+            st.markdown("**⚙️ Options**")
+            max_contrasts_landing = st.slider("Max contrasts", 3, 15, 8, key="landing_max_contrasts")
+            max_genes_landing = st.slider("Max genes", 20, 100, 50, key="landing_max_genes")
+
+            generate_landing = st.button(
+                "🚀 Generate AI Landing Page",
+                type="primary",
+                use_container_width=True,
+                help="Uses AI to automatically select relevant contrasts and create interpretive summaries"
+            )
+
+        # Check if landing page functionality is available
+        if not LANDING_PAGE_AVAILABLE:
+            st.error("❌ AI landing page functionality requires OpenAI package and landing page module.")
+            st.info("💡 To enable: `pip install openai` and ensure landing_page_generator.py is available.")
+        elif not ri or not ri.cpm_data:
+            st.info("📁 Please load data first using the sidebar controls.")
+        elif generate_landing:
+            # Generate AI-assisted landing page
+            with st.spinner("🤖 AI is analyzing your data and generating the landing page..."):
+                try:
+                    # Generate landing page data using integrated functionality
+                    landing_data = generate_ai_landing_page(
+                        integrator=ri,
+                        biological_prompt=biological_prompt,
+                        max_contrasts=max_contrasts_landing,
+                        max_genes=max_genes_landing
+                    )
+
+                    if landing_data:
+                        # Store in session state
+                        st.session_state.landing_data = landing_data
+                    else:
+                        st.error("❌ Failed to generate landing page - no suitable data found.")
+
+                except Exception as e:
+                    st.error(f"❌ Error generating landing page: {str(e)}")
+                    if "openai" in str(e).lower():
+                        st.info("💡 Tip: Make sure your OpenAI API key is set as an environment variable: `export OPENAI_API_KEY=your_key`")
+
+        # Display landing page results if available
+        if hasattr(st.session_state, 'landing_data') and st.session_state.landing_data:
+            landing_data = st.session_state.landing_data
+
+            st.success("✅ AI landing page generated successfully!")
+
+            # Summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("🔍 Selected Contrasts", len(landing_data.selected_contrasts))
+            with col2:
+                st.metric("🧬 Key Genes", len(landing_data.top_genes))
+            with col3:
+                st.metric("📊 FDR Threshold", f"{landing_data.thresholds.fdr_cutoff}")
+            with col4:
+                st.metric("📈 LogFC Threshold", f"{landing_data.thresholds.logfc_cutoff}")
+
+            # Key findings narrative
+            st.markdown("### 📝 AI-Generated Key Findings")
+            st.markdown(f"""
+            <div style="background: #e8f4fd; padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid #3498db; margin: 1rem 0;">
+            {landing_data.narrative}
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Analysis parameters
+            st.markdown("### 🎯 Automatic Parameter Selection")
+            st.markdown(f"""
+            <div style="background: #f0f8e8; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #27ae60; margin: 1rem 0;">
+            <strong>Statistical Thresholds:</strong> FDR < {landing_data.thresholds.fdr_cutoff}, |log2FC| > {landing_data.thresholds.logfc_cutoff}, Min. frequency ≥ {landing_data.thresholds.min_frequency}<br>
+            <strong>AI Justification:</strong> {landing_data.thresholds.justification}
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Tabbed results view
+            landing_tab1, landing_tab2, landing_tab3 = st.tabs(["🔍 AI-Selected Contrasts", "🧬 Top Genes", "🌡️ Expression Heatmap"])
+
+            with landing_tab1:
+                st.markdown("#### Contrasts Selected by AI with Justifications")
+
+                # Create contrast DataFrame
+                contrast_df = pd.DataFrame([
+                    {
+                        "Dataset": c.analysis_id,
+                        "Contrast": c.contrast_id,
+                        "Relevance Score": f"{c.relevance_score:.1f}",
+                        "DEG Count": c.deg_count,
+                        "AI Justification": c.justification
+                    }
+                    for c in landing_data.selected_contrasts
+                ])
+
+                st.dataframe(
+                    contrast_df,
+                    use_container_width=True,
+                    column_config={
+                        "AI Justification": st.column_config.TextColumn(
+                            "AI Justification",
+                            width="large"
+                        ),
+                        "Relevance Score": st.column_config.TextColumn("Relevance Score", width="small"),
+                        "DEG Count": st.column_config.NumberColumn("DEG Count", width="small")
+                    }
+                )
+
+                # Auto-apply selections to other tabs
+                if st.button("📋 Apply These Selections to Other Tabs", type="secondary"):
+                    # Update session state for other tabs
+                    selected_datasets = set(c.analysis_id for c in landing_data.selected_contrasts)
+                    selected_contrasts = set((c.analysis_id, c.contrast_id) for c in landing_data.selected_contrasts)
+
+                    st.session_state['selected_datasets'] = selected_datasets
+                    st.session_state['selected_contrasts'] = selected_contrasts
+
+                    st.success("✅ Selections applied! Switch to Heat-map or Expression tabs to see visualizations with these selections.")
+
+            with landing_tab2:
+                st.markdown("#### Top Differentially Expressed Genes")
+
+                if not landing_data.gene_table.empty:
+                    st.dataframe(
+                        landing_data.gene_table,
+                        use_container_width=True,
+                        column_config={
+                            "Gene": st.column_config.TextColumn("Gene Symbol", width="medium"),
+                            "Frequency": st.column_config.NumberColumn("Frequency", help="Number of contrasts where gene is significant"),
+                            "Max_LogFC": st.column_config.NumberColumn("Max |Log2FC|", format="%.2f"),
+                            "Min_AdjPVal": st.column_config.TextColumn("Min Adj. P-value"),
+                            "Contrasts": st.column_config.TextColumn("Contrasts", width="large")
+                        }
+                    )
+
+                    # Gene list for easy copying
+                    with st.expander("📋 Gene List (for external tools)", expanded=False):
+                        gene_list_text = '\n'.join(landing_data.top_genes)
+                        st.text_area(
+                            "Copy gene symbols:",
+                            value=gene_list_text,
+                            height=150,
+                            help="Gene symbols, one per line. Copy and paste into other tools like DAVID, Enrichr, etc."
+                        )
+                else:
+                    st.info("No genes met the AI-selected significance criteria.")
+
+            with landing_tab3:
+                st.markdown("#### AI-Generated Expression Heatmap")
+
+                if landing_data.heatmap_fig:
+                    st.plotly_chart(landing_data.heatmap_fig, use_container_width=True)
+
+                    st.markdown("""
+                    💡 **How to interpret this AI-generated heatmap:**
+                    - Each row represents a gene, each column represents a biological contrast
+                    - Colors indicate log2 fold change: red (upregulated), blue (downregulated), white (not significant)
+                    - Hover over cells to see detailed information including contrast descriptions
+                    - Genes and contrasts are automatically clustered to reveal biological patterns
+                    - Only genes meeting AI-selected statistical thresholds are colored
+                    """)
+                else:
+                    st.warning("Could not generate heatmap. This may occur if no genes meet the AI-selected significance criteria.")
+
+            # Export options
+            st.markdown("---")
+            st.markdown("### 💾 Export AI Results")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if not landing_data.gene_table.empty:
+                    csv_data = landing_data.gene_table.to_csv(index=False)
+                    st.download_button(
+                        label="📊 Download Gene Table CSV",
+                        data=csv_data,
+                        file_name=f"ai_selected_genes_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+
+            with col2:
+                # Create a summary report
+                summary_data = {
+                    'research_context': biological_prompt,
+                    'selected_contrasts': len(landing_data.selected_contrasts),
+                    'key_genes': len(landing_data.top_genes),
+                    'thresholds': {
+                        'fdr': landing_data.thresholds.fdr_cutoff,
+                        'logfc': landing_data.thresholds.logfc_cutoff,
+                        'min_frequency': landing_data.thresholds.min_frequency
+                    },
+                    'ai_narrative': landing_data.narrative,
+                    'generated_at': pd.Timestamp.now().isoformat()
+                }
+
+                st.download_button(
+                    label="📄 Download AI Summary JSON",
+                    data=json.dumps(summary_data, indent=2),
+                    file_name=f"ai_landing_summary_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json"
+                )
+
+        elif LANDING_PAGE_AVAILABLE:
+            # Show helpful information about the landing page
+            st.markdown("---")
+            st.markdown("### 🚀 Get Started with AI-Assisted Analysis")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("""
+                **🤖 What the AI Landing Page Does:**
+
+                1. **Smart Contrast Selection**: AI analyzes all your contrasts and picks the most biologically relevant ones
+                2. **Optimal Thresholds**: Automatically determines the best statistical cutoffs for your data
+                3. **Gene Prioritization**: Ranks genes by importance across multiple contrasts
+                4. **Biological Interpretation**: Generates accessible summaries of your findings
+                5. **Interactive Visualizations**: Creates publication-ready plots with detailed annotations
+                """)
+
+            with col2:
+                st.markdown("""
+                **💡 Tips for Best Results:**
+
+                - **Be Specific**: Describe your research focus (e.g., "MYCN amplification in neuroblastoma")
+                - **Include Context**: Mention key pathways, genes, or processes of interest
+                - **State Comparisons**: Specify what you're comparing (tumor vs normal, treated vs control)
+                - **Add Goals**: Include what you hope to discover or validate
+
+                **Example Prompts:**
+                - "Immune checkpoint response in melanoma patients"
+                - "Developmental gene expression in neural differentiation"
+                - "Drug resistance mechanisms in cancer cell lines"
+                """)
 
     with tab_sel:
         st.header("📊 Selections")
