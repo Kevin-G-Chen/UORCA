@@ -25,77 +25,7 @@ import json
 from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple, Set
-import statistics
 import numpy as np
-try:
-    from scipy import stats
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-    # Implement fallback normal distribution functions
-    class NormalDistribution:
-        @staticmethod
-        def isf(p):
-            """Inverse survival function (inverse of 1-cdf) - approximation."""
-            if p <= 0:
-                return float('inf')
-            if p >= 1:
-                return float('-inf')
-
-            # Use Box-Muller approximation for inverse normal
-            # This is a simple approximation - not as accurate as scipy
-            if p > 0.5:
-                return -NormalDistribution.isf(1 - p)
-
-            # Rational approximation for inverse normal CDF
-            # Based on Beasley-Springer-Moro algorithm
-            a = [0, -3.969683028665376e+01, 2.209460984245205e+02, -2.759285104469687e+02, 1.383577518672690e+02, -3.066479806614716e+01, 2.506628277459239e+00]
-            b = [0, -5.447609879822406e+01, 1.615858368580409e+02, -1.556989798598866e+02, 6.680131188771972e+01, -1.328068155288572e+01]
-
-            if p < 1e-8:
-                return -8.0  # Approximate for very small p
-
-            y = math.sqrt(-2.0 * math.log(p))
-
-            num = a[6]
-            for i in range(5, -1, -1):
-                num = num * y + a[i]
-
-            den = b[5]
-            for i in range(4, -1, -1):
-                den = den * y + b[i]
-
-            return y + num / den
-
-        @staticmethod
-        def sf(x):
-            """Survival function (1-cdf) - approximation."""
-            # Complementary error function approximation
-            # For normal distribution: sf(x) = 0.5 * erfc(x/sqrt(2))
-            if x > 6:
-                return 0.0
-            if x < -6:
-                return 1.0
-
-            # Abramowitz and Stegun approximation for erfc
-            z = abs(x) / math.sqrt(2)
-            t = 1.0 / (1.0 + 0.5 * z)
-
-            erfc = t * math.exp(-z*z - 1.26551223 + t * (1.00002368 + t * (0.37409196 +
-                   t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 +
-                   t * (-1.13520398 + t * (1.48851587 + t * (-0.82215223 +
-                   t * 0.17087277)))))))))
-
-            if x >= 0:
-                return 0.5 * erfc
-            else:
-                return 1.0 - 0.5 * erfc
-
-    # Create a stats-like object for compatibility
-    class StatsModule:
-        norm = NormalDistribution()
-
-    stats = StatsModule()
 
 import re
 from collections import Counter
@@ -166,28 +96,33 @@ class LandingPageData:
     gene_table: pd.DataFrame
     narrative: str
 
-def generate_ai_landing_page(integrator, biological_prompt: str, max_contrasts: int = 8, max_genes: int = 50) -> Optional[LandingPageData]:
+def generate_ai_landing_page(integrator, biological_prompt: str, max_genes: int = 50) -> Optional[LandingPageData]:
     """
     Generate AI-assisted landing page data using the provided integrator.
     """
     try:
-        # Step 1: Select relevant contrasts
-        selected_contrasts = select_relevant_contrasts(integrator, biological_prompt, max_contrasts)
+        # Step 1: Select relevant contrasts using LLM
+        selected_contrasts = select_contrasts_with_llm(integrator, biological_prompt)
         if not selected_contrasts:
             return None
 
-        # Step 2: Select optimal thresholds
-        thresholds = select_optimal_thresholds(selected_contrasts, biological_prompt)
+        # Step 2: Select genes based on simple criteria
+        top_genes = select_genes_simple(integrator, selected_contrasts, max_genes)
 
-        # Step 3: Aggregate and rank genes
-        top_genes = aggregate_and_rank_genes(integrator, selected_contrasts, thresholds, max_genes)
+        # Step 3: Create visualizations
+        heatmap_fig = create_landing_heatmap(integrator, top_genes, selected_contrasts)
+        gene_table = create_gene_table_simple(integrator, top_genes, selected_contrasts)
 
-        # Step 4: Create visualizations
-        heatmap_fig = create_landing_heatmap(integrator, top_genes, selected_contrasts, thresholds)
-        gene_table = create_gene_table(integrator, top_genes, selected_contrasts, thresholds)
+        # Step 4: Generate narrative using LLM
+        narrative = generate_narrative_llm(integrator, selected_contrasts, top_genes, biological_prompt)
 
-        # Step 5: Generate narrative
-        narrative = generate_narrative(selected_contrasts, thresholds, top_genes, biological_prompt)
+        # Create simple thresholds object for compatibility
+        thresholds = ThresholdSelection(
+            fdr_cutoff=0.05,
+            logfc_cutoff=1.0,
+            min_frequency=1,
+            justification="Standard thresholds: FDR < 0.05, |logFC| > 1.0"
+        )
 
         return LandingPageData(
             selected_contrasts=selected_contrasts,
@@ -202,284 +137,40 @@ def generate_ai_landing_page(integrator, biological_prompt: str, max_contrasts: 
         st.error(f"Error generating AI landing page: {str(e)}")
         return None
 
-class SimpleTfidfVectorizer:
-    """Simple TF-IDF vectorizer as fallback for sklearn."""
 
-    def __init__(self, max_features=384, stop_words='english'):
-        self.max_features = max_features
-        self.vocabulary_ = {}
-        self.idf_ = {}
-        self.stop_words = self._get_stop_words() if stop_words == 'english' else set()
 
-    def _get_stop_words(self):
-        # Basic English stop words
-        return {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'him', 'her', 'us', 'them'}
 
-    def _tokenize(self, text):
-        # Simple tokenization
-        tokens = re.findall(r'\b\w+\b', text.lower())
-        return [t for t in tokens if t not in self.stop_words and len(t) > 1]
 
-    def fit(self, documents):
-        # Count document frequencies
-        df = Counter()
-        all_tokens = set()
 
-        for doc in documents:
-            tokens = set(self._tokenize(doc))
-            all_tokens.update(tokens)
-            for token in tokens:
-                df[token] += 1
 
-        # Select top features
-        n_docs = len(documents)
-        if len(all_tokens) > self.max_features:
-            # Sort by document frequency and take top features
-            sorted_tokens = sorted(df.items(), key=lambda x: x[1], reverse=True)
-            selected_tokens = [token for token, freq in sorted_tokens[:self.max_features]]
-        else:
-            selected_tokens = list(all_tokens)
 
-        # Build vocabulary
-        self.vocabulary_ = {token: i for i, token in enumerate(selected_tokens)}
 
-        # Calculate IDF
-        for token in selected_tokens:
-            self.idf_[token] = math.log(n_docs / (df[token] + 1))
 
-        return self
 
-    def transform(self, documents):
-        vectors = []
-        for doc in documents:
-            tokens = self._tokenize(doc)
-            tf = Counter(tokens)
 
-            # Create TF-IDF vector
-            vector = np.zeros(len(self.vocabulary_))
-            for token, count in tf.items():
-                if token in self.vocabulary_:
-                    idx = self.vocabulary_[token]
-                    tf_score = count / len(tokens) if len(tokens) > 0 else 0
-                    vector[idx] = tf_score * self.idf_.get(token, 0)
 
-            # Normalize
-            norm = np.linalg.norm(vector)
-            if norm > 0:
-                vector = vector / norm
 
-            vectors.append(vector)
 
-        return np.array(vectors)
 
-def get_text_embedding(text: str, use_api: bool = True) -> np.ndarray:
-    """Get embedding for text using OpenAI API or fallback to TF-IDF."""
-    if use_api and LANDING_PAGE_AVAILABLE and os.getenv("OPENAI_API_KEY"):
-        try:
-            client = OpenAI()
-            response = client.embeddings.create(
-                model="text-embedding-3-small",
-                input=text
-            )
-            return np.array(response.data[0].embedding)
-        except Exception:
-            # Fall back to TF-IDF if API fails
-            pass
 
-    # Fallback: Use TF-IDF with cached vectorizer
-    if not hasattr(get_text_embedding, 'vectorizer'):
-        get_text_embedding.vectorizer = SimpleTfidfVectorizer(max_features=384, stop_words='english')
-        get_text_embedding.fitted = False
 
-    # For fallback, we need to maintain a corpus to fit the vectorizer
-    if not hasattr(get_text_embedding, 'corpus'):
-        get_text_embedding.corpus = []
 
-    if text not in get_text_embedding.corpus:
-        get_text_embedding.corpus.append(text)
-        get_text_embedding.fitted = False
 
-    if not get_text_embedding.fitted:
-        try:
-            get_text_embedding.vectorizer.fit(get_text_embedding.corpus)
-            get_text_embedding.fitted = True
-        except:
-            # Return zero vector if fitting fails
-            return np.zeros(384)
 
-    try:
-        vector = get_text_embedding.vectorizer.transform([text])
-        return vector[0]
-    except:
-        return np.zeros(384)
 
-def shortlist_contrasts(query_text: str, contrasts: List[Dict], K: int = 30) -> List[Tuple[str, str, float]]:
-    """Stage A: Semantic eligibility filter using embeddings."""
-    if not contrasts:
-        return []
 
-    # Get query embedding
-    query_embedding = get_text_embedding(query_text)
 
-    # Get embeddings for all contrasts and compute similarities
-    scored_contrasts = []
-    for contrast in contrasts:
-        # Combine title and description for embedding
-        text = f"{contrast['contrast_id']} {contrast['description']}"
-        contrast_embedding = get_text_embedding(text)
 
-        # Compute cosine similarity
-        if np.linalg.norm(query_embedding) > 0 and np.linalg.norm(contrast_embedding) > 0:
-            similarity = np.dot(query_embedding, contrast_embedding) / (
-                np.linalg.norm(query_embedding) * np.linalg.norm(contrast_embedding)
-            )
-        else:
-            similarity = 0.0
 
-        scored_contrasts.append((contrast['analysis_id'], contrast['contrast_id'], similarity, contrast))
 
-    # Sort by similarity and return top K
-    scored_contrasts.sort(key=lambda x: x[2], reverse=True)
-    return scored_contrasts[:K]
 
-def calculate_contrast_metrics(integrator, analysis_id: str, contrast_id: str) -> Dict:
-    """Calculate quality metrics for a contrast."""
-    metrics = {
-        'sample_size': 0,
-        'deg_count': 0,
-        'deg_richness': 0.0,
-        'data_quality': 0.0
-    }
 
-    # Get sample size from analysis info
-    if analysis_id in integrator.analysis_info:
-        metrics['sample_size'] = integrator.analysis_info[analysis_id].get('number_of_samples', 0)
+# ========================================================================
+# SIMPLIFIED AI SELECTION FUNCTIONS
+# ========================================================================
 
-    # Get DEG statistics
-    if analysis_id in integrator.deg_data and contrast_id in integrator.deg_data[analysis_id]:
-        df = integrator.deg_data[analysis_id][contrast_id]
-
-        if 'adj.P.Val' in df.columns and 'logFC' in df.columns:
-            # Count significant DEGs
-            sig_genes = (df['adj.P.Val'] < 0.05) & (abs(df['logFC']) > 1.0)
-            metrics['deg_count'] = sig_genes.sum()
-
-            # Calculate DEG richness (proportion of tested genes that are significant)
-            total_genes = len(df)
-            metrics['deg_richness'] = metrics['deg_count'] / max(total_genes, 1)
-
-            # Data quality score based on range of fold changes and p-value distribution
-            if metrics['deg_count'] > 0:
-                sig_df = df[sig_genes]
-                if len(sig_df) > 0:
-                    lfc_range = sig_df['logFC'].max() - sig_df['logFC'].min()
-                    metrics['data_quality'] = min(lfc_range / 10.0, 1.0)  # Normalize to 0-1
-
-    return metrics
-
-def rank_contrasts(shortlisted: List[Tuple], integrator, max_final: int = 10,
-                  weights: Tuple[float, float, float, float] = (0.4, 0.2, 0.2, 0.2)) -> List[ContrastSelection]:
-    """Stage B: Evidence-aware ranking with diversity."""
-    if not shortlisted:
-        return []
-
-    # Prepare contrast data with metrics
-    candidates = []
-    for analysis_id, contrast_id, similarity, original_data in shortlisted:
-        metrics = calculate_contrast_metrics(integrator, analysis_id, contrast_id)
-
-        candidates.append({
-            'analysis_id': analysis_id,
-            'contrast_id': contrast_id,
-            'similarity': similarity,
-            'sample_size': metrics['sample_size'],
-            'deg_count': metrics['deg_count'],
-            'deg_richness': metrics['deg_richness'],
-            'data_quality': metrics['data_quality'],
-            'original_data': original_data
-        })
-
-    # Normalize metrics to 0-1 range
-    if candidates:
-        max_similarity = max(c['similarity'] for c in candidates)
-        max_sample_size = max(c['sample_size'] for c in candidates)
-        max_deg_count = max(c['deg_count'] for c in candidates)
-        max_deg_richness = max(c['deg_richness'] for c in candidates)
-
-        for c in candidates:
-            c['norm_similarity'] = c['similarity'] / max(max_similarity, 1e-6)
-            c['norm_sample_size'] = c['sample_size'] / max(max_sample_size, 1)
-            c['norm_deg_count'] = c['deg_count'] / max(max_deg_count, 1)
-            c['norm_deg_richness'] = c['deg_richness'] / max(max_deg_richness, 1e-6)
-
-    # Greedy selection with diversity
-    selected = []
-    selected_gene_sets = []
-
-    while candidates and len(selected) < max_final:
-        # Calculate diversity scores
-        for candidate in candidates:
-            # Get gene set for this contrast
-            gene_set = set()
-            if (candidate['analysis_id'] in integrator.deg_data and
-                candidate['contrast_id'] in integrator.deg_data[candidate['analysis_id']]):
-                df = integrator.deg_data[candidate['analysis_id']][candidate['contrast_id']]
-                if 'adj.P.Val' in df.columns and 'logFC' in df.columns:
-                    sig_genes = df[(df['adj.P.Val'] < 0.05) & (abs(df['logFC']) > 1.0)]
-                    gene_set = set(sig_genes['Gene'].tolist())
-
-            # Calculate diversity (1 - max jaccard with selected sets)
-            diversity = 1.0
-            if selected_gene_sets:
-                max_jaccard = 0.0
-                for selected_set in selected_gene_sets:
-                    if len(gene_set) > 0 and len(selected_set) > 0:
-                        intersection = len(gene_set & selected_set)
-                        union = len(gene_set | selected_set)
-                        jaccard = intersection / union if union > 0 else 0.0
-                        max_jaccard = max(max_jaccard, jaccard)
-                diversity = 1.0 - max_jaccard
-
-            # Calculate composite score
-            candidate['diversity'] = diversity
-            candidate['composite_score'] = (
-                weights[0] * candidate['norm_similarity'] +
-                weights[1] * candidate['norm_sample_size'] +
-                weights[2] * candidate['norm_deg_count'] +
-                weights[3] * candidate['diversity']
-            )
-
-        # Select best candidate
-        best_candidate = max(candidates, key=lambda x: x['composite_score'])
-
-        # Add to selected
-        selected.append(ContrastSelection(
-            analysis_id=best_candidate['analysis_id'],
-            contrast_id=best_candidate['contrast_id'],
-            relevance_score=best_candidate['composite_score'] * 10,  # Scale to 0-10
-            justification=f"Selected based on semantic similarity ({best_candidate['similarity']:.2f}), "
-                         f"sample size ({best_candidate['sample_size']}), "
-                         f"and {best_candidate['deg_count']} DEGs with diversity score {best_candidate['diversity']:.2f}",
-            deg_count=best_candidate['deg_count']
-        ))
-
-        # Add gene set to selected sets
-        gene_set = set()
-        if (best_candidate['analysis_id'] in integrator.deg_data and
-            best_candidate['contrast_id'] in integrator.deg_data[best_candidate['analysis_id']]):
-            df = integrator.deg_data[best_candidate['analysis_id']][best_candidate['contrast_id']]
-            if 'adj.P.Val' in df.columns and 'logFC' in df.columns:
-                sig_genes = df[(df['adj.P.Val'] < 0.05) & (abs(df['logFC']) > 1.0)]
-                gene_set = set(sig_genes['Gene'].tolist())
-        selected_gene_sets.append(gene_set)
-
-        # Remove from candidates
-        candidates.remove(best_candidate)
-
-    return selected
-
-def select_relevant_contrasts(integrator, biological_prompt: str, max_contrasts: int) -> List[ContrastSelection]:
-    """Select the most relevant contrasts using improved two-stage method."""
+def select_contrasts_with_llm(integrator, biological_prompt: str) -> List[ContrastSelection]:
+    """Select contrasts using LLM with emphasis on query matching, diversity, and interpretable number."""
 
     # Get all available contrasts
     all_contrasts = []
@@ -487,11 +178,11 @@ def select_relevant_contrasts(integrator, biological_prompt: str, max_contrasts:
         for contrast_id in contrasts.keys():
             description = integrator._get_contrast_description(analysis_id, contrast_id)
 
-            # Count potential DEGs
+            # Count significant DEGs
             df = contrasts[contrast_id]
             deg_count = 0
             if 'adj.P.Val' in df.columns and 'logFC' in df.columns:
-                deg_count = ((df['adj.P.Val'] < 0.1) & (abs(df['logFC']) > 0.5)).sum()
+                deg_count = ((df['adj.P.Val'] < 0.05) & (abs(df['logFC']) > 1.0)).sum()
 
             all_contrasts.append({
                 'analysis_id': analysis_id,
@@ -503,56 +194,40 @@ def select_relevant_contrasts(integrator, biological_prompt: str, max_contrasts:
     if not all_contrasts:
         return []
 
-    try:
-        # Stage A: Semantic eligibility filter
-        shortlisted = shortlist_contrasts(biological_prompt, all_contrasts, K=min(30, len(all_contrasts)))
-
-        # Stage B: Evidence-aware ranking
-        selected = rank_contrasts(shortlisted, integrator, max_final=max_contrasts)
-
-        return selected
-
-    except Exception as e:
-        st.warning(f"Advanced selection failed, using fallback: {str(e)}")
-        # Fallback to original heuristic method
-        return score_contrasts_heuristic(all_contrasts, max_contrasts)
-
-def score_contrasts_with_ai(contrasts: List[Dict], biological_prompt: str, max_contrasts: int) -> List[ContrastSelection]:
-    """Score contrasts using OpenAI API."""
-
+    # Use LLM to select contrasts
     client = OpenAI()
 
-    # Prepare contrast descriptions
+    # Prepare contrast descriptions for LLM
     contrast_descriptions = []
-    for i, contrast in enumerate(contrasts):
+    for i, contrast in enumerate(all_contrasts):
         contrast_descriptions.append(
             f"{i+1}. {contrast['analysis_id']}_{contrast['contrast_id']}: "
-            f"{contrast['description']} (Potential DEGs: {contrast['deg_count']})"
+            f"{contrast['description']} (DEGs: {contrast['deg_count']})"
         )
 
     prompt = f"""
-You are an expert RNA-seq analyst. Score the biological relevance of these differential expression contrasts for the research context: "{biological_prompt}"
+You are an expert RNA-seq analyst selecting the most relevant differential expression contrasts for this research question: "{biological_prompt}"
 
 Available contrasts:
 {chr(10).join(contrast_descriptions)}
 
-For each contrast, provide:
-1. Relevance score (0-10, where 10 is most relevant)
-2. Brief justification (1-2 sentences)
+Select contrasts based on:
+1. MATCHING: How well does each contrast address the research question?
+2. DIVERSITY: Select contrasts that complement each other and avoid redundancy
+3. INTERPRETABLE NUMBER: Choose an appropriate number of contrasts (typically 3-12) that provides comprehensive coverage without overwhelming complexity
 
-Consider:
-- Biological significance for the research question
-- Number of potential DEGs (more is generally better)
-- Clarity of experimental design
-- Scientific interest and interpretability
+For each selected contrast, provide:
+- Contrast number (from the list above)
+- Relevance score (0-10)
+- Brief justification explaining its relevance to the research question
 
 Respond in JSON format:
 {{
-  "scored_contrasts": [
+  "selected_contrasts": [
     {{
       "contrast_number": 1,
       "relevance_score": 8.5,
-      "justification": "This contrast directly addresses the research question by comparing..."
+      "justification": "This contrast directly addresses..."
     }},
     ...
   ]
@@ -567,179 +242,188 @@ Respond in JSON format:
         )
 
         result = json.loads(response.choices[0].message.content)
-        scored_contrasts = []
+        selected_contrasts = []
 
-        for score_data in result.get("scored_contrasts", []):
-            idx = score_data["contrast_number"] - 1
-            if 0 <= idx < len(contrasts):
-                contrast = contrasts[idx]
-                scored_contrasts.append(ContrastSelection(
+        for selection in result.get("selected_contrasts", []):
+            idx = selection["contrast_number"] - 1
+            if 0 <= idx < len(all_contrasts):
+                contrast = all_contrasts[idx]
+                selected_contrasts.append(ContrastSelection(
                     analysis_id=contrast['analysis_id'],
                     contrast_id=contrast['contrast_id'],
-                    relevance_score=score_data["relevance_score"],
-                    justification=score_data["justification"],
+                    relevance_score=selection["relevance_score"],
+                    justification=selection["justification"],
                     deg_count=contrast['deg_count']
                 ))
 
-        # Sort by relevance score and return top ones
-        scored_contrasts.sort(key=lambda x: x.relevance_score, reverse=True)
-        return scored_contrasts[:max_contrasts]
+        return selected_contrasts
 
     except Exception as e:
-        raise Exception(f"OpenAI API call failed: {str(e)}")
+        st.error(f"LLM contrast selection failed: {str(e)}")
+        return []
 
-def score_contrasts_heuristic(contrasts: List[Dict], max_contrasts: int) -> List[ContrastSelection]:
-    """Fallback scoring based on DEG counts and description informativeness."""
+def select_genes_simple(integrator, selected_contrasts: List[ContrastSelection], max_genes: int = 50) -> List[str]:
+    """Select genes based on: |LFC| > 1, p.adjust < 0.05, and differentially expressed in >80% of contrasts."""
 
-    scored_contrasts = []
-
-    for contrast in contrasts:
-        # Simple heuristic: score based on DEG count and description
-        base_score = min(8, contrast['deg_count'] / 100 * 6)  # Up to 6 points for DEG count
-        desc_score = min(2, len(contrast['description'].split()) / 20 * 2)  # Up to 2 points for description
-
-        total_score = base_score + desc_score
-        justification = f"Selected based on {contrast['deg_count']} potential DEGs and experimental design clarity."
-
-        scored_contrasts.append(ContrastSelection(
-            analysis_id=contrast['analysis_id'],
-            contrast_id=contrast['contrast_id'],
-            relevance_score=total_score,
-            justification=justification,
-            deg_count=contrast['deg_count']
-        ))
-
-    # Sort by score and return top ones
-    scored_contrasts.sort(key=lambda x: x.relevance_score, reverse=True)
-    return scored_contrasts[:max_contrasts]
-
-def select_optimal_thresholds(selected_contrasts: List[ContrastSelection], biological_prompt: str) -> ThresholdSelection:
-    """Select optimal statistical thresholds."""
+    gene_contrast_counts = {}
+    gene_max_lfc = {}
 
     total_contrasts = len(selected_contrasts)
-    median_degs = np.median([c.deg_count for c in selected_contrasts]) if selected_contrasts else 0
+    min_contrasts_required = int(0.8 * total_contrasts)  # 80% threshold
 
-    # Try AI threshold selection first
+    # Count how many contrasts each gene is significant in
+    for contrast in selected_contrasts:
+        if (contrast.analysis_id in integrator.deg_data and
+            contrast.contrast_id in integrator.deg_data[contrast.analysis_id]):
+
+            df = integrator.deg_data[contrast.analysis_id][contrast.contrast_id]
+
+            if 'Gene' in df.columns and 'adj.P.Val' in df.columns and 'logFC' in df.columns:
+                # Filter for significant genes
+                significant = df[(df['adj.P.Val'] < 0.05) & (abs(df['logFC']) > 1.0)]
+
+                for _, row in significant.iterrows():
+                    gene = row['Gene']
+                    lfc = abs(row['logFC'])
+
+                    # Count contrasts
+                    if gene not in gene_contrast_counts:
+                        gene_contrast_counts[gene] = 0
+                        gene_max_lfc[gene] = 0
+
+                    gene_contrast_counts[gene] += 1
+                    gene_max_lfc[gene] = max(gene_max_lfc[gene], lfc)
+
+    # Filter genes that appear in >80% of contrasts
+    candidate_genes = []
+    for gene, count in gene_contrast_counts.items():
+        if count >= min_contrasts_required:
+            candidate_genes.append((gene, count, gene_max_lfc[gene]))
+
+    # Sort by number of contrasts (primary) and max LFC (secondary)
+    candidate_genes.sort(key=lambda x: (x[1], x[2]), reverse=True)
+
+    # Return top genes
+    selected_genes = [gene for gene, _, _ in candidate_genes[:max_genes]]
+
+    return selected_genes
+
+def create_gene_table_simple(integrator, top_genes: List[str], selected_contrasts: List[ContrastSelection]) -> pd.DataFrame:
+    """Create simple gene summary table."""
+
+    gene_data = []
+
+    for gene in top_genes:
+        up_count = 0
+        down_count = 0
+        total_tested = 0
+        logfcs = []
+
+        for contrast in selected_contrasts:
+            if (contrast.analysis_id in integrator.deg_data and
+                contrast.contrast_id in integrator.deg_data[contrast.analysis_id]):
+
+                df = integrator.deg_data[contrast.analysis_id][contrast.contrast_id]
+
+                if 'Gene' in df.columns and 'adj.P.Val' in df.columns and 'logFC' in df.columns:
+                    gene_row = df[df['Gene'] == gene]
+
+                    if not gene_row.empty:
+                        total_tested += 1
+                        row = gene_row.iloc[0]
+                        p_val = row['adj.P.Val']
+                        logfc = row['logFC']
+                        logfcs.append(logfc)
+
+                        # Count significant directions
+                        if p_val < 0.05 and abs(logfc) > 1.0:
+                            if logfc > 0:
+                                up_count += 1
+                            else:
+                                down_count += 1
+
+        if logfcs:
+            median_logfc = np.median(logfcs)
+            direction_summary = f"↑{up_count}/↓{down_count} (of {total_tested})"
+
+            gene_data.append({
+                'Gene': gene,
+                'Median LogFC': round(median_logfc, 2),
+                'Direction': direction_summary,
+                'Significant in': f"{up_count + down_count}/{total_tested}"
+            })
+
+    return pd.DataFrame(gene_data)
+
+def create_landing_heatmap(integrator, top_genes: List[str], selected_contrasts: List[ContrastSelection]) -> Optional[go.Figure]:
+    """Create simple heatmap for landing page with improved gene label visibility."""
+
     try:
-        if LANDING_PAGE_AVAILABLE and os.getenv("OPENAI_API_KEY"):
-            return select_thresholds_with_ai(total_contrasts, median_degs, biological_prompt)
-        else:
-            return select_thresholds_heuristic(total_contrasts, median_degs)
-    except Exception:
-        return select_thresholds_heuristic(total_contrasts, median_degs)
+        contrast_pairs = [(c.analysis_id, c.contrast_id) for c in selected_contrasts]
 
-def select_thresholds_with_ai(n_contrasts: int, median_degs: float, biological_prompt: str) -> ThresholdSelection:
-    """Use AI to select optimal thresholds for meta-analysis."""
+        fig = integrator.create_lfc_heatmap(
+            genes=top_genes,
+            contrasts=contrast_pairs,
+            output_file=None,
+            p_value_threshold=0.05,
+            lfc_threshold=1.0,
+            hide_empty_rows_cols=True,
+            font_size=11
+        )
+
+        if fig:
+            # Calculate height to ensure all gene labels are visible
+            # Use more generous spacing: 25-30px per gene, with minimum 500px and maximum 1200px
+            calculated_height = max(500, min(1200, len(top_genes) * 28))
+
+            fig.update_layout(
+                title="Selected Genes Across Relevant Contrasts",
+                title_font_size=16,
+                height=calculated_height,
+                # Ensure gene labels are fully visible
+                margin=dict(l=150, r=20, t=60, b=80)  # Increase left margin for gene labels
+            )
+
+            # Make y-axis labels more readable
+            fig.update_yaxes(
+                tickfont=dict(size=10),
+                tickmode='linear'
+            )
+
+        return fig
+    except Exception as e:
+        st.error(f"Error creating heatmap: {str(e)}")
+        return None
+
+def generate_narrative_llm(integrator, selected_contrasts, top_genes: List[str], biological_prompt: str) -> str:
+    """Generate comprehensive LLM-based interpretation."""
 
     client = OpenAI()
 
-    prompt = f"""
-You are an expert statistician selecting optimal thresholds for RNA-seq meta-analysis across multiple contrasts.
+    # Prepare contrast summaries with formulas
+    contrast_summaries = []
+    for contrast in selected_contrasts:
+        # Get the description and expression formula for each contrast
+        description = integrator._get_contrast_description(contrast.analysis_id, contrast.contrast_id)
 
-Dataset characteristics:
-- Number of contrasts: {n_contrasts}
-- Median potential DEGs per contrast: {median_degs:.0f}
-- Research context: {biological_prompt}
+        # Get contrast formula from integrator's contrast_info dictionary
+        formula = ""
+        if hasattr(integrator, "contrast_info") and contrast.contrast_id in integrator.contrast_info:
+            formula = integrator.contrast_info[contrast.contrast_id].get('expression', '')
 
-Select appropriate thresholds for meta-analysis considering:
-1. Meta-FDR cutoff: Controls false discovery rate for meta-analysis results (0.01-0.1 range)
-2. Minimum frequency: How many contrasts a gene must be significant in (1 to {max(1, n_contrasts//2)})
-3. Effect size consideration: Implicit in meta-analysis ranking by median absolute logFC
+        # Create a summary that includes both description and formula
+        contrast_summary = f"- {contrast.contrast_id}: {description} (Score: {contrast.relevance_score:.1f})"
+        if formula:
+            contrast_summary += f"\n  Formula: {formula} (positive LFC means upregulated in the first condition, negative means downregulated)"
 
-Guidelines:
-- With many contrasts ({n_contrasts}), can use stricter meta-FDR and higher min_frequency
-- Meta-analysis provides more power, so can be more stringent than single-study analysis
-- Min_frequency should balance sensitivity with reproducibility
+        contrast_summaries.append(contrast_summary)
 
-Respond in JSON format:
-{{
-  "fdr_cutoff": 0.05,
-  "logfc_cutoff": 0.0,
-  "min_frequency": 2,
-  "justification": "Selected meta-FDR=0.05 for balanced discovery with {n_contrasts} contrasts..."
-}}
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-        temperature=0
-    )
-
-    result = json.loads(response.choices[0].message.content)
-    return ThresholdSelection(
-        fdr_cutoff=result["fdr_cutoff"],
-        logfc_cutoff=0.0,  # Not used in meta-analysis
-        min_frequency=result["min_frequency"],
-        justification=result["justification"]
-    )
-
-def select_thresholds_heuristic(n_contrasts: int, median_degs: float) -> ThresholdSelection:
-    """Fallback threshold selection using heuristics for meta-analysis."""
-
-    # For meta-analysis, focus on meta-FDR and minimum frequency
-    if n_contrasts < 3:
-        fdr_cutoff = 0.05
-        min_frequency = 1  # Need at least 1 for very few contrasts
-    elif n_contrasts < 6:
-        fdr_cutoff = 0.05
-        min_frequency = 2  # Require replication in at least 2 contrasts
-    elif median_degs > 100:
-        fdr_cutoff = 0.01  # Can be stricter with many DEGs
-        min_frequency = max(2, n_contrasts // 4)  # Higher frequency requirement
-    else:
-        fdr_cutoff = 0.05
-        min_frequency = max(2, n_contrasts // 3)
-
-    # Cap minimum frequency to reasonable values
-    min_frequency = min(min_frequency, max(2, n_contrasts // 2))
-
-    justification = f"Meta-analysis heuristic: meta-FDR={fdr_cutoff}, min_frequency={min_frequency} based on {n_contrasts} contrasts and median {median_degs:.0f} DEGs per contrast. Genes must be significant in ≥{min_frequency} contrasts to be included."
-
-    return ThresholdSelection(
-        fdr_cutoff=fdr_cutoff,
-        logfc_cutoff=0.0,  # Not used in meta-analysis approach
-        min_frequency=min_frequency,
-        justification=justification
-    )
-
-def benjamini_hochberg_correction(p_values: np.ndarray) -> np.ndarray:
-    """Apply Benjamini-Hochberg FDR correction."""
-    if len(p_values) == 0:
-        return np.array([])
-
-    # Sort p-values and keep track of original indices
-    sorted_indices = np.argsort(p_values)
-    sorted_p = p_values[sorted_indices]
-
-    # Calculate adjusted p-values
-    n = len(p_values)
-    adjusted_p = np.zeros(n)
-
-    for i in range(n-1, -1, -1):
-        if i == n-1:
-            adjusted_p[i] = sorted_p[i]
-        else:
-            adjusted_p[i] = min(sorted_p[i] * n / (i + 1), adjusted_p[i + 1])
-
-    # Restore original order
-    result = np.zeros(n)
-    result[sorted_indices] = adjusted_p
-
-    return result
-
-def meta_analysis_stouffer(integrator, selected_contrasts: List[ContrastSelection],
-                          gene_list: List[str]) -> Dict[str, Dict]:
-    """Perform sign-blind meta-analysis using weighted Stouffer Z-method."""
-
-    gene_meta_stats = {}
-
-    for gene in gene_list:
-        p_values = []
-        weights = []
-        log_fcs = []
-        significant_counts = {'up': 0, 'down': 0, 'total': 0}
+    # Prepare gene expression patterns
+    gene_patterns = []
+    for gene in top_genes[:10]:  # Focus on top 10 genes for detailed analysis
+        up_count = 0
+        down_count = 0
+        logfcs = []
 
         for contrast in selected_contrasts:
             if (contrast.analysis_id in integrator.deg_data and
@@ -754,266 +438,67 @@ def meta_analysis_stouffer(integrator, selected_contrasts: List[ContrastSelectio
                         row = gene_row.iloc[0]
                         p_val = row['adj.P.Val']
                         logfc = row['logFC']
+                        logfcs.append(logfc)
 
-                        # Get sample size for weighting (fallback to 10 if not available)
-                        sample_size = integrator.analysis_info.get(
-                            contrast.analysis_id, {}
-                        ).get('number_of_samples', 10)
-
-                        p_values.append(p_val)
-                        weights.append(np.sqrt(sample_size))
-                        log_fcs.append(logfc)
-
-                        # Count significant directions
                         if p_val < 0.05 and abs(logfc) > 1.0:
-                            significant_counts['total'] += 1
                             if logfc > 0:
-                                significant_counts['up'] += 1
+                                up_count += 1
                             else:
-                                significant_counts['down'] += 1
+                                down_count += 1
 
-        if len(p_values) >= 2:  # Need at least 2 contrasts for meta-analysis
-            # Convert p-values to Z-scores (two-tailed)
-            z_scores = [stats.norm.isf(p/2) if p > 0 else stats.norm.isf(1e-16/2) for p in p_values]
-
-            # Weighted Stouffer combination
-            weights = np.array(weights)
-            z_scores = np.array(z_scores)
-
-            # Combined Z-score
-            combined_z = np.sum(weights * z_scores) / np.sqrt(np.sum(weights**2))
-
-            # Two-tailed meta p-value
-            meta_p = 2 * stats.norm.sf(abs(combined_z))
-
-            # Calculate median absolute logFC for ranking
-            median_abs_logfc = np.median([abs(lfc) for lfc in log_fcs])
-
-            gene_meta_stats[gene] = {
-                'meta_p': meta_p,
-                'median_abs_logfc': median_abs_logfc,
-                'n_contrasts': len(p_values),
-                'up_count': significant_counts['up'],
-                'down_count': significant_counts['down'],
-                'total_sig': significant_counts['total'],
-                'log_fcs': log_fcs
-            }
-
-    return gene_meta_stats
-
-def aggregate_and_rank_genes(integrator, selected_contrasts: List[ContrastSelection],
-                           thresholds: ThresholdSelection, max_genes: int) -> List[str]:
-    """Aggregate DEGs using meta-analysis and rank by effect size and significance."""
-
-    # Get all genes that appear in at least one contrast
-    all_genes = set()
-    for contrast in selected_contrasts:
-        if (contrast.analysis_id in integrator.deg_data and
-            contrast.contrast_id in integrator.deg_data[contrast.analysis_id]):
-
-            df = integrator.deg_data[contrast.analysis_id][contrast.contrast_id]
-            if 'Gene' in df.columns:
-                all_genes.update(df['Gene'].tolist())
-
-    all_genes = list(all_genes)
-
-    if not all_genes:
-        return []
-
-    # Perform meta-analysis
-    gene_meta_stats = meta_analysis_stouffer(integrator, selected_contrasts, all_genes)
-
-    if not gene_meta_stats:
-        return []
-
-    # Apply FDR correction
-    genes = list(gene_meta_stats.keys())
-    p_values = np.array([gene_meta_stats[g]['meta_p'] for g in genes])
-    fdr_corrected = benjamini_hochberg_correction(p_values)
-
-    # Update gene stats with FDR
-    for i, gene in enumerate(genes):
-        gene_meta_stats[gene]['meta_fdr'] = fdr_corrected[i]
-
-    # Filter by FDR threshold and minimum frequency
-    significant_genes = []
-    for gene, stats in gene_meta_stats.items():
-        if (stats['meta_fdr'] < thresholds.fdr_cutoff and
-            stats['total_sig'] >= thresholds.min_frequency):
-            significant_genes.append(gene)
-
-    # Rank by combined score: median_abs_logFC × -log10(meta_fdr)
-    def ranking_score(gene):
-        stats = gene_meta_stats[gene]
-        if stats['meta_fdr'] > 0:
-            return stats['median_abs_logfc'] * (-np.log10(stats['meta_fdr']))
-        else:
-            return stats['median_abs_logfc'] * 16  # Cap at -log10(1e-16)
-
-    ranked_genes = sorted(significant_genes, key=ranking_score, reverse=True)
-
-    return ranked_genes[:max_genes]
-
-def create_landing_heatmap(integrator, top_genes: List[str], selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection) -> Optional[go.Figure]:
-    """Create heatmap for landing page."""
-
-    try:
-        contrast_pairs = [(c.analysis_id, c.contrast_id) for c in selected_contrasts]
-
-        # Use standard visualization thresholds for heatmap coloring
-        # Genes are already selected via meta-analysis, so use reasonable display thresholds
-        viz_p_threshold = 0.05
-        viz_lfc_threshold = 1.0
-
-        fig = integrator.create_lfc_heatmap(
-            genes=top_genes,
-            contrasts=contrast_pairs,
-            output_file=None,
-            p_value_threshold=viz_p_threshold,
-            lfc_threshold=viz_lfc_threshold,
-            hide_empty_rows_cols=True,
-            font_size=11
-        )
-
-        if fig:
-            fig.update_layout(
-                title="Meta-Analysis Selected Genes Across Contrasts",
-                title_font_size=16,
-                height=max(400, min(800, len(top_genes) * 20))
-            )
-
-        return fig
-    except Exception as e:
-        st.error(f"Error creating heatmap: {str(e)}")
-        return None
-
-def create_gene_table(integrator, top_genes: List[str], selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection) -> pd.DataFrame:
-    """Create gene summary table with meta-analysis results."""
-
-    # Perform meta-analysis for the top genes
-    gene_meta_stats = meta_analysis_stouffer(integrator, selected_contrasts, top_genes)
-
-    # Apply FDR correction
-    if gene_meta_stats:
-        genes = list(gene_meta_stats.keys())
-        p_values = np.array([gene_meta_stats[g]['meta_p'] for g in genes])
-        fdr_corrected = benjamini_hochberg_correction(p_values)
-
-        for i, gene in enumerate(genes):
-            gene_meta_stats[gene]['meta_fdr'] = fdr_corrected[i]
-
-    gene_data = []
-
-    for gene in top_genes:
-        if gene in gene_meta_stats:
-            stats = gene_meta_stats[gene]
-
-            # Create direction summary
-            up_count = stats['up_count']
-            down_count = stats['down_count']
-            total_tested = stats['n_contrasts']
-            total_sig = stats['total_sig']
-
-            direction_summary = f"↑{up_count}/↓{down_count} (of {total_tested})"
-
-            # Calculate median logFC (signed, not absolute)
-            median_logfc = np.median(stats['log_fcs']) if stats['log_fcs'] else 0
-
-            gene_data.append({
-                'Gene': gene,
-                'Meta-LogFC': round(median_logfc, 2),
-                'Meta-FDR': f"{stats['meta_fdr']:.2e}" if stats['meta_fdr'] < 0.01 else f"{stats['meta_fdr']:.3f}",
-                'Direction': direction_summary,
-                'Tested': total_tested
-            })
-
-    df = pd.DataFrame(gene_data)
-    if not df.empty:
-        # Sort by ranking score: median_abs_logFC × -log10(meta_fdr)
-        def ranking_score(row):
-            fdr = float(row['Meta-FDR']) if isinstance(row['Meta-FDR'], str) else row['Meta-FDR']
-            if fdr > 0:
-                return abs(row['Meta-LogFC']) * (-np.log10(fdr))
-            else:
-                return abs(row['Meta-LogFC']) * 16
-
-        df['_ranking_score'] = df.apply(ranking_score, axis=1)
-        df = df.sort_values('_ranking_score', ascending=False)
-        df = df.drop('_ranking_score', axis=1)
-
-    return df
-
-def generate_narrative(selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection, top_genes: List[str], biological_prompt: str) -> str:
-    """Generate interpretive narrative."""
-
-    try:
-        if LANDING_PAGE_AVAILABLE and os.getenv("OPENAI_API_KEY"):
-            return generate_narrative_with_ai(selected_contrasts, thresholds, top_genes, biological_prompt)
-        else:
-            return generate_narrative_fallback(selected_contrasts, thresholds, top_genes, biological_prompt)
-    except Exception:
-        return generate_narrative_fallback(selected_contrasts, thresholds, top_genes, biological_prompt)
-
-def generate_narrative_with_ai(selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection, top_genes: List[str], biological_prompt: str) -> str:
-    """Generate narrative using AI."""
-
-    client = OpenAI()
-
-    contrast_summaries = []
-    for contrast in selected_contrasts:
-        contrast_summaries.append(f"- {contrast.contrast_id}: (Score: {contrast.relevance_score:.1f})")
-
-    gene_list_str = ', '.join(top_genes[:10])
-    if len(top_genes) > 10:
-        gene_list_str += f' and {len(top_genes)-10} others'
+        if logfcs:
+            median_lfc = np.median(logfcs)
+            pattern = f"{gene}: median logFC = {median_lfc:.2f}, upregulated in {up_count} contrasts, downregulated in {down_count} contrasts"
+            gene_patterns.append(pattern)
 
     prompt = f"""
-You are an expert computational biologist writing a clear, accessible summary of RNA-seq differential expression results.
+You are an expert computational biologist analyzing RNA-seq differential expression results. Provide a comprehensive interpretation covering:
 
-Research Context: {biological_prompt}
+RESEARCH QUESTION: {biological_prompt}
 
-Analysis Summary:
-- {len(selected_contrasts)} biologically relevant contrasts were automatically selected using semantic similarity and evidence-aware ranking
-- Meta-analysis performed using weighted Stouffer Z-method with FDR correction
-- Statistical thresholds: Meta-FDR < {thresholds.fdr_cutoff}, minimum frequency ≥ {thresholds.min_frequency}
-- {len(top_genes)} key differentially expressed genes identified through meta-analysis
-
-Selected Contrasts:
+SELECTED CONTRASTS, THEIR RELEVANCE, AND FORMULAS EXPRESSIONS:
 {chr(10).join(contrast_summaries)}
 
-Top Genes: {gene_list_str}
+TOP GENE EXPRESSION PATTERNS:
+{chr(10).join(gene_patterns)}
 
-Write a 2-3 paragraph narrative that:
-1. Summarizes the key findings in accessible language
-2. Highlights the most important genes and patterns discovered through meta-analysis
-3. Explains the strength of evidence from combining multiple contrasts
-4. Provides biological context and potential significance
-5. Maintains scientific accuracy while being readable
+ADDITIONAL GENES IDENTIFIED: {', '.join(top_genes[10:20]) if len(top_genes) > 10 else 'None'}
 
-Focus on biological insights and the robustness of findings across multiple experiments.
+Please provide an interpretation that addresses:
+
+1. CONTRAST RELEVANCE: Explain how each selected contrast relates to the original research question and why this set of contrasts provides good coverage. You don't need to specify the score you gave, however for all contrasts you should describe the contrast, and explain its relevance to the research question.
+
+2. DATA-DRIVEN GENE COMMENTARY:
+   - Describe the expression patterns of key genes (when/where typically over/under-expressed)
+   - Provide direct interpretation of the log fold changes and their biological meaning. When doing so, engage carefully with the meaning of contrasts - for example, a positive LFC in a contrast like "KO-WT" means the gene is upregulated in the KO condition compared to WT, but also note that a negative contrast like "WT-KO" would mean the same. Keep this internal - you do not need to share the formulas with the user, only share the meaningful biological interpretation.
+   - Discuss broader implications for the research question (pathways, mechanisms, therapeutic targets)
+
+3. DIRECT RESEARCH QUESTION ANSWER: Provide a succinct, evidence-based answer to the original research question based on the differential expression patterns observed.
+
+Write in clear, scientific language suitable for researchers. Be specific about the data and avoid generic statements.
+
+Format your response in a nice readable way - use markdown as appropriate to enhance readability and engagement, but keep in mind the intended audience is researchers and scientists. Generate only the report, with no further commentary. Use descriptive headings and bullet points where appropriate to organize the information clearly. For example, a title "Direct Answer to the Research Question" is too direct - think about what would be more interesting for the researcher.
 """
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=1000,
-        temperature=0  # Deterministic output
-    )
+    try:
+        response = client.chat.completions.create(
+            model="o4-mini",
+            messages=[{"role": "user", "content": prompt}]
+        )
 
-    return response.choices[0].message.content.strip()
+        return response.choices[0].message.content.strip()
 
-def generate_narrative_fallback(selected_contrasts: List[ContrastSelection], thresholds: ThresholdSelection, top_genes: List[str], biological_prompt: str) -> str:
-    """Fallback narrative generation."""
+    except Exception as e:
+        # Simple fallback if LLM fails
+        return f"""
+Analysis of {len(selected_contrasts)} relevant contrasts for: {biological_prompt}
 
-    narrative = f"""
-This analysis automatically identified {len(selected_contrasts)} biologically relevant experimental contrasts related to {biological_prompt} using a two-stage selection process combining semantic similarity and evidence-aware ranking. A meta-analysis was performed using the weighted Stouffer Z-method with sample size weighting, followed by FDR correction to control for multiple testing (meta-FDR < {thresholds.fdr_cutoff}).
+The selected contrasts were chosen for their relevance to the research question. Key findings include {len(top_genes)} genes that are consistently differentially expressed across multiple conditions.
 
-The {len(top_genes)} most consistently dysregulated genes include {', '.join(top_genes[:5])}{'and others' if len(top_genes) > 5 else ''}. These genes were identified through meta-analysis across multiple experimental conditions, providing robust evidence for their involvement in the biological processes under investigation. The meta-analytic approach captures both strong effects in individual studies and weaker but consistent patterns across experiments.
+Top genes such as {', '.join(top_genes[:5])} show consistent expression changes that may be directly relevant to the biological processes under investigation.
 
-The results provide a statistically rigorous foundation for understanding the molecular mechanisms underlying the observed phenotypes. The combination of evidence across multiple contrasts strengthens confidence in these findings and suggests high-priority targets for further experimental validation.
+Based on the differential expression patterns observed, these results provide molecular insights into the mechanisms underlying the research question.
 """
-
-    return narrative
 
 # Check if fragment is available (Streamlit >=1.33.0)
 # If not, fallback to experimental_fragment
@@ -1122,15 +607,17 @@ api_key_available = bool(os.getenv("OPENAI_API_KEY"))
 if LANDING_PAGE_AVAILABLE and api_key_available:
     st.sidebar.success("🤖 AI Landing Page: Fully Available")
 elif LANDING_PAGE_AVAILABLE and not api_key_available:
-    st.sidebar.warning("🤖 AI Landing Page: Partial (Heuristic Mode)")
-    with st.sidebar.expander("ℹ️ Enable Full AI Features", expanded=False):
+    st.sidebar.error("🤖 AI Landing Page: API Key Required")
+    with st.sidebar.expander("ℹ️ Enable AI Features", expanded=False):
         st.markdown("""
-        **Current Status:** OpenAI package installed ✅, but API key missing ⚠️
+        **Current Status:** OpenAI package installed ✅, but API key missing ❌
 
-        **Available:** Heuristic contrast selection and gene ranking
-        **Missing:** AI-powered relevance scoring and narrative generation
+        **Required for AI Landing Page:**
+        - LLM-based contrast selection
+        - Intelligent gene ranking and analysis
+        - Comprehensive biological interpretation
 
-        **To enable full AI features:**
+        **To enable AI features:**
 
         Option 1 - Environment variable:
         ```bash
@@ -1143,7 +630,7 @@ elif LANDING_PAGE_AVAILABLE and not api_key_available:
         OPENAI_API_KEY=your_key_here
         ```
 
-        The landing page works without API key but uses simpler algorithms.
+        The AI Landing Page requires an OpenAI API key to function.
         """)
 else:
     st.sidebar.error("🤖 AI Landing Page: Not Available")
@@ -1161,10 +648,10 @@ else:
         - .env file: Add `OPENAI_API_KEY=your_key` to `.env`
 
         AI features provide:
-        - Automatic contrast relevance scoring
-        - Optimal threshold selection
-        - Biological narrative generation
-        - Interpretive summaries
+        - LLM-based contrast selection (optimal number determined automatically)
+        - Simple gene filtering (|LFC| > 1, p.adj < 0.05, >80% contrast frequency)
+        - Comprehensive biological interpretation and research question answers
+        - Publication-ready narratives with data-driven insights
         """)
 
 # Only show the rest of the UI if we successfully loaded data
@@ -1545,7 +1032,7 @@ if ri and ri.cpm_data:
     # These options have been moved up in the UI
 
     # ---------- 2. main tabs ---------------------------------------
-    tab_landing, tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs(["🎨 Landing Page", "📊 Selections", "🌡️ Heat-map", "🎻 Expression", "📈 Analysis Plots", "📋 Dataset Info", "🔍 Contrast Info"])
+    tab_landing, tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs(["🤖 View AI Summary", "☑️ Select Data & Contrasts", "🌡️ Explore DEG Heatmap", "📈 Plot Gene Expression", "🧑‍🔬 Analyze Experiments", "📋 View Dataset Info", "🔍 View Contrast Info"])
 
     # Initialize session state for selections if not exists
     if 'selected_datasets' not in st.session_state:
@@ -1565,12 +1052,11 @@ if ri and ri.cpm_data:
 
 
     with tab_landing:
-        st.header("🎨 AI-Assisted Landing Page")
+        st.header("🤖 View AI Summary")
         st.markdown("""
         **Generate intelligent summaries of your RNA-seq results with minimal interaction.**
 
-        This AI-powered landing page automatically selects the most relevant contrasts, determines optimal statistical thresholds,
-        and creates interpretive narratives for your differential expression analysis.
+        This AI-powered landing page automatically selects the most relevant contrasts, analyses the key genes that were consistently differentially expressed across multiple conditions, and interprets the biological implications to these genes to guide you to an answer to your research question.
         """)
 
         # Landing page controls
@@ -1586,9 +1072,8 @@ if ri and ri.cpm_data:
             )
 
         with col2:
-            st.markdown("**⚙️ Options**")
-            max_contrasts_landing = st.slider("Max contrasts", 3, 15, 8, key="landing_max_contrasts")
-            max_genes_landing = st.slider("Max genes", 20, 100, 50, key="landing_max_genes")
+            st.markdown("**⚙️ Generate Analysis**")
+            st.caption("📊 AI will automatically determine optimal contrasts and select top 50 genes based on biological relevance")
 
             generate_landing = st.button(
                 "🚀 Generate AI Landing Page",
@@ -1604,6 +1089,9 @@ if ri and ri.cpm_data:
         elif not ri or not ri.cpm_data:
             st.info("📁 Please load data first using the sidebar controls.")
         elif generate_landing:
+            # Set flag to prevent unnecessary fragment execution during AI generation
+            st.session_state.ai_generating = True
+
             # Generate AI-assisted landing page
             with st.spinner("🤖 AI is analyzing your data and generating the landing page..."):
                 try:
@@ -1611,8 +1099,7 @@ if ri and ri.cpm_data:
                     landing_data = generate_ai_landing_page(
                         integrator=ri,
                         biological_prompt=biological_prompt,
-                        max_contrasts=max_contrasts_landing,
-                        max_genes=max_genes_landing
+                        max_genes=50
                     )
 
                     if landing_data:
@@ -1625,6 +1112,10 @@ if ri and ri.cpm_data:
                     st.error(f"❌ Error generating landing page: {str(e)}")
                     if "openai" in str(e).lower():
                         st.info("💡 Tip: Make sure your OpenAI API key is set as an environment variable: `export OPENAI_API_KEY=your_key`")
+                finally:
+                    # Clear the flag after generation completes
+                    if 'ai_generating' in st.session_state:
+                        del st.session_state.ai_generating
 
         # Display landing page results if available
         if hasattr(st.session_state, 'landing_data') and st.session_state.landing_data:
@@ -1632,122 +1123,204 @@ if ri and ri.cpm_data:
 
             st.success("✅ AI landing page generated successfully!")
 
-            # Summary metrics
-            col1, col2, col3, col4 = st.columns(4)
+            # Create a toggle for layout preference
+            col1, col2 = st.columns([3, 1])
             with col1:
-                st.metric("🔍 Selected Contrasts", len(landing_data.selected_contrasts))
+                st.markdown("### 📝 AI-Generated Key Findings")
             with col2:
-                st.metric("🧬 Meta-Analysis Genes", len(landing_data.top_genes))
-            with col3:
-                st.metric("📊 Meta-FDR Cutoff", f"{landing_data.thresholds.fdr_cutoff}")
-            with col4:
-                st.metric("🔄 Min Frequency", f"{landing_data.thresholds.min_frequency}")
-
-            # Key findings narrative
-            st.markdown("### 📝 AI-Generated Key Findings")
-            st.markdown(f"""
-            <div style="background: #e8f4fd; padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid #3498db; margin: 1rem 0;">
-            {landing_data.narrative}
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Analysis parameters
-            st.markdown("### 🎯 Automatic Parameter Selection")
-            st.markdown(f"""
-            <div style="background: #f0f8e8; padding: 1rem; border-radius: 0.5rem; border-left: 4px solid #27ae60; margin: 1rem 0;">
-            <strong>Meta-Analysis Parameters:</strong> Meta-FDR < {landing_data.thresholds.fdr_cutoff}, Min. frequency ≥ {landing_data.thresholds.min_frequency} contrasts<br>
-            <strong>Method:</strong> Weighted Stouffer Z-method with sample size weighting and FDR correction<br>
-            <strong>AI Justification:</strong> {landing_data.thresholds.justification}
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Tabbed results view
-            landing_tab1, landing_tab2, landing_tab3 = st.tabs(["🔍 AI-Selected Contrasts", "🧬 Top Genes", "🌡️ Expression Heatmap"])
-
-            with landing_tab1:
-                st.markdown("#### Contrasts Selected by AI with Justifications")
-
-                # Create contrast DataFrame
-                contrast_df = pd.DataFrame([
-                    {
-                        "Dataset": c.analysis_id,
-                        "Contrast": c.contrast_id,
-                        "Relevance Score": f"{c.relevance_score:.1f}",
-                        "DEG Count": c.deg_count,
-                        "AI Justification": c.justification
-                    }
-                    for c in landing_data.selected_contrasts
-                ])
-
-                st.dataframe(
-                    contrast_df,
-                    use_container_width=True,
-                    column_config={
-                        "AI Justification": st.column_config.TextColumn(
-                            "AI Justification",
-                            width="large"
-                        ),
-                        "Relevance Score": st.column_config.TextColumn("Relevance Score", width="small"),
-                        "DEG Count": st.column_config.NumberColumn("DEG Count", width="small")
-                    }
+                layout_mode = st.selectbox(
+                    "Layout:",
+                    ["Side-by-side", "Stacked"],
+                    index=0,
+                    help="Choose how to display the narrative and heatmap"
                 )
 
-                # Auto-apply selections to other tabs
-                if st.button("📋 Apply These Selections to Other Tabs", type="secondary"):
-                    # Update session state for other tabs
-                    selected_datasets = set(c.analysis_id for c in landing_data.selected_contrasts)
-                    selected_contrasts = set((c.analysis_id, c.contrast_id) for c in landing_data.selected_contrasts)
+            if layout_mode == "Side-by-side":
+                # Side-by-side layout
+                narrative_col, heatmap_col = st.columns([1, 1.2])  # Give heatmap slightly more space
 
-                    st.session_state['selected_datasets'] = selected_datasets
-                    st.session_state['selected_contrasts'] = selected_contrasts
+                with narrative_col:
+                    st.markdown(f"""
+                    <div style="background: #e8f4fd; padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid #3498db; margin: 1rem 0; height: 600px; overflow-y: auto;">
+                    {landing_data.narrative}
+                    </div>
+                    """, unsafe_allow_html=True)
 
-                    st.success("✅ Selections applied! Switch to Heat-map or Expression tabs to see visualizations with these selections.")
+                    # Add collapsible sections for additional info
+                    with st.expander("🔍 AI-Selected Contrasts", expanded=False):
+                        contrast_df = pd.DataFrame([
+                            {
+                                "Dataset": c.analysis_id,
+                                "Contrast": c.contrast_id,
+                                "Relevance Score": f"{c.relevance_score:.1f}",
+                                "DEG Count": c.deg_count,
+                                "AI Justification": c.justification
+                            }
+                            for c in landing_data.selected_contrasts
+                        ])
+                        st.dataframe(
+                            contrast_df,
+                            use_container_width=True,
+                            column_config={
+                                "AI Justification": st.column_config.TextColumn(
+                                    "AI Justification",
+                                    width="large"
+                                ),
+                                "Relevance Score": st.column_config.TextColumn("Relevance Score", width="small"),
+                                "DEG Count": st.column_config.NumberColumn("DEG Count", width="small")
+                            }
+                        )
 
-            with landing_tab2:
-                st.markdown("#### Top Differentially Expressed Genes")
+                    with st.expander("🧬 Top Genes Table", expanded=False):
+                        if not landing_data.gene_table.empty:
+                            st.dataframe(
+                                landing_data.gene_table,
+                                use_container_width=True,
+                                column_config={
+                                    "Gene": st.column_config.TextColumn("Gene Symbol", width="medium"),
+                                    "Median LogFC": st.column_config.NumberColumn("Median Log2FC", format="%.2f", help="Median log2 fold change across contrasts"),
+                                    "Direction": st.column_config.TextColumn("↑/↓ Pattern", help="Up/down regulation pattern across contrasts"),
+                                    "Significant in": st.column_config.TextColumn("Significant in", help="Number of contrasts where gene was significant")
+                                }
+                            )
+                        else:
+                            st.info("No genes met the AI-selected significance criteria.")
 
-                if not landing_data.gene_table.empty:
+                    # Gene list for easy copying (moved outside to avoid nested expanders)
+                    if not landing_data.gene_table.empty:
+                        with st.expander("📋 Gene List (for external tools)", expanded=False):
+                            gene_list_text = '\n'.join(landing_data.top_genes)
+                            st.text_area(
+                                "Copy gene symbols:",
+                                value=gene_list_text,
+                                height=150,
+                                help="Gene symbols, one per line. Copy and paste into other tools like DAVID, Enrichr, etc."
+                            )
+
+                with heatmap_col:
+                    st.markdown("#### 🌡️ Expression Heatmap")
+
+                    # Add height control
+                    with st.expander("🎛️ Heatmap Settings", expanded=False):
+                        heatmap_height = st.slider(
+                            "Heatmap height (pixels)",
+                            min_value=400,
+                            max_value=1500,
+                            value=max(500, min(1200, len(landing_data.top_genes) * 28)),
+                            step=50,
+                            help="Adjust height to better see gene labels"
+                        )
+
+                    if landing_data.heatmap_fig:
+                        # Update the figure height
+                        updated_fig = landing_data.heatmap_fig
+                        updated_fig.update_layout(height=heatmap_height)
+                        st.plotly_chart(updated_fig, use_container_width=True)
+
+                        st.markdown("""
+                        💡 **How to interpret this heatmap:**
+                        - Each row represents a gene, each column represents a biological contrast
+                        - Colors indicate log2 fold change: red (upregulated), blue (downregulated), white (not significant)
+                        - Hover over cells to see detailed information including contrast descriptions
+                        - Genes and contrasts are automatically clustered to reveal biological patterns
+                        """)
+                    else:
+                        st.warning("Could not generate heatmap.")
+
+            else:
+                # Original stacked layout
+                st.markdown(f"""
+                <div style="background: #e8f4fd; padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid #3498db; margin: 1rem 0;">
+                {landing_data.narrative}
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Tabbed results view
+                landing_tab1, landing_tab2, landing_tab3 = st.tabs(["🔍 AI-Selected Contrasts", "🧬 Top Genes", "🌡️ Expression Heatmap"])
+
+                with landing_tab1:
+                    st.markdown("#### Contrasts Selected by AI with Justifications")
+
+                    # Create contrast DataFrame
+                    contrast_df = pd.DataFrame([
+                        {
+                            "Dataset": c.analysis_id,
+                            "Contrast": c.contrast_id,
+                            "Relevance Score": f"{c.relevance_score:.1f}",
+                            "DEG Count": c.deg_count,
+                            "AI Justification": c.justification
+                        }
+                        for c in landing_data.selected_contrasts
+                    ])
+
                     st.dataframe(
-                        landing_data.gene_table,
+                        contrast_df,
                         use_container_width=True,
                         column_config={
-                            "Gene": st.column_config.TextColumn("Gene Symbol", width="medium"),
-                            "Meta-LogFC": st.column_config.NumberColumn("Meta Log2FC", format="%.2f", help="Median log2 fold change across contrasts"),
-                            "Meta-FDR": st.column_config.TextColumn("Meta FDR", help="FDR-corrected meta-analysis p-value"),
-                            "Direction": st.column_config.TextColumn("↑/↓ Pattern", help="Up/down regulation pattern across contrasts"),
-                            "Tested": st.column_config.NumberColumn("Tested", help="Number of contrasts where gene was tested")
+                            "AI Justification": st.column_config.TextColumn(
+                                "AI Justification",
+                                width="large"
+                            ),
+                            "Relevance Score": st.column_config.TextColumn("Relevance Score", width="small"),
+                            "DEG Count": st.column_config.NumberColumn("DEG Count", width="small")
                         }
                     )
 
-                    # Gene list for easy copying
-                    with st.expander("📋 Gene List (for external tools)", expanded=False):
-                        gene_list_text = '\n'.join(landing_data.top_genes)
-                        st.text_area(
-                            "Copy gene symbols:",
-                            value=gene_list_text,
-                            height=150,
-                            help="Gene symbols, one per line. Copy and paste into other tools like DAVID, Enrichr, etc."
-                        )
-                else:
-                    st.info("No genes met the AI-selected significance criteria.")
+                with landing_tab2:
+                    st.markdown("#### Top Differentially Expressed Genes")
 
-            with landing_tab3:
-                st.markdown("#### AI-Generated Expression Heatmap")
+                    with st.expander("🧬 Top Genes Table", expanded=False):
+                        if not landing_data.gene_table.empty:
+                            st.dataframe(
+                                landing_data.gene_table,
+                                use_container_width=True,
+                                column_config={
+                                    "Gene": st.column_config.TextColumn("Gene Symbol", width="medium"),
+                                    "Median LogFC": st.column_config.NumberColumn("Median Log2FC", format="%.2f", help="Median log2 fold change across contrasts"),
+                                    "Direction": st.column_config.TextColumn("↑/↓ Pattern", help="Up/down regulation pattern across contrasts"),
+                                    "Significant in": st.column_config.TextColumn("Significant in", help="Number of contrasts where gene was significant")
+                                }
+                            )
+                        else:
+                            st.info("No genes met the AI-selected significance criteria.")
 
-                if landing_data.heatmap_fig:
-                    st.plotly_chart(landing_data.heatmap_fig, use_container_width=True)
+                    # Gene list for easy copying (moved outside to avoid nested expanders)
+                    if not landing_data.gene_table.empty:
+                        with st.expander("📋 Gene List (for external tools)", expanded=False):
+                            gene_list_text = '\n'.join(landing_data.top_genes)
+                            st.text_area(
+                                "Copy gene symbols:",
+                                value=gene_list_text,
+                                height=150,
+                                help="Gene symbols, one per line. Copy and paste into other tools like DAVID, Enrichr, etc."
+                            )
 
-                    st.markdown("""
-                    💡 **How to interpret this meta-analysis heatmap:**
-                    - Each row represents a gene selected through meta-analysis, each column represents a biological contrast
-                    - Colors indicate log2 fold change: red (upregulated), blue (downregulated), white (not significant in individual study)
-                    - Hover over cells to see detailed information including contrast descriptions
-                    - Genes and contrasts are automatically clustered to reveal biological patterns
-                    - Genes were selected based on meta-analysis significance across multiple contrasts
-                    - Individual cell coloring uses standard thresholds (p<0.05, |logFC|>1.0) for visualization
-                    """)
-                else:
-                    st.warning("Could not generate heatmap. This may occur if no genes meet the AI-selected significance criteria.")
+                with landing_tab3:
+                    st.markdown("#### AI-Generated Expression Heatmap")
+
+                    if landing_data.heatmap_fig:
+                        st.plotly_chart(landing_data.heatmap_fig, use_container_width=True)
+
+                        st.markdown("""
+                        💡 **How to interpret this heatmap:**
+                        - Each row represents a gene, each column represents a biological contrast
+                        - Colors indicate log2 fold change: red (upregulated), blue (downregulated), white (not significant)
+                        - Hover over cells to see detailed information including contrast descriptions
+                        - Genes and contrasts are automatically clustered to reveal biological patterns
+                        """)
+                    else:
+                        st.warning("Could not generate heatmap. This may occur if no genes meet the AI-selected significance criteria.")
+
+            # Auto-apply selections to other tabs (moved to bottom)
+            st.markdown("---")
+            if st.button("📋 Apply These Selections to Other Tabs", type="secondary"):
+                selected_datasets = set(c.analysis_id for c in landing_data.selected_contrasts)
+                selected_contrasts = set((c.analysis_id, c.contrast_id) for c in landing_data.selected_contrasts)
+
+                st.session_state['selected_datasets'] = selected_datasets
+                st.session_state['selected_contrasts'] = selected_contrasts
+
+                st.success("✅ Selections applied! Switch to Heat-map or Expression tabs to see visualizations with these selections.")
 
             # Export options
             st.markdown("---")
@@ -1821,7 +1394,7 @@ if ri and ri.cpm_data:
                 """)
 
     with tab_sel:
-        st.header("📊 Selections")
+        st.header("☑️ Select Data & Contrasts")
         st.markdown("**Select datasets and contrasts for analysis.** Use the tables below to choose your data, then click 'Regenerate Plots' to update visualizations.")
 
         # Dataset selection table
@@ -1948,7 +1521,7 @@ if ri and ri.cpm_data:
             st.info(f"ℹ️ Please select {', '.join(missing)} to enable plot generation.")
 
     with tab1:
-        st.header("Differential Expression Heatmap")
+        st.header("🌡️ Explore DEG Heatmap")
         st.markdown("**📊 Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Hover over cells for details. Use the sidebar to adjust significance thresholds and filtering options.")
 
         # Display settings for heatmap
@@ -1964,9 +1537,15 @@ if ri and ri.cpm_data:
         elif not selected_contrasts:
             st.info("Please select contrasts in the 'Selections' tab.")
         else:
+            # Only create heatmap if we're actually on the heatmap tab and have selections
+            # Check if we have landing page data to avoid unnecessary computation
+            if not (hasattr(st.session_state, 'landing_data') and st.session_state.landing_data):
                 # Create and display the heatmap using isolated fragment
                 @st.fragment
                 def draw_heatmap(gene_selection, contrast_pairs, show_debug=False, show_adv=False):
+                    # Skip execution if AI is currently generating
+                    if st.session_state.get('ai_generating', False):
+                        return
                     with st.spinner("Generating heatmap..."):
                         try:
                             if show_adv and show_debug:
@@ -2042,9 +1621,92 @@ if ri and ri.cpm_data:
 
                 # Call the fragment with just the input parameters
                 draw_heatmap(gene_sel, selected_contrasts, debug_mode, show_advanced)
+            else:
+                # If landing page data exists, show a message and link to apply selections
+                st.info("💡 You have AI-generated selections available. Use the 'Apply These Selections to Other Tabs' button in the AI Summary tab to update this heatmap, or make manual selections below.")
+
+                # Still allow manual override
+                @st.fragment
+                def draw_heatmap_manual(gene_selection, contrast_pairs, show_debug=False, show_adv=False):
+                    with st.spinner("Generating heatmap..."):
+                        try:
+                            if show_adv and show_debug:
+                                st.info("Debug mode: Showing detailed heatmap generation info")
+                                import logging
+                                import io
+
+                                # Set up a string IO to capture log messages
+                                log_stream = io.StringIO()
+                                handler = logging.StreamHandler(log_stream)
+                                handler.setLevel(logging.DEBUG)
+                                formatter = logging.Formatter('%(levelname)s - %(message)s')
+                                handler.setFormatter(formatter)
+
+                                # Add the handler to the logger
+                                logger = logging.getLogger("ResultsIntegration")
+                                logger.setLevel(logging.DEBUG)
+                                logger.addHandler(handler)
+
+                            # Create heatmap with possibly modified parameters
+                            # Use cached version if available for older Streamlit versions
+                            if 'cached_figure_creation' in globals():
+                                fig = cached_figure_creation("create_lfc_heatmap",
+                                                            gene_selection,
+                                                            contrast_pairs,
+                                                            None)
+                            else:
+                                # Apply dynamic filtering if enabled
+                                p_thresh = effective_pvalue_thresh if use_dynamic_filtering else None
+                                lfc_thresh_val = effective_lfc_thresh if use_dynamic_filtering else None
+
+                                fig = ri.create_lfc_heatmap(
+                                    genes=gene_selection,
+                                    contrasts=contrast_pairs,
+                                    output_file=None,
+                                    p_value_threshold=p_thresh,
+                                    lfc_threshold=lfc_thresh_val,
+                                    hide_empty_rows_cols=hide_empty_rows_cols,
+                                    font_size=heatmap_font_size,
+                                    show_grid_lines=show_grid_lines,
+                                    grid_opacity=grid_opacity
+                                )
+
+                            # Display settings are now handled in the create_lfc_heatmap function
+
+                            if show_adv and show_debug:
+                                # Remove the handler to avoid duplicates
+                                logger.removeHandler(handler)
+
+                                # Display the log
+                                st.expander("Debug Log", expanded=True).code(log_stream.getvalue())
+
+                            if fig:
+                                # Add notes about functionality
+                                info_messages = ["💡 Hover over cells in the heatmap to see contrast descriptions and gene information."]
+
+                                for msg in info_messages:
+                                    st.info(msg)
+
+                                # Display the plot
+                                st.plotly_chart(fig, use_container_width=True)
+                            else:
+                                st.error("Could not generate heatmap. Please check your selections.")
+                        except Exception as e:
+                            st.error(f"Error generating heatmap: {str(e)}")
+
+                # Allow manual generation if user wants to override AI selections
+                if st.button("🔄 Generate Manual Heatmap", help="Generate heatmap with current manual selections, ignoring AI selections"):
+                    # Temporarily clear AI data to force manual generation
+                    temp_landing_data = st.session_state.get('landing_data')
+                    if 'landing_data' in st.session_state:
+                        del st.session_state.landing_data
+                    draw_heatmap_manual(gene_sel, selected_contrasts, debug_mode, show_advanced)
+                    # Restore AI data
+                    if temp_landing_data:
+                        st.session_state.landing_data = temp_landing_data
 
     with tab2:
-        st.header("Gene Expression Plots")
+        st.header("📈 Plot Gene Expression")
         st.markdown("**🎻 Violin plots showing gene expression distributions across sample groups.** Each panel represents one gene, with samples grouped by experimental conditions.")
 
         # Display settings for expression plots
@@ -2064,6 +1726,9 @@ if ri and ri.cpm_data:
                 # Create and display the expression plots using isolated fragment
                 @st.fragment
                 def draw_expression_plots(gene_selection, dataset_selection, plot_style, hide_labels, page_num, total_pgs, facet_font_size, lock_y_axis, show_raw_points, legend_position):
+                    # Skip execution if AI is currently generating
+                    if st.session_state.get('ai_generating', False):
+                        return
                     with st.spinner("Generating expression plots..."):
                         try:
                             # Calculate gene slice for the current page
@@ -2132,7 +1797,7 @@ if ri and ri.cpm_data:
                 draw_expression_plots(gene_sel, selected_datasets, "violin", hide_x_labels, st.session_state.page_num, total_pages, facet_font_size, lock_y_axis, show_raw_points, legend_position)
 
     with tab3:
-        st.header("RNA-seq Analysis Plots")
+        st.header("🧑‍🔬 Analyze Experiments")
         st.markdown("**📈 Quality control and differential expression plots from individual datasets.** View MDS plots, normalization diagnostics, volcano plots, and MA plots for detailed analysis.")
 
         # Display settings for analysis plots
@@ -2143,6 +1808,9 @@ if ri and ri.cpm_data:
         # Select a dataset first - isolate this in a fragment to prevent full rerun
         @st.fragment
         def analysis_plots_tab():
+            # Skip execution if AI is currently generating
+            if st.session_state.get('ai_generating', False):
+                return
             dataset_options = list(ri.cpm_data.keys()) if ri else []
             selected_dataset = st.selectbox("Select a dataset to view analysis plots:", dataset_options)
 
@@ -2385,12 +2053,15 @@ if ri and ri.cpm_data:
         analysis_plots_tab()
 
     with tab4:
-        st.header("Dataset Information")
+        st.header("📋 View Dataset Info")
         st.markdown("**📋 Browse and filter dataset metadata.** View study details, organism information, sample counts, and experimental descriptions. Use filters to find specific datasets of interest.")
 
         # Isolate datasets tab with fragment to prevent recomputation
         @st.fragment
         def datasets_tab():
+            # Skip execution if AI is currently generating
+            if st.session_state.get('ai_generating', False):
+                return
             # Create a DataFrame with dataset information
             dataset_info = []
             for analysis_id, info in ri.analysis_info.items():
@@ -2504,12 +2175,15 @@ if ri and ri.cpm_data:
         datasets_tab()
 
     with tab5:
-        st.header("Contrast Information")
+        st.header("🔍 View Contrast Info")
         st.markdown("**🔍 Browse and filter contrast details.** View contrast descriptions, DEG counts, and filter by dataset or significance. Use this to understand what each comparison represents.")
 
         # Isolate contrasts tab with fragment to prevent recomputation
         @st.fragment
         def contrasts_tab():
+            # Skip execution if AI is currently generating
+            if st.session_state.get('ai_generating', False):
+                return
             # Create a DataFrame with contrast information
             # Display contrast information
             contrast_info = []

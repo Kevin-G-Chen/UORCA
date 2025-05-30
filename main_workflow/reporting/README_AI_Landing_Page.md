@@ -49,10 +49,10 @@ uv run streamlit run uorca_explorer.py --server.port 8501
 3. **Generate**: Click "🚀 Generate AI Landing Page"
 
 4. **Review Results**: 
-   - AI-generated narrative summary
+   - AI-generated narrative summary displayed side-by-side with interactive heatmap
    - Automatically selected contrasts with justifications
-   - Top differentially expressed genes
-   - Interactive expression heatmap
+   - Top differentially expressed genes with easy export options
+   - Interactive expression heatmap with improved gene label visibility
 
 ### 4. Explore and Export
 
@@ -70,6 +70,8 @@ uv run streamlit run uorca_explorer.py --server.port 8501
 | **Optimal Thresholds** | Automatically determines best statistical cutoffs | Scientifically rigorous results |
 | **Gene Prioritization** | Ranks genes by frequency and effect size | Focus on most important findings |
 | **Biological Narratives** | Generates accessible research summaries | Publication-ready interpretations |
+| **Side-by-Side Display** | View AI interpretation alongside interactive heatmap | Enhanced cross-referencing and analysis |
+| **Improved Visualization** | Better gene label visibility with adjustable heatmap height | Clear, readable gene identification |
 
 ### 🔄 Seamless Integration
 
@@ -77,6 +79,8 @@ uv run streamlit run uorca_explorer.py --server.port 8501
 - **Unified Interface**: No switching between different applications  
 - **Selection Transfer**: Apply AI choices to detailed exploration tabs
 - **Consistent Data**: Same robust data loading as rest of UORCA Explorer
+- **Flexible Layout**: Choose between side-by-side or stacked display modes
+- **Interactive Controls**: Adjustable heatmap height for optimal gene label visibility
 
 ### 🎯 Intelligent Automation
 
@@ -84,6 +88,8 @@ uv run streamlit run uorca_explorer.py --server.port 8501
 - **Statistically Rigorous**: Uses appropriate thresholds for your dataset
 - **Biologically Relevant**: Prioritizes meaningful contrasts and genes
 - **Reproducible**: All selections documented with AI justifications
+- **User-Friendly Interface**: Side-by-side layout for seamless interpretation
+- **Customizable Display**: Adjustable heatmap height and layout preferences
 
 ## 📋 Requirements
 
@@ -132,27 +138,44 @@ UORCA_results/
 
 UORCA Explorer now has **7 tabs**:
 
-1. **🎨 Landing Page** *(NEW)* - AI-assisted analysis and interpretation
-2. **📊 Selections** - Manual dataset and contrast selection  
-3. **🌡️ Heat-map** - Interactive differential expression heatmaps
-4. **🎻 Expression** - Gene expression plots across samples
-5. **📈 Analysis Plots** - Quality control and diagnostic plots
-6. **📋 Dataset Info** - Study metadata and descriptions
-7. **🔍 Contrast Info** - Detailed contrast information
+1. **🤖 View AI Summary** *(NEW)* - AI-assisted analysis and interpretation with side-by-side layout
+2. **☑️ Select Data & Contrasts** - Manual dataset and contrast selection  
+3. **🌡️ Explore Heatmap** - Interactive differential expression heatmaps
+4. **📈 Plot Gene Expression** - Gene expression plots across samples
+5. **🧑‍🔬 Analyze Experiments** - Quality control and diagnostic plots
+6. **📋 View Dataset Info** - Study metadata and descriptions
+7. **🔍 View Contrast Info** - Detailed contrast information
+
+### Display Modes
+
+The AI Landing Page offers two layout options:
+
+#### **Side-by-Side Mode** (Default)
+- **Left Panel**: AI-generated narrative in a scrollable container
+- **Right Panel**: Interactive heatmap with adjustable height
+- **Collapsible Sections**: Detailed contrast and gene tables expand on demand
+- **Real-time Cross-Reference**: Compare AI insights with visualization simultaneously
+
+#### **Stacked Mode** (Traditional)
+- **Top Section**: Full-width AI narrative
+- **Tabbed Results**: Separate tabs for contrasts, genes, and heatmap
+- **Comprehensive View**: Each section gets full screen space
 
 ### AI Operation Modes
 
 #### 🎯 Full AI Mode (with API key)
 - **Smart Contrast Selection**: GPT-4o-mini evaluates biological relevance
 - **Optimal Thresholds**: AI determines best statistical parameters
-- **Rich Narratives**: Detailed biological interpretations
+- **Rich Narratives**: Detailed biological interpretations with side-by-side display
 - **Justifications**: Explains reasoning for each selection
+- **Enhanced Visualization**: Improved heatmap with better gene label visibility
 
 #### 🔧 Heuristic Mode (no API key)  
 - **Basic Selection**: Contrast ranking by DEG counts and informativeness
 - **Standard Thresholds**: Statistically sound fallback parameters
 - **Template Narratives**: Structured summaries with key findings
 - **Transparent Logic**: Clear explanations of selection criteria
+- **Improved Layout**: Same side-by-side display and visualization enhancements
 
 ### Research Context Examples
 
@@ -393,23 +416,26 @@ Therapeutic Relevance:
 ```python
 # Typical research workflow
 def research_workflow():
-    # 1. Start with AI Landing Page
+    # 1. Start with AI Landing Page (side-by-side mode)
     ai_summary = generate_ai_landing_page(
         integrator=data_integrator,
         biological_prompt=research_context,
-        max_contrasts=10,
-        max_genes=75
+        max_genes=50
     )
     
-    # 2. Apply selections to detailed analysis
+    # 2. Review narrative and heatmap simultaneously
+    narrative = ai_summary.narrative
+    heatmap = ai_summary.heatmap_fig  # Enhanced with better gene labels
+    
+    # 3. Apply AI selections to detailed analysis
     selected_genes = ai_summary.top_genes
     selected_contrasts = ai_summary.selected_contrasts
     
-    # 3. Generate detailed visualizations
-    heatmap = create_detailed_heatmap(selected_genes, selected_contrasts)
+    # 4. Generate detailed visualizations
+    detailed_heatmap = create_detailed_heatmap(selected_genes, selected_contrasts)
     expression_plots = create_expression_analysis(selected_genes)
     
-    # 4. Export for further analysis
+    # 5. Export for further analysis
     export_gene_lists(selected_genes)
     export_narrative(ai_summary.narrative)
 ```
@@ -435,8 +461,9 @@ narrative_sections = {
 ### Optimal Settings
 
 - **Research Context**: Be specific but not overly narrow
-- **Max Contrasts**: 5-12 for focused analysis, 15+ for comprehensive
-- **Max Genes**: 30-50 for targeted analysis, 75-100 for discovery
+- **Layout Mode**: Use side-by-side for cross-referencing, stacked for detailed review
+- **Max Genes**: 30-50 for targeted analysis (optimal for heatmap visibility)
+- **Heatmap Height**: Adjust slider for comfortable gene label reading
 - **Browser**: Use Chrome, Firefox, or Safari for best performance
 
 ### Data Organization
