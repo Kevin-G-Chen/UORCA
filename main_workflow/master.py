@@ -61,6 +61,7 @@ def save_analysis_info(ctx: RunContext[RNAseqCoreContext]):
         "analysis_success": getattr(ctx.deps, 'analysis_success', False),
         "dataset_information": getattr(ctx.deps, 'dataset_information', None),
         "reflection_iterations": getattr(ctx.deps, 'reflection_iterations', 0),
+        "checkpoints": ctx.deps.checkpoints.model_dump() if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints else {},
         "timestamp": datetime.datetime.now().isoformat()
     }
 
@@ -546,6 +547,11 @@ async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
     ]:
         if not hasattr(ctx.deps, attr_name):
             setattr(ctx.deps, attr_name, default_value)
+    
+    # Initialize checkpoints if they don't exist
+    if not hasattr(ctx.deps, 'checkpoints'):
+        from shared import AnalysisCheckpoints
+        ctx.deps.checkpoints = AnalysisCheckpoints()
 
     # Ensure dataset_information is carried over from extraction to analysis if available
     if hasattr(ctx.deps, 'dataset_information') and ctx.deps.dataset_information:

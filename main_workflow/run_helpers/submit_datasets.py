@@ -113,11 +113,13 @@ def submit_single_dataset(accession, dataset_size_bytes, output_dir, resource_di
     return job_id
 
 def extract_analysis_results(accession, output_dir):
-    """Extract analysis results from analysis_info.json and log files."""
+    """Extract analysis results from analysis_info.json using checkpoint system."""
     results = {
         'success': False,
         'reflection_iterations': 0,
-        'error_message': None
+        'checkpoints_completed': 0,
+        'checkpoints_failed': 0,
+        'furthest_checkpoint': 'none'
     }
 
     # Check analysis_info.json for success status - prioritize this as the authoritative source
@@ -126,28 +128,85 @@ def extract_analysis_results(accession, output_dir):
         os.path.join(output_dir, accession, "analysis_info.json")
     ]
 
+    print(f"DEBUG [{accession}]: Checking analysis_info.json paths:")
+    for path in analysis_info_paths:
+        print(f"DEBUG [{accession}]:   - {path} (exists: {os.path.exists(path)})")
+
     analysis_info_found = False
     for info_path in analysis_info_paths:
+        print(f"DEBUG [{accession}]: Checking path: {info_path}")
         if os.path.exists(info_path):
+            print(f"DEBUG [{accession}]: File exists, attempting to read...")
             try:
                 with open(info_path, 'r') as f:
                     analysis_info = json.load(f)
+                
+                print(f"DEBUG [{accession}]: Successfully loaded JSON with keys: {list(analysis_info.keys())}")
+                print(f"DEBUG [{accession}]: analysis_success field: {analysis_info.get('analysis_success', 'NOT_FOUND')}")
+                print(f"DEBUG [{accession}]: reflection_iterations field: {analysis_info.get('reflection_iterations', 'NOT_FOUND')}")
                 
                 # Get the analysis success status directly
                 results['success'] = analysis_info.get('analysis_success', False)
                 analysis_info_found = True
                 
+                print(f"DEBUG [{accession}]: Set results['success'] to: {results['success']}")
+                
                 # Get reflection iterations from analysis_info.json
                 results['reflection_iterations'] = analysis_info.get('reflection_iterations', 0)
                 
-                # Also extract other useful information if available
-                if not results['success'] and 'error_message' in analysis_info:
-                    results['error_message'] = analysis_info['error_message']
+                # Evaluate checkpoints if available
+                checkpoints = analysis_info.get('checkpoints', {})
+                if checkpoints:
+                    print(f"DEBUG [{accession}]: Found checkpoints: {list(checkpoints.keys())}")
+                    
+                    checkpoint_order = [
+                        'metadata_extraction', 'fastq_extraction', 'metadata_analysis',
+                        'kallisto_index_selection', 'kallisto_quantification', 
+                        'edger_limma_preparation', 'rnaseq_analysis'
+                    ]
+                    
+                    completed_count = 0
+                    failed_count = 0
+                    furthest = 'none'
+                    
+                    for checkpoint_name in checkpoint_order:
+                        if checkpoint_name in checkpoints:
+                            checkpoint = checkpoints[checkpoint_name]
+                            status = checkpoint.get('status', 'not_started')
+                            print(f"DEBUG [{accession}]: Checkpoint {checkpoint_name}: {status}")
+                            
+                            if status == 'completed':
+                                completed_count += 1
+                                furthest = checkpoint_name
+                            elif status == 'failed':
+                                failed_count += 1
+                                break  # Stop at first failure
+                            elif status in ['in_progress', 'not_started']:
+                                break  # Stop at first non-completed
+                    
+                    results['checkpoints_completed'] = completed_count
+                    results['checkpoints_failed'] = failed_count
+                    results['furthest_checkpoint'] = furthest
+                    
+                    # Override success based on checkpoints if we have them
+                    # Success = all 7 checkpoints completed and no failures
+                    if completed_count == 7 and failed_count == 0:
+                        results['success'] = True
+                        print(f"DEBUG [{accession}]: Setting success=True based on checkpoints (7/7 completed)")
+                    else:
+                        results['success'] = False
+                        print(f"DEBUG [{accession}]: Setting success=False based on checkpoints ({completed_count}/7 completed, {failed_count} failed)")
                 
+                print(f"DEBUG [{accession}]: Final results from JSON: success={results['success']}, reflections={results['reflection_iterations']}, checkpoints={results['checkpoints_completed']}/7")
                 break
             except (json.JSONDecodeError, FileNotFoundError, KeyError) as e:
-                results['error_message'] = f"Error reading analysis_info.json: {str(e)}"
+                print(f"DEBUG [{accession}]: Error reading JSON: {str(e)}")
                 continue
+        else:
+            print(f"DEBUG [{accession}]: File does not exist at {info_path}")
+    
+    if not analysis_info_found:
+        print(f"DEBUG [{accession}]: No analysis_info.json found in any location")
 
     # Check log files for reflection iterations and additional error info
     log_dir = os.path.join(output_dir, "logs")
@@ -170,24 +229,14 @@ def extract_analysis_results(accession, output_dir):
                     results['success'] = True
                 elif "❌ Final analysis attempt failed" in log_content:
                     results['success'] = False
-
-            # Extract error messages if analysis failed and we don't have a better error message
-            if not results['success'] and not results['error_message']:
-                error_lines = []
-                for line in log_content.split('\n'):
-                    if any(keyword in line for keyword in ['ERROR', 'FAILED', 'Exception', 'Traceback']):
-                        error_lines.append(line.strip())
-                if error_lines:
-                    results['error_message'] = '; '.join(error_lines[-3:])  # Last 3 error lines
                 
         except Exception as e:
-            if not results['error_message']:
-                results['error_message'] = f"Could not read log file: {str(e)}"
+            print(f"DEBUG [{accession}]: Could not read log file: {str(e)}")
 
     # If we still don't have success info and no analysis_info.json was found, 
     # the analysis likely didn't complete properly
-    if not analysis_info_found and results['error_message'] is None:
-        results['error_message'] = "No analysis_info.json found - analysis may not have completed"
+    if not analysis_info_found:
+        print(f"DEBUG [{accession}]: No analysis_info.json found - analysis incomplete")
 
     return results
 
@@ -598,10 +647,11 @@ def generate_summary_report(output_dir):
                     failed.append({
                         'accession': accession,
                         'reflections': reflections,
-                        'error': error_info,
                         'storage_gb': status.get('storage_gb', 0),
                         'state': job_state,
-                        'failure_reason': failure_reason
+                        'failure_reason': failure_reason,
+                        'checkpoints_completed': status.get('checkpoints_completed', 0),
+                        'furthest_checkpoint': status.get('furthest_checkpoint', 'none')
                     })
             except Exception as e:
                 print(f"Warning: Could not read status file {status_file}: {str(e)}")
@@ -656,7 +706,7 @@ def generate_summary_report(output_dir):
                 f.write(f"  Analysis Failures ({len(analysis_failures)}):\n")
                 for s in sorted(analysis_failures, key=lambda x: x['reflections'], reverse=True):
                     f.write(f"    {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB\n")
-                    f.write(f"      Error: {s['error'][:100]}{'...' if len(s['error']) > 100 else ''}\n")
+                    f.write(f"      Furthest checkpoint: {s.get('furthest_checkpoint', 'unknown')} ({s.get('checkpoints_completed', 0)}/7 completed)\n")
 
     print(f"\n" + "=" * 50)
     print(f"BATCH ANALYSIS SUMMARY")
@@ -676,7 +726,7 @@ def generate_summary_report(output_dir):
     import csv
 
     with open(csv_path, 'w', newline='') as csvfile:
-        fieldnames = ['accession', 'success', 'reflection_iterations', 'storage_gb', 'error_message']
+        fieldnames = ['accession', 'success', 'reflection_iterations', 'storage_gb', 'checkpoints_completed', 'furthest_checkpoint']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
@@ -687,7 +737,8 @@ def generate_summary_report(output_dir):
                 'success': True,
                 'reflection_iterations': s['reflections'],
                 'storage_gb': s['storage_gb'],
-                'error_message': ''
+                'checkpoints_completed': 7,
+                'furthest_checkpoint': 'rnaseq_analysis'
             })
 
         # Write still running datasets
@@ -697,7 +748,8 @@ def generate_summary_report(output_dir):
                 'success': None,
                 'reflection_iterations': 0,
                 'storage_gb': s['storage_gb'],
-                'error_message': 'Still running'
+                'checkpoints_completed': 0,
+                'furthest_checkpoint': 'none'
             })
 
         # Write failed datasets
@@ -707,7 +759,8 @@ def generate_summary_report(output_dir):
                 'success': False,
                 'reflection_iterations': s['reflections'],
                 'storage_gb': s['storage_gb'],
-                'error_message': s['error']
+                'checkpoints_completed': s.get('checkpoints_completed', 0),
+                'furthest_checkpoint': s.get('furthest_checkpoint', 'none')
             })
 
     print(f"\nDetailed summary saved to: {summary_path}")
@@ -733,10 +786,38 @@ def generate_summary_report(output_dir):
         if analysis_failures:
             print(f"  Analysis failures: {len(analysis_failures)}")
             for s in analysis_failures[:3]:
-                print(f"    {s['accession']}: {s['reflections']} reflections")
+                furthest = s.get('furthest_checkpoint', 'none')
+                completed = s.get('checkpoints_completed', 0)
+                print(f"    {s['accession']}: {s['reflections']} reflections, reached {furthest} ({completed}/7)")
 
         if len(failed) > 6:
             print(f"  ... and {len(failed)-6} more (see {summary_path} for details)")
 
+def test_analysis_extraction():
+    """Test function to debug analysis result extraction"""
+    print("=== TESTING ANALYSIS EXTRACTION ===")
+    
+    # Test with the sample file
+    test_output_dir = "UORCA_results/2025-06-03_UpdatedEvaluation"
+    test_accession = "GSE193767"
+    
+    print(f"Testing with output_dir: {test_output_dir}")
+    print(f"Testing with accession: {test_accession}")
+    
+    results = extract_analysis_results(test_accession, test_output_dir)
+    
+    print(f"\nRESULTS:")
+    print(f"  Success: {results['success']}")
+    print(f"  Reflection iterations: {results['reflection_iterations']}")
+    print(f"  Checkpoints completed: {results.get('checkpoints_completed', 'N/A')}")
+    print(f"  Furthest checkpoint: {results.get('furthest_checkpoint', 'N/A')}")
+    print("=== END TEST ===")
+    
+    return results
+
 if __name__ == "__main__":
-    main()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "test":
+        test_analysis_extraction()
+    else:
+        main()
