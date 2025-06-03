@@ -89,15 +89,20 @@ def submit_single_dataset(accession, dataset_size_bytes, output_dir, resource_di
     result = subprocess.run(["sbatch", str(script_path)], capture_output=True, text=True, check=True)
     job_id = result.stdout.strip().split()[-1]  # Extract job ID from "Submitted batch job XXXXXX"
 
-    # Track job status
+    # Clean up script file immediately after submission
+    try:
+        script_path.unlink()
+    except OSError as e:
+        print(f"Warning: Could not remove script file {script_path}: {e}")
+
+    # Track job status (don't store script_path since we removed it)
     status_info = {
         'job_id': job_id,
         'accession': accession,
         'storage_bytes': dataset_size_bytes,
         'storage_gb': dataset_size_bytes / (1024**3),
         'state': 'running',
-        'submitted_time': datetime.now().isoformat(),
-        'script_path': str(script_path)
+        'submitted_time': datetime.now().isoformat()
     }
 
     status_file = os.path.join(status_dir, f"{accession}_status.json")
@@ -108,30 +113,43 @@ def submit_single_dataset(accession, dataset_size_bytes, output_dir, resource_di
     return job_id
 
 def extract_analysis_results(accession, output_dir):
-    """Extract analysis results from log files and analysis_info.json."""
+    """Extract analysis results from analysis_info.json and log files."""
     results = {
         'success': False,
         'reflection_iterations': 0,
         'error_message': None
     }
 
-    # Check analysis_info.json for success status
+    # Check analysis_info.json for success status - prioritize this as the authoritative source
     analysis_info_paths = [
         os.path.join(output_dir, accession, "metadata", "analysis_info.json"),
         os.path.join(output_dir, accession, "analysis_info.json")
     ]
 
+    analysis_info_found = False
     for info_path in analysis_info_paths:
         if os.path.exists(info_path):
             try:
                 with open(info_path, 'r') as f:
                     analysis_info = json.load(f)
+                
+                # Get the analysis success status directly
                 results['success'] = analysis_info.get('analysis_success', False)
+                analysis_info_found = True
+                
+                # Get reflection iterations from analysis_info.json
+                results['reflection_iterations'] = analysis_info.get('reflection_iterations', 0)
+                
+                # Also extract other useful information if available
+                if not results['success'] and 'error_message' in analysis_info:
+                    results['error_message'] = analysis_info['error_message']
+                
                 break
-            except (json.JSONDecodeError, FileNotFoundError):
+            except (json.JSONDecodeError, FileNotFoundError, KeyError) as e:
+                results['error_message'] = f"Error reading analysis_info.json: {str(e)}"
                 continue
 
-    # Check log files for reflection iterations
+    # Check log files for reflection iterations and additional error info
     log_dir = os.path.join(output_dir, "logs")
     log_file = os.path.join(log_dir, f"run_{accession}.out")
 
@@ -140,20 +158,36 @@ def extract_analysis_results(accession, output_dir):
             with open(log_file, 'r') as f:
                 log_content = f.read()
 
-            # Count reflection iterations
-            reflection_count = log_content.count("❌ Analysis attempt")
-            results['reflection_iterations'] = max(0, reflection_count)
+            # Only count reflection iterations from logs if analysis_info.json wasn't found
+            if not analysis_info_found:
+                reflection_count = log_content.count("❌ Analysis attempt")
+                results['reflection_iterations'] = max(0, reflection_count)
 
-            # Extract error messages if analysis failed
-            if not results['success']:
+            # If no analysis_info.json found, fall back to log-based success detection
+            if not analysis_info_found:
+                # Look for success indicators in logs
+                if "✅ Analysis attempt" in log_content and "succeeded!" in log_content:
+                    results['success'] = True
+                elif "❌ Final analysis attempt failed" in log_content:
+                    results['success'] = False
+
+            # Extract error messages if analysis failed and we don't have a better error message
+            if not results['success'] and not results['error_message']:
                 error_lines = []
                 for line in log_content.split('\n'):
-                    if 'ERROR' in line or 'FAILED' in line or 'Exception' in line:
+                    if any(keyword in line for keyword in ['ERROR', 'FAILED', 'Exception', 'Traceback']):
                         error_lines.append(line.strip())
                 if error_lines:
                     results['error_message'] = '; '.join(error_lines[-3:])  # Last 3 error lines
+                
         except Exception as e:
-            results['error_message'] = f"Could not read log file: {str(e)}"
+            if not results['error_message']:
+                results['error_message'] = f"Could not read log file: {str(e)}"
+
+    # If we still don't have success info and no analysis_info.json was found, 
+    # the analysis likely didn't complete properly
+    if not analysis_info_found and results['error_message'] is None:
+        results['error_message'] = "No analysis_info.json found - analysis may not have completed"
 
     return results
 
@@ -298,11 +332,8 @@ def update_job_statuses(output_dir):
                         reflection_info = f" ({status.get('reflection_iterations', 0)} reflections)" if status.get('reflection_iterations', 0) > 0 else ""
                         print(f"Job {job_id} ({accession}) completed {success_indicator}{reflection_info}")
 
-                    # Clean up script file for completed/failed jobs
-                    if not job_still_running:
-                        script_path = status.get('script_path')
-                        if script_path and os.path.exists(script_path):
-                            os.remove(script_path)
+                    # Script files are now cleaned up immediately after submission
+                    pass
 
             except (json.JSONDecodeError, FileNotFoundError, subprocess.SubprocessError) as e:
                 print(f"Warning: Error updating status for {status_file}: {str(e)}")
@@ -366,6 +397,13 @@ def main():
         script_path.chmod(0o755)
 
         subprocess.run(["sbatch", str(script_path)], check=True)
+        
+        # Clean up script file immediately after submission
+        try:
+            script_path.unlink()
+        except OSError as e:
+            print(f"Warning: Could not remove array script file {script_path}: {e}")
+        
         return
 
     print(f"Storage-aware submission enabled. Maximum storage: {args.max_storage_gb:.2f} GB")
@@ -524,7 +562,6 @@ def generate_summary_report(output_dir):
     successful = []
     failed = []
     running = []
-    total_reflections = 0
 
     for status_file in os.listdir(status_dir):
         if status_file.endswith("_status.json"):
@@ -535,7 +572,6 @@ def generate_summary_report(output_dir):
 
                 accession = status.get('accession', 'unknown')
                 reflections = status.get('reflection_iterations', 0)
-                total_reflections += reflections
                 job_state = status.get('state', 'unknown')
 
                 if job_state == 'running':
@@ -587,9 +623,6 @@ def generate_summary_report(output_dir):
         f.write(f"  Still running: {len(running)}\n")
         f.write(f"  Successful: {len(successful)} ({len(successful)/completed_jobs*100:.1f}% of completed)\n")
         f.write(f"  Failed: {len(failed)} ({len(failed)/completed_jobs*100:.1f}% of completed)\n")
-        if completed_jobs > 0:
-            f.write(f"  Total reflection iterations: {total_reflections}\n")
-            f.write(f"  Average reflections per completed dataset: {total_reflections/completed_jobs:.1f}\n")
         f.write("\n")
 
         if successful:
@@ -636,8 +669,6 @@ def generate_summary_report(output_dir):
     if completed_jobs > 0:
         print(f"Successful: {len(successful)} ({len(successful)/completed_jobs*100:.1f}% of completed)")
         print(f"Failed: {len(failed)} ({len(failed)/completed_jobs*100:.1f}% of completed)")
-        print(f"Total reflection iterations: {total_reflections}")
-        print(f"Average reflections per completed dataset: {total_reflections/completed_jobs:.1f}")
     else:
         print("No jobs have completed yet.")
     # Write detailed CSV for easy processing

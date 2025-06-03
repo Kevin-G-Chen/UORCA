@@ -27,6 +27,7 @@ uv run {{ project_root }}/main_workflow/master.py \
 echo "Completed run for {{ accession }} at $(date)"
 
 # Update job status to completed
+# Note: Script files are cleaned up immediately after job submission
 STATUS_DIR="{{ output_dir }}/job_status"
 STATUS_FILE="$STATUS_DIR/{{ accession }}_status.json"
 if [ -f "$STATUS_FILE" ]; then

@@ -164,6 +164,15 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
 
     logger.info("%s written (%d rows)", metadata_filename, len(out_df))
 
+    # Validate sample count - need more than 2 samples for meaningful analysis
+    unique_samples = out_df['GSM'].nunique()
+    logger.info("📊 Found %d unique samples (GSM entries)", unique_samples)
+    
+    if unique_samples <= 2:
+        error_msg = f"Insufficient samples for analysis: only {unique_samples} unique samples found. Need at least 3 samples for meaningful differential expression analysis. Dataset {accession} will be terminated."
+        logger.error("❌ %s", error_msg)
+        raise ValueError(error_msg)
+
     # expose merged table to downstream agents
     ctx.deps.metadata_df = out_df
     ctx.deps.metadata_path = str(meta_dir / metadata_filename)
@@ -183,7 +192,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
         logger.info(f"✅ Cleaned up {cleanup_count} temporary files")
 
     return (
-        f"Fetched {len(gsms)} GSM samples.\n"
+        f"Fetched {len(gsms)} GSM samples ({unique_samples} unique).\n"
         f"Identified {len(meta_long)} SRR runs "
         f"across {meta_long['SRX'].nunique()} SRX experiments."
     )

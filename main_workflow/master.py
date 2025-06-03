@@ -51,7 +51,7 @@ def save_analysis_info(ctx: RunContext[RNAseqCoreContext]):
     analysis_info = {
         "accession": ctx.deps.accession,
         "organism": ctx.deps.organism,
-        "number_of_samples": len(getattr(ctx.deps, 'abundance_files', [])) if hasattr(ctx.deps, 'abundance_files') else 0,
+        "number_of_samples": ctx.deps.metadata_df['GSM'].nunique() if hasattr(ctx.deps, 'metadata_df') and ctx.deps.metadata_df is not None else 0,
         "analysis_column": getattr(ctx.deps, 'merged_column', None),
         "unique_groups": getattr(ctx.deps, 'unique_groups', None),
         "number_of_contrasts": len(getattr(ctx.deps, 'contrast_matrix_df', [])) if hasattr(ctx.deps, 'contrast_matrix_df') and ctx.deps.contrast_matrix_df is not None else 0,
@@ -60,6 +60,7 @@ def save_analysis_info(ctx: RunContext[RNAseqCoreContext]):
         "tx2gene_file_used": getattr(ctx.deps, 'tx2gene_file_used', None),
         "analysis_success": getattr(ctx.deps, 'analysis_success', False),
         "dataset_information": getattr(ctx.deps, 'dataset_information', None),
+        "reflection_iterations": getattr(ctx.deps, 'reflection_iterations', 0),
         "timestamp": datetime.datetime.now().isoformat()
     }
 
@@ -540,7 +541,8 @@ async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
     for attr_name, default_value in [
         ('tool_logs', []),
         ('reflections', []),
-        ('analysis_history', [])
+        ('analysis_history', []),
+        ('reflection_iterations', 0)
     ]:
         if not hasattr(ctx.deps, attr_name):
             setattr(ctx.deps, attr_name, default_value)
@@ -635,6 +637,8 @@ async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
         # If unsuccessful and not at max attempts, generate reflection for next attempt
         if attempt < max_attempts:
             logger.info("❌ Analysis attempt %d failed, generating reflection", attempt)
+            # Increment reflection counter
+            ctx.deps.reflection_iterations = getattr(ctx.deps, 'reflection_iterations', 0) + 1
             await generate_reflection(ctx)
         else:
             logger.info("❌ Final analysis attempt failed, stopping after %d attempts", max_attempts)

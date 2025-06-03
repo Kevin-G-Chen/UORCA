@@ -25,6 +25,26 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 logger = logging.getLogger(__name__)
 
 #############################
+# SECTION: Custom Exceptions
+#############################
+
+class WorkflowError(Exception):
+    """Base exception for workflow-related errors that agents can understand and recover from."""
+    pass
+
+class PrerequisiteError(WorkflowError):
+    """Raised when a required prerequisite step has not been completed."""
+    pass
+
+class FileNotFoundError(WorkflowError):
+    """Raised when a required file is missing."""
+    pass
+
+class ValidationError(WorkflowError):
+    """Raised when data validation fails."""
+    pass
+
+#############################
 # SECTION: Data classes and env
 #############################
 
@@ -239,12 +259,12 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
         if not ctx.deps.fastq_dir:
             msg = "Error: No FASTQ directory specified in ctx.deps.fastq_dir"
             logger.error("❌ %s", msg)
-            return msg
+            raise PrerequisiteError(msg)
 
         if not os.path.isdir(ctx.deps.fastq_dir):
             msg = f"Error: FASTQ directory {ctx.deps.fastq_dir} does not exist"
             logger.error("❌ %s", msg)
-            return msg
+            raise FileNotFoundError(msg)
 
         # Always explicitly search in the fastq_dir for FASTQ files, ignoring any previously discovered files
         logger.info("🔍 Searching for FASTQ files in: %s", ctx.deps.fastq_dir)
@@ -253,7 +273,7 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
         if not fastq_files or len(fastq_files) == 0 or (isinstance(fastq_files[0], str) and fastq_files[0].startswith("Error")):
             msg = f"Error: No FASTQ files found in {ctx.deps.fastq_dir}"
             logger.error("❌ %s", msg)
-            return msg
+            raise FileNotFoundError(msg)
 
         # Get Kallisto index - either provided directly or intelligently selected
         index_path = kallisto_index
@@ -262,8 +282,8 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
             msg = (
                 f"No Kallisto index provided. Please use list_files to find a suitable index file in {ctx.deps.resource_dir}. Note that the index file will end with the .idx suffix. Also note that you should use the index file that is appropriate for {ctx.deps.organism}."
             )
-            logger.warning("⚠️ %s", msg.replace('\n', ' | '))
-            return msg
+            logger.error("❌ %s", msg.replace('\n', ' | '))
+            raise FileNotFoundError(msg)
 
         # Rest of the Kallisto implementation remains unchanged
         output_dir = ctx.deps.output_dir
@@ -286,7 +306,7 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
         if not pairs:
             msg = "Error: No paired FASTQ files found"
             logger.error("❌ %s", msg)
-            return msg
+            raise ValidationError(msg)
 
         total_cpus = int(os.environ.get("SLURM_CPUS_PER_TASK", os.cpu_count() or 1))
         num_samples = len(pairs)
@@ -409,19 +429,19 @@ async def prepare_edgeR_analysis(ctx: RunContext[AnalysisContext]) -> str:
         if not ctx.deps.abundance_files:
             error_msg = "Error: No abundance files found. Please run Kallisto quantification first."
             logger.error("❌ %s", error_msg)
-            return error_msg
+            raise PrerequisiteError(error_msg)
 
         # Check if we have metadata
         if ctx.deps.metadata_df is None:
             error_msg = "Error: Metadata not loaded. Please use the metadata agent."
             logger.error("❌ %s", error_msg)
-            return error_msg
+            raise PrerequisiteError(error_msg)
 
         # Check if we have merged column
         if ctx.deps.merged_column is None:
             error_msg = "Error: Analysis column not identified. Please use the metadata agent."
             logger.error("❌ %s", error_msg)
-            return error_msg
+            raise PrerequisiteError(error_msg)
 
         # Create output directory if it doesn't exist
         os.makedirs(ctx.deps.output_dir, exist_ok=True)
@@ -499,14 +519,14 @@ async def prepare_edgeR_analysis(ctx: RunContext[AnalysisContext]) -> str:
                 unmatched_samples = []
 
         if unmatched_samples:
-            warning_msg = f"""
-Warning: Could not match {len(unmatched_samples)} of {len(sample_names)} samples to metadata.
+            error_msg = f"""
+Error: Could not match {len(unmatched_samples)} of {len(sample_names)} samples to metadata.
 Unmatched samples: {', '.join(unmatched_samples)}
 
 Please check that sample names in the FASTQ files correspond to identifiers in the metadata.
             """
-            logger.warning("⚠️ %s", warning_msg)
-            return warning_msg
+            logger.error("❌ %s", error_msg)
+            raise ValidationError(error_msg)
 
         # Create a DataFrame for edgeR analysis
         analysis_df = pd.DataFrame(index=list(matched_samples.keys()))
@@ -613,20 +633,20 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
         # Check if we have contrasts available
         if getattr(ctx.deps, 'contrast_matrix_df', None) is None and not getattr(ctx.deps, 'contrasts', None):
             error_msg = "No contrasts defined. Please run process_metadata_with_agent first."
-            logger.warning("⚠️ %s", error_msg)
-            return error_msg
+            logger.error("❌ %s", error_msg)
+            raise PrerequisiteError(error_msg)
 
         # Check if sample_mapping exists and is valid
         sample_mapping_path = getattr(ctx.deps, 'sample_mapping', None)
         if not sample_mapping_path:
             error_msg = "Error: Sample mapping not defined. Please run prepare_edgeR_analysis first to create the sample metadata mapping."
             logger.error("❌ %s", error_msg)
-            return error_msg
+            raise PrerequisiteError(error_msg)
 
         if not os.path.exists(sample_mapping_path):
             error_msg = f"Error: Sample mapping file not found at {sample_mapping_path}. Please run prepare_edgeR_analysis to generate this file."
             logger.error("❌ %s", error_msg)
-            return error_msg
+            raise FileNotFoundError(error_msg)
 
         # If we have contrasts but they're not in DataFrame format, convert them
         contrasts = getattr(ctx.deps, 'contrasts', None)
@@ -662,12 +682,12 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
             logger.error("❌ %s", error_msg)
             return error_msg
 
-        # Determine the tx2gene file argument; if not provided, return an error message
+        # Determine the tx2gene file argument; if not provided, raise an error
         tx2gene_arg = tx2gene_path
         if not tx2gene_arg or not os.path.exists(tx2gene_arg):
             error_msg = f"Error: tx2gene file not found. Please use the list_files function, and specify the t2g.txt pattern in the {ctx.deps.resource_dir} directory to identify the possible tx2gene files. Please note the file is called EXACTLY t2g.txt, though the directory it is in will vary. Doing this step will provide you with a list of candidate files, which are applicable for different species. Ensure you select the correct file for the identified species: {ctx.deps.organism}."
             logger.error("❌ %s", error_msg)
-            return error_msg
+            raise FileNotFoundError(error_msg)
 
         # Use the main script
         main_r_script_path = "./main_workflow/additional_scripts/RNAseq.R"
@@ -710,8 +730,9 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
         # Check the return code
         if process.returncode != 0:
             error_msg = f"edgeR/limma analysis failed with return code: {process.returncode}."
+            detailed_error = f"{error_msg} See error output above.\n\nSTDEERR:\n{stderr_output[:1000]}...(truncated)" if len(stderr_output) > 1000 else f"{error_msg}\n\nSTDEERR:\n{stderr_output}"
             logger.error("❌ %s", error_msg)
-            return f"{error_msg} See error output above.\n\nSTDEERR:\n{stderr_output[:1000]}...(truncated)" if len(stderr_output) > 1000 else stderr_output
+            raise WorkflowError(detailed_error)
 
 
         # Find and record DEG result files in the new contrast-specific directories
@@ -777,7 +798,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         if not metadata_path or not os.path.exists(metadata_path):
             error_msg = f"Error: Metadata file not found at {metadata_path}"
             logger.error("❌ %s", error_msg)
-            return error_msg
+            raise FileNotFoundError(error_msg)
 
         # Import the metadata agent module
         try:
@@ -786,7 +807,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         except ImportError as e:
             error_msg = f"Error importing metadata_agent: {str(e)}"
             logger.error("❌ %s", error_msg, exc_info=True)
-            return error_msg
+            raise WorkflowError(error_msg)
 
         # Create a MetadataContext instance specifically for the metadata agent
         metadata_deps = metadata.MetadataContext(metadata_path=metadata_path)
@@ -881,7 +902,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         if not metadata_result or not hasattr(metadata_result, 'output'):
             error_msg = "Metadata agent returned no valid results"
             logger.error("❌ %s", error_msg)
-            return error_msg
+            raise WorkflowError(error_msg)
 
         logger.info("✅ Metadata agent completed successfully")
 
