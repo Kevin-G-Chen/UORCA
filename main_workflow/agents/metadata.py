@@ -82,8 +82,11 @@ metadata_agent = Agent(
 
 def clean_string(s: str) -> str:
     """
-    Normalize and clean an input string by removing non-ASCII characters, extra whitespace, and unwanted symbols.
-    If cleaning would result in an empty string, returns "None" instead.
+    Normalize and clean an input string by removing non-ASCII characters, extra
+    whitespace, and unwanted symbols. Additionally ensures that the resulting
+    string is a valid identifier for R by prefixing it with ``"X"`` if the first
+    character would otherwise be a digit. If cleaning would result in an empty
+    string, returns "None" instead.
     """
     if pd.isna(s):
         logger.debug("🧹 Input is NaN, returning 'NA'")
@@ -95,6 +98,11 @@ def clean_string(s: str) -> str:
     s = unidecode(s)
     s = s.replace(" ", "_")
     s = re.sub(r'[^\w]', '', s)
+
+    # Prefix with 'X' if the cleaned string begins with a digit so that it is
+    # a syntactically valid name when used in R
+    if re.match(r"^[0-9]", s):
+        s = f"X{s}"
     
     # Handle case where cleaning results in an empty string
     if not s:
