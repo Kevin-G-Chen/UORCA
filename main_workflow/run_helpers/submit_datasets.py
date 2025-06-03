@@ -112,6 +112,20 @@ def submit_single_dataset(accession, dataset_size_bytes, output_dir, resource_di
     print(f"Submitted {accession} (Job ID: {job_id}, Size: {dataset_size_bytes/(1024**3):.2f} GB)")
     return job_id
 
+def _checkpoint_summary(checkpoints):
+    """Helper function to summarize checkpoint status without early breaks."""
+    completed = failed = 0
+    furthest = None
+    for name, cp in checkpoints.items():
+        status = cp.get("status", "not_started")
+        err_msg = cp.get("error_message")
+        if status == "completed" and not err_msg:
+            completed += 1
+            furthest = name
+        elif status == "failed" or err_msg:
+            failed += 1
+    return completed, failed, furthest
+
 def extract_analysis_results(accession, output_dir):
     """Extract analysis results from analysis_info.json using checkpoint system."""
     results = {
@@ -145,59 +159,38 @@ def extract_analysis_results(accession, output_dir):
                 print(f"DEBUG [{accession}]: analysis_success field: {analysis_info.get('analysis_success', 'NOT_FOUND')}")
                 print(f"DEBUG [{accession}]: reflection_iterations field: {analysis_info.get('reflection_iterations', 'NOT_FOUND')}")
                 
-                # Get the analysis success status directly
-                results['success'] = analysis_info.get('analysis_success', False)
-                analysis_info_found = True
+                # Trust analysis_success if present - this is the authoritative source
+                if 'analysis_success' in analysis_info:
+                    results['success'] = bool(analysis_info['analysis_success'])
+                    print(f"DEBUG [{accession}]: Using authoritative analysis_success: {results['success']}")
                 
-                print(f"DEBUG [{accession}]: Set results['success'] to: {results['success']}")
+                analysis_info_found = True
                 
                 # Get reflection iterations from analysis_info.json
                 results['reflection_iterations'] = analysis_info.get('reflection_iterations', 0)
                 
-                # Evaluate checkpoints if available
+                # Evaluate checkpoints if available (but don't override analysis_success unless missing)
                 checkpoints = analysis_info.get('checkpoints', {})
                 if checkpoints:
                     print(f"DEBUG [{accession}]: Found checkpoints: {list(checkpoints.keys())}")
                     
-                    checkpoint_order = [
-                        'metadata_extraction', 'fastq_extraction', 'metadata_analysis',
-                        'kallisto_index_selection', 'kallisto_quantification', 
-                        'edger_limma_preparation', 'rnaseq_analysis'
-                    ]
+                    completed, failed, furthest = _checkpoint_summary(checkpoints)
+                    results['checkpoints_completed'] = completed
+                    results['checkpoints_failed'] = failed
+                    results['furthest_checkpoint'] = furthest or 'none'
                     
-                    completed_count = 0
-                    failed_count = 0
-                    furthest = 'none'
+                    print(f"DEBUG [{accession}]: Checkpoint summary: {completed} completed, {failed} failed, furthest: {furthest}")
                     
-                    for checkpoint_name in checkpoint_order:
-                        if checkpoint_name in checkpoints:
-                            checkpoint = checkpoints[checkpoint_name]
-                            status = checkpoint.get('status', 'not_started')
-                            print(f"DEBUG [{accession}]: Checkpoint {checkpoint_name}: {status}")
-                            
-                            if status == 'completed':
-                                completed_count += 1
-                                furthest = checkpoint_name
-                            elif status == 'failed':
-                                failed_count += 1
-                                break  # Stop at first failure
-                            elif status in ['in_progress', 'not_started']:
-                                break  # Stop at first non-completed
-                    
-                    results['checkpoints_completed'] = completed_count
-                    results['checkpoints_failed'] = failed_count
-                    results['furthest_checkpoint'] = furthest
-                    
-                    # Override success based on checkpoints if we have them
-                    # Success = all 7 checkpoints completed and no failures
-                    if completed_count == 7 and failed_count == 0:
-                        results['success'] = True
-                        print(f"DEBUG [{accession}]: Setting success=True based on checkpoints (7/7 completed)")
+                    # Only use checkpoint-based success if analysis_success was missing
+                    if 'analysis_success' not in analysis_info:
+                        results['success'] = failed == 0 and completed > 0
+                        print(f"DEBUG [{accession}]: No analysis_success field, using checkpoint-based success: {results['success']}")
                     else:
-                        results['success'] = False
-                        print(f"DEBUG [{accession}]: Setting success=False based on checkpoints ({completed_count}/7 completed, {failed_count} failed)")
+                        # Check for contradiction: if analysis_success=True but we have failures, flag it
+                        if results['success'] and failed > 0:
+                            print(f"DEBUG [{accession}]: WARNING: analysis_success=True but {failed} checkpoint failures detected")
                 
-                print(f"DEBUG [{accession}]: Final results from JSON: success={results['success']}, reflections={results['reflection_iterations']}, checkpoints={results['checkpoints_completed']}/7")
+                print(f"DEBUG [{accession}]: Final results from JSON: success={results['success']}, reflections={results['reflection_iterations']}, checkpoints={results['checkpoints_completed']}/{completed + failed + len([cp for cp in checkpoints.values() if cp.get('status') == 'not_started'])}")
                 break
             except (json.JSONDecodeError, FileNotFoundError, KeyError) as e:
                 print(f"DEBUG [{accession}]: Error reading JSON: {str(e)}")
@@ -217,10 +210,14 @@ def extract_analysis_results(accession, output_dir):
             with open(log_file, 'r') as f:
                 log_content = f.read()
 
-            # Only count reflection iterations from logs if analysis_info.json wasn't found
+            # Count reflections from logs if analysis_info.json wasn't found, or take the maximum
             if not analysis_info_found:
                 reflection_count = log_content.count("❌ Analysis attempt")
                 results['reflection_iterations'] = max(0, reflection_count)
+            else:
+                # Take the maximum of JSON and log counts to handle manual restarts
+                log_reflection_count = log_content.count("❌ Analysis attempt")
+                results['reflection_iterations'] = max(results['reflection_iterations'], log_reflection_count)
 
             # If no analysis_info.json found, fall back to log-based success detection
             if not analysis_info_found:
@@ -633,7 +630,9 @@ def generate_summary_report(output_dir):
                     successful.append({
                         'accession': accession,
                         'reflections': reflections,
-                        'storage_gb': status.get('storage_gb', 0)
+                        'storage_gb': status.get('storage_gb', 0),
+                        'checkpoints_completed': status.get('checkpoints_completed', 0),
+                        'furthest_checkpoint': status.get('furthest_checkpoint', 'unknown')
                     })
                 else:
                     # Job failed or completed unsuccessfully
@@ -680,7 +679,8 @@ def generate_summary_report(output_dir):
             total_size_successful = sum(s['storage_gb'] for s in successful)
             f.write(f"  Total size processed: {total_size_successful:.2f} GB\n")
             for s in sorted(successful, key=lambda x: x['reflections']):
-                f.write(f"  {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB\n")
+                checkpoints_info = f"({s.get('checkpoints_completed', 0)} checkpoints, reached {s.get('furthest_checkpoint', 'unknown')})"
+                f.write(f"  {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB {checkpoints_info}\n")
             f.write("\n")
 
         if running:
@@ -737,8 +737,8 @@ def generate_summary_report(output_dir):
                 'success': True,
                 'reflection_iterations': s['reflections'],
                 'storage_gb': s['storage_gb'],
-                'checkpoints_completed': 7,
-                'furthest_checkpoint': 'rnaseq_analysis'
+                'checkpoints_completed': s.get('checkpoints_completed', 0),
+                'furthest_checkpoint': s.get('furthest_checkpoint', 'unknown')
             })
 
         # Write still running datasets
@@ -794,7 +794,7 @@ def generate_summary_report(output_dir):
             print(f"  ... and {len(failed)-6} more (see {summary_path} for details)")
 
 def test_analysis_extraction():
-    """Test function to debug analysis result extraction"""
+    """Enhanced test function to demonstrate the fix for checkpoint analysis"""
     print("=== TESTING ANALYSIS EXTRACTION ===")
     
     # Test with the sample file
@@ -804,13 +804,99 @@ def test_analysis_extraction():
     print(f"Testing with output_dir: {test_output_dir}")
     print(f"Testing with accession: {test_accession}")
     
+    # First, let's show the raw JSON content
+    analysis_info_paths = [
+        os.path.join(test_output_dir, test_accession, "metadata", "analysis_info.json"),
+        os.path.join(test_output_dir, test_accession, "analysis_info.json")
+    ]
+    
+    print(f"\n=== RAW JSON ANALYSIS ===")
+    for path in analysis_info_paths:
+        if os.path.exists(path):
+            print(f"Found analysis_info.json at: {path}")
+            try:
+                with open(path, 'r') as f:
+                    analysis_info = json.load(f)
+                
+                print(f"Raw JSON keys: {list(analysis_info.keys())}")
+                print(f"analysis_success: {analysis_info.get('analysis_success', 'MISSING')}")
+                print(f"checkpoints present: {'checkpoints' in analysis_info}")
+                
+                if 'checkpoints' in analysis_info:
+                    checkpoints = analysis_info['checkpoints']
+                    print(f"Checkpoint keys: {list(checkpoints.keys())}")
+                    for name, cp in checkpoints.items():
+                        status = cp.get('status', 'unknown')
+                        error = cp.get('error_message', None)
+                        print(f"  {name}: {status}" + (f" (ERROR: {error})" if error else ""))
+                    
+                    # Demonstrate the checkpoint summary function
+                    completed, failed, furthest = _checkpoint_summary(checkpoints)
+                    print(f"Checkpoint summary: {completed} completed, {failed} failed, furthest: {furthest}")
+                    
+                    # Show old logic vs new logic
+                    print(f"\n--- OLD LOGIC (broken) ---")
+                    print("Would break on first non-completed checkpoint and override analysis_success")
+                    
+                    print(f"\n--- NEW LOGIC (fixed) ---")
+                    if 'analysis_success' in analysis_info:
+                        print(f"Trusts analysis_success={analysis_info['analysis_success']} as authoritative")
+                        if failed > 0:
+                            print(f"WARNING: Would flag contradiction - success=True but {failed} failures")
+                    else:
+                        derived_success = failed == 0 and completed > 0
+                        print(f"No analysis_success field, would derive: {derived_success}")
+                
+                break
+            except Exception as e:
+                print(f"Error reading {path}: {e}")
+        else:
+            print(f"File not found: {path}")
+    
+    print(f"\n=== EXTRACTION RESULTS ===")
     results = extract_analysis_results(test_accession, test_output_dir)
     
-    print(f"\nRESULTS:")
+    print(f"\nFINAL RESULTS:")
     print(f"  Success: {results['success']}")
     print(f"  Reflection iterations: {results['reflection_iterations']}")
     print(f"  Checkpoints completed: {results.get('checkpoints_completed', 'N/A')}")
+    print(f"  Checkpoints failed: {results.get('checkpoints_failed', 'N/A')}")
     print(f"  Furthest checkpoint: {results.get('furthest_checkpoint', 'N/A')}")
+    
+    # Test multiple scenarios
+    print(f"\n=== TESTING MULTIPLE SCENARIOS ===")
+    
+    # Scenario 1: Missing analysis_success but good checkpoints
+    print("Scenario 1: Missing analysis_success, should derive from checkpoints")
+    test_checkpoints = {
+        'metadata_extraction': {'status': 'completed'},
+        'fastq_extraction': {'status': 'completed'},
+        'rnaseq_analysis': {'status': 'completed'}
+    }
+    comp, fail, furt = _checkpoint_summary(test_checkpoints)
+    derived = fail == 0 and comp > 0
+    print(f"  {comp} completed, {fail} failed → success: {derived}")
+    
+    # Scenario 2: Has analysis_success=True with some checkpoints skipped
+    print("Scenario 2: analysis_success=True with skipped checkpoints (should trust True)")
+    test_checkpoints = {
+        'metadata_extraction': {'status': 'completed'},
+        'fastq_extraction': {'status': 'not_started'},  # Skipped
+        'rnaseq_analysis': {'status': 'completed'}
+    }
+    comp, fail, furt = _checkpoint_summary(test_checkpoints)
+    print(f"  {comp} completed, {fail} failed, would trust analysis_success=True")
+    
+    # Scenario 3: Contradiction case
+    print("Scenario 3: analysis_success=True but checkpoint failures (should flag warning)")
+    test_checkpoints = {
+        'metadata_extraction': {'status': 'completed'},
+        'fastq_extraction': {'status': 'failed', 'error_message': 'Download failed'},
+        'rnaseq_analysis': {'status': 'completed'}
+    }
+    comp, fail, furt = _checkpoint_summary(test_checkpoints)
+    print(f"  {comp} completed, {fail} failed, would flag contradiction with analysis_success=True")
+    
     print("=== END TEST ===")
     
     return results
