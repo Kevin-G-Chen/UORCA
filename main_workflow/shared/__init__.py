@@ -32,6 +32,8 @@ class AnalysisContext(RNAseqCoreContext):
            description="Logs of tool calls with parameters and outputs")
     reflections: Optional[List[str]] = Field(default_factory=list,
            description="Reflections on previous analysis attempts")
+    reflection_iterations: Optional[int] = Field(default=0,
+           description="Number of reflection iterations performed during analysis")
     analysis_success: Optional[bool] = Field(None,
            description="Whether the analysis was successful")
     analysis_diagnostics: Optional[str] = Field(None,
