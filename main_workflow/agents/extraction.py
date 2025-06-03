@@ -16,9 +16,10 @@ from dotenv import load_dotenv
 import GEOparse as gp
 from Bio import Entrez
 from pydantic_ai import Agent, RunContext
-from shared import ExtractionContext, RNAseqCoreContext
+from shared import ExtractionContext, RNAseqCoreContext, CheckpointStatus
 from shared.workflow_logging import log_tool, log_agent_tool
 from shared.entrez_utils import fetch_taxonomy_info, configure_entrez
+import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,12 @@ extract_agent = Agent(
 async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str) -> str:
     """Retrieve sample‑level metadata and SRR run IDs for a GEO series."""
     logger.info("🔍 fetch_geo_metadata() called for %s", accession)
+    
+    # Update checkpoint: metadata extraction started
+    if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+        ctx.deps.checkpoints.metadata_extraction.status = CheckpointStatus.IN_PROGRESS
+        ctx.deps.checkpoints.metadata_extraction.timestamp = datetime.datetime.now().isoformat()
+        logger.info("📋 Checkpoint: Metadata extraction started")
 
     out_root = pathlib.Path(ctx.deps.output_dir or ".").resolve()
     meta_dir = out_root / "metadata"
@@ -171,6 +178,11 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     if unique_samples <= 2:
         error_msg = f"Insufficient samples for analysis: only {unique_samples} unique samples found. Need at least 3 samples for meaningful differential expression analysis. Dataset {accession} will be terminated."
         logger.error("❌ %s", error_msg)
+        # Update checkpoint: metadata extraction failed
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.metadata_extraction.status = CheckpointStatus.FAILED
+            ctx.deps.checkpoints.metadata_extraction.error_message = error_msg
+            ctx.deps.checkpoints.metadata_extraction.timestamp = datetime.datetime.now().isoformat()
         raise ValueError(error_msg)
 
     # expose merged table to downstream agents
@@ -191,6 +203,13 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     if cleanup_count > 0:
         logger.info(f"✅ Cleaned up {cleanup_count} temporary files")
 
+    # Update checkpoint: metadata extraction completed successfully
+    if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+        ctx.deps.checkpoints.metadata_extraction.status = CheckpointStatus.COMPLETED
+        ctx.deps.checkpoints.metadata_extraction.details = f"Extracted metadata for {unique_samples} unique samples"
+        ctx.deps.checkpoints.metadata_extraction.timestamp = datetime.datetime.now().isoformat()
+        logger.info("✅ Checkpoint: Metadata extraction completed successfully")
+
     return (
         f"Fetched {len(gsms)} GSM samples ({unique_samples} unique).\n"
         f"Identified {len(meta_long)} SRR runs "
@@ -209,6 +228,12 @@ async def download_fastqs(
 
     logger.info("📥 download_fastqs() called – %d threads, max_spots=%s",
                 threads, max_spots)
+    
+    # Update checkpoint: FASTQ extraction started
+    if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+        ctx.deps.checkpoints.fastq_extraction.status = CheckpointStatus.IN_PROGRESS
+        ctx.deps.checkpoints.fastq_extraction.timestamp = datetime.datetime.now().isoformat()
+        logger.info("📥 Checkpoint: FASTQ extraction started")
 
     if ctx.deps.metadata_df is None or "SRR" not in ctx.deps.metadata_df.columns:
         raise ValueError("metadata_df with SRR column required. Run fetch_geo_metadata first.")
@@ -385,6 +410,13 @@ async def download_fastqs(
     # Update context for downstream agents
     ctx.deps.fastq_dir = str(fastq_dir)
     logger.info("✅ FASTQ conversion finished: %d new SRRs converted", converted)
+
+    # Update checkpoint: FASTQ extraction completed successfully
+    if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+        ctx.deps.checkpoints.fastq_extraction.status = CheckpointStatus.COMPLETED
+        ctx.deps.checkpoints.fastq_extraction.details = f"Downloaded and converted {converted} SRRs to FASTQ files"
+        ctx.deps.checkpoints.fastq_extraction.timestamp = datetime.datetime.now().isoformat()
+        logger.info("✅ Checkpoint: FASTQ extraction completed successfully")
 
     return (
         "FASTQ download complete.\n"

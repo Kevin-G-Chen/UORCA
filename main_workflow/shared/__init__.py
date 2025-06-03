@@ -2,9 +2,32 @@
 
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
+from enum import Enum
 
 # Entrez utilities for API access with rate limiting
 from .entrez_utils import configure_entrez, fetch_taxonomy_info, search_sra_runs, safe_entrez_call
+
+# Analysis checkpoint system
+class CheckpointStatus(str, Enum):
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+class AnalysisCheckpoint(BaseModel):
+    status: CheckpointStatus = CheckpointStatus.NOT_STARTED
+    details: Optional[str] = None
+    error_message: Optional[str] = None
+    timestamp: Optional[str] = None
+
+class AnalysisCheckpoints(BaseModel):
+    metadata_extraction: AnalysisCheckpoint = Field(default_factory=AnalysisCheckpoint)
+    fastq_extraction: AnalysisCheckpoint = Field(default_factory=AnalysisCheckpoint)
+    metadata_analysis: AnalysisCheckpoint = Field(default_factory=AnalysisCheckpoint)
+    kallisto_index_selection: AnalysisCheckpoint = Field(default_factory=AnalysisCheckpoint)
+    kallisto_quantification: AnalysisCheckpoint = Field(default_factory=AnalysisCheckpoint)
+    edger_limma_preparation: AnalysisCheckpoint = Field(default_factory=AnalysisCheckpoint)
+    rnaseq_analysis: AnalysisCheckpoint = Field(default_factory=AnalysisCheckpoint)
 
 # --- Core context; minimal fields shared everywhere ---
 class RNAseqCoreContext(BaseModel):
@@ -38,6 +61,8 @@ class AnalysisContext(RNAseqCoreContext):
            description="Whether the analysis was successful")
     analysis_diagnostics: Optional[str] = Field(None,
            description="Diagnostic information about the analysis")
+    checkpoints: Optional[AnalysisCheckpoints] = Field(default_factory=AnalysisCheckpoints,
+           description="Tracking of analysis pipeline checkpoints")
     abundance_files: Optional[List[str]] = Field(None, description="List of abundance files")
     merged_column: Optional[str] = Field(None, description="Column to merge on")
     unique_groups: Optional[List[str]] = Field(None, description="Unique groups for analysis")

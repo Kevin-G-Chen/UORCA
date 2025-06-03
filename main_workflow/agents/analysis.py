@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, ConfigDict
 from pydantic_ai import Agent, RunContext
-from shared import AnalysisContext
+from shared import AnalysisContext, CheckpointStatus
 from shared.workflow_logging import log_tool, log_agent_tool, log_tool_for_reflection
 from agents.metadata import metadata_agent, MetadataContext
 from unidecode import unidecode
+import datetime
 from openai import OpenAI
 import matplotlib.pyplot as plt
 import nest_asyncio
@@ -254,6 +255,12 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
     """
     try:
         logger.info("🧬 run_kallisto_quantification started")
+        
+        # Update checkpoint: kallisto index selection started
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.kallisto_index_selection.status = CheckpointStatus.IN_PROGRESS
+            ctx.deps.checkpoints.kallisto_index_selection.timestamp = datetime.datetime.now().isoformat()
+            logger.info("🔍 Checkpoint: Kallisto index selection started")
 
         # Validate fastq_dir is set and exists
         if not ctx.deps.fastq_dir:
@@ -283,7 +290,27 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
                 f"No Kallisto index provided. Please use list_files to find a suitable index file in {ctx.deps.resource_dir}. Note that the index file will end with the .idx suffix. Also note that you should use the index file that is appropriate for {ctx.deps.organism}."
             )
             logger.error("❌ %s", msg.replace('\n', ' | '))
+            
+            # Update checkpoint: kallisto index selection failed
+            if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+                ctx.deps.checkpoints.kallisto_index_selection.status = CheckpointStatus.FAILED
+                ctx.deps.checkpoints.kallisto_index_selection.error_message = msg
+                ctx.deps.checkpoints.kallisto_index_selection.timestamp = datetime.datetime.now().isoformat()
+            
             raise FileNotFoundError(msg)
+
+        # Update checkpoint: kallisto index selection completed
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.kallisto_index_selection.status = CheckpointStatus.COMPLETED
+            ctx.deps.checkpoints.kallisto_index_selection.details = f"Selected index: {index_path}"
+            ctx.deps.checkpoints.kallisto_index_selection.timestamp = datetime.datetime.now().isoformat()
+            logger.info("✅ Checkpoint: Kallisto index selection completed")
+        
+        # Update checkpoint: kallisto quantification started
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.kallisto_quantification.status = CheckpointStatus.IN_PROGRESS
+            ctx.deps.checkpoints.kallisto_quantification.timestamp = datetime.datetime.now().isoformat()
+            logger.info("🧬 Checkpoint: Kallisto quantification started")
 
         # Rest of the Kallisto implementation remains unchanged
         output_dir = ctx.deps.output_dir
@@ -366,6 +393,13 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
         ctx.deps.files = list(existing_files.union(set(abundance_files)))
         logger.info("💾 Stored %d abundance files in context", len(abundance_files))
 
+        # Update checkpoint: kallisto quantification completed successfully
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.kallisto_quantification.status = CheckpointStatus.COMPLETED
+            ctx.deps.checkpoints.kallisto_quantification.details = f"Generated {len(abundance_files)} abundance files"
+            ctx.deps.checkpoints.kallisto_quantification.timestamp = datetime.datetime.now().isoformat()
+            logger.info("✅ Checkpoint: Kallisto quantification completed successfully")
+
         out_lines = [f"Kallisto quant: {r['sample']} (code:{r['returncode']})" for r in results]
         return f"""
 Parallel Kallisto quantification finished – {len(abundance_files)} abundance files ready.
@@ -379,6 +413,12 @@ Files used:
 - Kallisto index: {index_path}
 """
     except Exception as e:
+        # Update checkpoint: kallisto quantification failed
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.kallisto_quantification.status = CheckpointStatus.FAILED
+            ctx.deps.checkpoints.kallisto_quantification.error_message = str(e)
+            ctx.deps.checkpoints.kallisto_quantification.timestamp = datetime.datetime.now().isoformat()
+        
         logger.exception("❌ run_kallisto_quantification crashed: %s", e)
         return f"Error running Kallisto quantification: {e}"
 
@@ -424,6 +464,12 @@ async def prepare_edgeR_analysis(ctx: RunContext[AnalysisContext]) -> str:
     """
     try:
         logger.info("📊 prepare_edgeR_analysis started")
+        
+        # Update checkpoint: edgeR/limma preparation started
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.edger_limma_preparation.status = CheckpointStatus.IN_PROGRESS
+            ctx.deps.checkpoints.edger_limma_preparation.timestamp = datetime.datetime.now().isoformat()
+            logger.info("🔬 Checkpoint: edgeR/limma preparation started")
 
         # Check if we have abundance files
         if not ctx.deps.abundance_files:
@@ -552,6 +598,13 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
         ctx.deps.sample_mapping = analysis_df_path
         logger.info("💾 Saved sample mapping to %s", analysis_df_path)
 
+        # Update checkpoint: edgeR/limma preparation completed successfully
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.edger_limma_preparation.status = CheckpointStatus.COMPLETED
+            ctx.deps.checkpoints.edger_limma_preparation.details = f"Prepared {len(analysis_df)} samples for analysis"
+            ctx.deps.checkpoints.edger_limma_preparation.timestamp = datetime.datetime.now().isoformat()
+            logger.info("✅ Checkpoint: edgeR/limma preparation completed successfully")
+
         result = f"""
 Successfully prepared data for DESeq2 analysis with {len(analysis_df)} samples. The sample mapping file can be found at {analysis_df_path}.
 
@@ -570,6 +623,13 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
     except Exception as e:
         error_msg = f"Error preparing edgeR analysis: {str(e)}"
         logger.error("❌ %s", error_msg, exc_info=True)
+        
+        # Update checkpoint: edgeR/limma preparation failed
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.edger_limma_preparation.status = CheckpointStatus.FAILED
+            ctx.deps.checkpoints.edger_limma_preparation.error_message = error_msg
+            ctx.deps.checkpoints.edger_limma_preparation.timestamp = datetime.datetime.now().isoformat()
+        
         return error_msg
 
 
@@ -626,6 +686,12 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
     """
     try:
         logger.info("📊 run_edger_limma_analysis started")
+        
+        # Update checkpoint: RNAseq analysis started
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.rnaseq_analysis.status = CheckpointStatus.IN_PROGRESS
+            ctx.deps.checkpoints.rnaseq_analysis.timestamp = datetime.datetime.now().isoformat()
+            logger.info("🧪 Checkpoint: RNAseq analysis started")
 
         # Ensure the output directory exists
         os.makedirs(ctx.deps.output_dir, exist_ok=True)
@@ -752,6 +818,13 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
                 setattr(ctx.deps, 'deg_results_path', deg_files[0] if len(deg_files) == 1 else deg_files)
                 logger.info("💾 Found %d differential expression result files in contrast directories", len(deg_files))
 
+        # Update checkpoint: RNAseq analysis completed successfully
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.rnaseq_analysis.status = CheckpointStatus.COMPLETED
+            ctx.deps.checkpoints.rnaseq_analysis.details = "DEG analysis completed, files generated"
+            ctx.deps.checkpoints.rnaseq_analysis.timestamp = datetime.datetime.now().isoformat()
+            logger.info("✅ Checkpoint: RNAseq analysis completed successfully")
+
         logger.info("✅ edgeR/limma analysis completed successfully")
 
         return f"""
@@ -779,6 +852,13 @@ Each contrast has its own subdirectory with DEG.csv and specific plots
     except Exception as e:
         error_msg = f"Error in run_edger_limma_analysis: {str(e)}"
         logger.error("❌ %s", error_msg, exc_info=True)
+        
+        # Update checkpoint: RNAseq analysis failed
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.rnaseq_analysis.status = CheckpointStatus.FAILED
+            ctx.deps.checkpoints.rnaseq_analysis.error_message = error_msg
+            ctx.deps.checkpoints.rnaseq_analysis.timestamp = datetime.datetime.now().isoformat()
+        
         return error_msg
 
 @rnaseq_agent.tool
@@ -791,6 +871,13 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
     """
     try:
         logger.info("📋 process_metadata_with_agent started")
+        
+        # Update checkpoint: metadata analysis started
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.metadata_analysis.status = CheckpointStatus.IN_PROGRESS
+            ctx.deps.checkpoints.metadata_analysis.timestamp = datetime.datetime.now().isoformat()
+            logger.info("📊 Checkpoint: Metadata analysis started")
+        
         metadata_path = getattr(ctx.deps, 'metadata_path', None)
         logger.info("🔍 Processing metadata at: %s", metadata_path)
 
@@ -960,12 +1047,26 @@ Designed contrasts:
         if contrast_path:
             summary += f"\nContrasts saved to: {contrast_path}\n"
 
+        # Update checkpoint: metadata analysis completed successfully
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.metadata_analysis.status = CheckpointStatus.COMPLETED
+            ctx.deps.checkpoints.metadata_analysis.details = f"Selected analysis column: {merged_column}"
+            ctx.deps.checkpoints.metadata_analysis.timestamp = datetime.datetime.now().isoformat()
+            logger.info("✅ Checkpoint: Metadata analysis completed successfully")
+
         logger.info("✅ Metadata processing pipeline completed")
         return summary
 
     except Exception as e:
         error_msg = f"Error processing metadata with agent: {str(e)}"
         logger.error("❌ %s", error_msg, exc_info=True)
+        
+        # Update checkpoint: metadata analysis failed
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            ctx.deps.checkpoints.metadata_analysis.status = CheckpointStatus.FAILED
+            ctx.deps.checkpoints.metadata_analysis.error_message = error_msg
+            ctx.deps.checkpoints.metadata_analysis.timestamp = datetime.datetime.now().isoformat()
+        
         return error_msg
 
 @log_agent_tool
