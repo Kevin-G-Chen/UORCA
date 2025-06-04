@@ -178,14 +178,27 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     logger.info("📊 Found %d unique samples (GSM entries)", unique_samples)
     
     if unique_samples <= 2:
-        error_msg = f"Insufficient samples for analysis: only {unique_samples} unique samples found. Need at least 3 samples for meaningful differential expression analysis. Dataset {accession} will be terminated."
+        error_msg = (
+            f"Insufficient samples for analysis: only {unique_samples} unique "
+            f"samples found. Need at least 3 samples for meaningful differential "
+            f"expression analysis. Dataset {accession} will be terminated."
+        )
         logger.error("❌ %s", error_msg)
-        # Update checkpoint: metadata extraction failed
+
+        # Mark in context that analysis should not proceed
+        ctx.deps.analysis_should_proceed = False
+        ctx.deps.analysis_skip_reason = error_msg
+        ctx.deps.analysis_success = False
+
+        # Update checkpoint to reflect termination but don't raise
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.metadata_extraction.status = CheckpointStatus.FAILED
-            ctx.deps.checkpoints.metadata_extraction.error_message = error_msg
-            ctx.deps.checkpoints.metadata_extraction.timestamp = datetime.datetime.now().isoformat()
-        raise ValueError(error_msg)
+            cp = ctx.deps.checkpoints.metadata_extraction
+            cp.status = CheckpointStatus.FAILED
+            cp.error_message = error_msg
+            cp.timestamp = datetime.datetime.now().isoformat()
+
+        # Return early with informative message
+        return error_msg
 
     # expose merged table to downstream agents
     ctx.deps.metadata_df = out_df
