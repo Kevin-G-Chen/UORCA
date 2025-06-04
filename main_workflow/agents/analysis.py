@@ -258,8 +258,10 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
         
         # Update checkpoint: kallisto index selection started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.kallisto_index_selection.status = CheckpointStatus.IN_PROGRESS
-            ctx.deps.checkpoints.kallisto_index_selection.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.kallisto_index_selection
+            cp.status = CheckpointStatus.IN_PROGRESS
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("🔍 Checkpoint: Kallisto index selection started")
 
         # Validate fastq_dir is set and exists
@@ -301,15 +303,19 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
 
         # Update checkpoint: kallisto index selection completed
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.kallisto_index_selection.status = CheckpointStatus.COMPLETED
-            ctx.deps.checkpoints.kallisto_index_selection.details = f"Selected index: {index_path}"
-            ctx.deps.checkpoints.kallisto_index_selection.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.kallisto_index_selection
+            cp.status = CheckpointStatus.COMPLETED
+            cp.details = f"Selected index: {index_path}"
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("✅ Checkpoint: Kallisto index selection completed")
         
         # Update checkpoint: kallisto quantification started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.kallisto_quantification.status = CheckpointStatus.IN_PROGRESS
-            ctx.deps.checkpoints.kallisto_quantification.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.kallisto_quantification
+            cp.status = CheckpointStatus.IN_PROGRESS
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("🧬 Checkpoint: Kallisto quantification started")
 
         # Rest of the Kallisto implementation remains unchanged
@@ -395,9 +401,11 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
 
         # Update checkpoint: kallisto quantification completed successfully
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.kallisto_quantification.status = CheckpointStatus.COMPLETED
-            ctx.deps.checkpoints.kallisto_quantification.details = f"Generated {len(abundance_files)} abundance files"
-            ctx.deps.checkpoints.kallisto_quantification.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.kallisto_quantification
+            cp.status = CheckpointStatus.COMPLETED
+            cp.details = f"Generated {len(abundance_files)} abundance files"
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("✅ Checkpoint: Kallisto quantification completed successfully")
 
         out_lines = [f"Kallisto quant: {r['sample']} (code:{r['returncode']})" for r in results]
@@ -467,8 +475,10 @@ async def prepare_edgeR_analysis(ctx: RunContext[AnalysisContext]) -> str:
         
         # Update checkpoint: edgeR/limma preparation started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.edger_limma_preparation.status = CheckpointStatus.IN_PROGRESS
-            ctx.deps.checkpoints.edger_limma_preparation.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.edger_limma_preparation
+            cp.status = CheckpointStatus.IN_PROGRESS
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("🔬 Checkpoint: edgeR/limma preparation started")
 
         # Check if we have abundance files
@@ -600,9 +610,11 @@ Please check that sample names in the FASTQ files correspond to identifiers in t
 
         # Update checkpoint: edgeR/limma preparation completed successfully
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.edger_limma_preparation.status = CheckpointStatus.COMPLETED
-            ctx.deps.checkpoints.edger_limma_preparation.details = f"Prepared {len(analysis_df)} samples for analysis"
-            ctx.deps.checkpoints.edger_limma_preparation.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.edger_limma_preparation
+            cp.status = CheckpointStatus.COMPLETED
+            cp.details = f"Prepared {len(analysis_df)} samples for analysis"
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("✅ Checkpoint: edgeR/limma preparation completed successfully")
 
         result = f"""
@@ -689,8 +701,10 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
         
         # Update checkpoint: RNAseq analysis started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.rnaseq_analysis.status = CheckpointStatus.IN_PROGRESS
-            ctx.deps.checkpoints.rnaseq_analysis.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.rnaseq_analysis
+            cp.status = CheckpointStatus.IN_PROGRESS
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("🧪 Checkpoint: RNAseq analysis started")
 
         # Ensure the output directory exists
@@ -820,9 +834,11 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
 
         # Update checkpoint: RNAseq analysis completed successfully
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.rnaseq_analysis.status = CheckpointStatus.COMPLETED
-            ctx.deps.checkpoints.rnaseq_analysis.details = "DEG analysis completed, files generated"
-            ctx.deps.checkpoints.rnaseq_analysis.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.rnaseq_analysis
+            cp.status = CheckpointStatus.COMPLETED
+            cp.details = "DEG analysis completed, files generated"
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("✅ Checkpoint: RNAseq analysis completed successfully")
 
         logger.info("✅ edgeR/limma analysis completed successfully")
@@ -874,8 +890,10 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         
         # Update checkpoint: metadata analysis started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.metadata_analysis.status = CheckpointStatus.IN_PROGRESS
-            ctx.deps.checkpoints.metadata_analysis.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.metadata_analysis
+            cp.status = CheckpointStatus.IN_PROGRESS
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("📊 Checkpoint: Metadata analysis started")
         
         metadata_path = getattr(ctx.deps, 'metadata_path', None)
@@ -1049,9 +1067,11 @@ Designed contrasts:
 
         # Update checkpoint: metadata analysis completed successfully
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-            ctx.deps.checkpoints.metadata_analysis.status = CheckpointStatus.COMPLETED
-            ctx.deps.checkpoints.metadata_analysis.details = f"Selected analysis column: {merged_column}"
-            ctx.deps.checkpoints.metadata_analysis.timestamp = datetime.datetime.now().isoformat()
+            cp = ctx.deps.checkpoints.metadata_analysis
+            cp.status = CheckpointStatus.COMPLETED
+            cp.details = f"Selected analysis column: {merged_column}"
+            cp.error_message = None
+            cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("✅ Checkpoint: Metadata analysis completed successfully")
 
         logger.info("✅ Metadata processing pipeline completed")

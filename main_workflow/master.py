@@ -573,7 +573,7 @@ def main():
     logger.info("🚀 Starting UORCA master agent - logging to %s", log_path)
     
     # Create context
-    ctx = RNAseqCoreContext(
+    ctx = AnalysisContext(
         accession=args.accession,
         output_dir=output_dir,
         resource_dir=args.resource_dir,
