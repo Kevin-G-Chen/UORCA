@@ -322,6 +322,13 @@ Be concise and specific. Avoid generic advice."""
 async def analyse(ctx: RunContext[RNAseqCoreContext]) -> str:
     """Run analysis with reflection-based retry logic."""
     logger.info("🧬 Starting analysis with reflection capability")
+
+    # Skip analysis entirely if earlier step flagged it as unnecessary
+    if getattr(ctx.deps, "analysis_should_proceed", True) is False:
+        reason = getattr(ctx.deps, "analysis_skip_reason", "Dataset flagged as too small")
+        logger.info("⚠️ Skipping analysis: %s", reason)
+        ctx.deps.analysis_success = False
+        return f"Analysis skipped: {reason}"
     
     # Convert to AnalysisContext
     if not isinstance(ctx.deps, AnalysisContext):

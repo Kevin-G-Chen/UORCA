@@ -39,6 +39,10 @@ class RNAseqCoreContext(BaseModel):
     resource_dir: Optional[str] = Field(None, description="Directory containing resources such as Kallisto indices and transcript to gene (t2g) mapping files")
     files: Optional[List[str]] = Field(None, description="List of identified files in the system")
     dataset_information: Optional[str] = Field(None, description="Information about the dataset being identified")
+    analysis_should_proceed: Optional[bool] = Field(default=True,
+           description="Whether the dataset meets minimum requirements for analysis")
+    analysis_skip_reason: Optional[str] = Field(default=None,
+           description="Reason why the analysis should be skipped")
 
     class Config:
         extra = "allow"  # allows enrichment by agents
