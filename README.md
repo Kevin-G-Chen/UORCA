@@ -162,7 +162,7 @@ yum install pigz
 
 # On macOS with Homebrew
 brew install pigz
-
+```
 ## Navigating this repository
 
 Everything you need for running UORCA lives under the `main_workflow/` folder.  The rest of the repo (this README, CI files, docs, etc.) is mainly for project bookkeeping— day-to-day work will be in `main_workflow/`.
