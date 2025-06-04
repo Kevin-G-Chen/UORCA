@@ -95,6 +95,8 @@ class ResultsIntegrator:
         self.deg_data = {}        # DEG data for each contrast
         self.cpm_data = {}        # CPM data for each analysis
         self.contrast_info = {}   # Information about contrasts
+        # Cache for results of identify_important_genes
+        self._important_genes_cache = {}
 
         logger.info(f"Initialized ResultsIntegrator with results_dir: {self.results_dir}")
 
@@ -207,6 +209,8 @@ class ResultsIntegrator:
         Load all DEG and CPM files into memory.
         """
         self.dataset_info = {}  # Store dataset_info.txt content
+        # Invalidate cached important genes whenever data is reloaded
+        self._important_genes_cache.clear()
         # Always load analysis info first
         self.load_analysis_info()
 
@@ -352,17 +356,22 @@ class ResultsIntegrator:
         --------
         Set of important gene identifiers
         """
-        important_genes = set()
+        p_thresh = p_value_threshold if p_value_threshold is not None else self.pvalue_threshold
+        lfc_thresh = lfc_threshold if lfc_threshold is not None else self.lfc_threshold
 
+        cache_key = (top_frequent, top_unique, max_contrasts_for_unique,
+                     min_unique_per_contrast, p_thresh, lfc_thresh)
+        if cache_key in self._important_genes_cache:
+            logger.debug("Using cached important genes")
+            return self._important_genes_cache[cache_key]
+
+        important_genes = set()
+        
         # Dictionary to track gene occurrences across contrasts
         genes_by_occurrence = {}
 
         # Dictionary to track genes and their log fold changes in each contrast
         genes_by_contrast = {}
-
-        # Use provided thresholds or fall back to instance defaults
-        p_thresh = p_value_threshold if p_value_threshold is not None else self.pvalue_threshold
-        lfc_thresh = lfc_threshold if lfc_threshold is not None else self.lfc_threshold
 
         # Collect significant genes and their properties
         logger.info(f"Identifying important genes across {len(self.deg_data)} analyses")
@@ -438,6 +447,8 @@ class ResultsIntegrator:
                 logger.warning(f"Not enough unique genes found for {contrast_key}: {len(top_unique_genes)} < {min_unique_per_contrast}")
 
         logger.info(f"Identified {len(important_genes)} important genes in total")
+        # Store result in cache for future calls
+        self._important_genes_cache[cache_key] = important_genes
         return important_genes
 
     def _ensure_output_dir(self):
