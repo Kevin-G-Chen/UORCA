@@ -98,6 +98,12 @@ class ResultsIntegrator:
         # Cache for results of identify_important_genes
         self._important_genes_cache = {}
 
+        # Cache for hierarchical clustering orders
+        self._heatmap_order_cache: Dict[
+            Tuple[Tuple[str, ...], Tuple[Tuple[str, str], ...]],
+            Tuple[List[str], List[str]]
+        ] = {}
+
         logger.info(f"Initialized ResultsIntegrator with results_dir: {self.results_dir}")
 
     def find_analysis_folders(self) -> List[str]:
@@ -685,46 +691,60 @@ class ResultsIntegrator:
             logger.warning("No contrasts remain after filtering empty columns")
             return None
 
-        # Perform hierarchical clustering on both axes if there are enough data points
-        # Perform hierarchical clustering on both axes
-        # 1. Cluster genes (rows)
-        if len(heatmap_df) > 1:  # Only cluster if we have multiple genes
-            try:
-                # Only cluster if we have non-zero values
-                if non_zero_count > 0:
-                    gene_linkage = sch.linkage(pdist(heatmap_df.values), method='complete')
-                    gene_order = sch.leaves_list(gene_linkage)
-                    clustered_genes = heatmap_df.index[gene_order].tolist()
-                else:
-                    # Skip clustering if all values are zero
-                    logger.warning("Skipping gene clustering due to lack of non-zero values")
-                    clustered_genes = heatmap_df.index.tolist()
-            except Exception as e:
-                logger.warning(f"Error clustering genes: {str(e)}. Using original order.")
-                clustered_genes = heatmap_df.index.tolist()
-        else:
-            clustered_genes = heatmap_df.index.tolist()
+        # Use current gene and contrast sets as cache key
+        cache_key = (
+            tuple(heatmap_df.index.tolist()),
+            tuple(contrasts)
+        )
 
-        # 2. Cluster contrasts (columns)
-        if len(heatmap_df.columns) > 1:  # Only cluster if we have multiple contrasts
-            try:
-                # Only cluster if we have non-zero values
-                if non_zero_count > 0:
-                    contrast_linkage = sch.linkage(pdist(heatmap_df.values.T), method='complete')
-                    contrast_order = sch.leaves_list(contrast_linkage)
-                    clustered_contrasts = [heatmap_df.columns[i] for i in contrast_order]
-                else:
-                    # Skip clustering if all values are zero
-                    logger.warning("Skipping contrast clustering due to lack of non-zero values")
-                    clustered_contrasts = heatmap_df.columns.tolist()
-            except Exception as e:
-                logger.warning(f"Error clustering contrasts: {str(e)}. Using original order.")
-                clustered_contrasts = heatmap_df.columns.tolist()
+        if cache_key in self._heatmap_order_cache:
+            clustered_genes, clustered_contrasts = self._heatmap_order_cache[cache_key]
+            logger.info("Using cached hierarchical clustering order")
         else:
-            clustered_contrasts = heatmap_df.columns.tolist()
+            # Perform hierarchical clustering on both axes if there are enough data points
+            # 1. Cluster genes (rows)
+            if len(heatmap_df) > 1:
+                try:
+                    if non_zero_count > 0:
+                        gene_linkage = sch.linkage(pdist(heatmap_df.values), method='complete')
+                        gene_order = sch.leaves_list(gene_linkage)
+                        clustered_genes = heatmap_df.index[gene_order].tolist()
+                    else:
+                        logger.warning("Skipping gene clustering due to lack of non-zero values")
+                        clustered_genes = heatmap_df.index.tolist()
+                except Exception as e:
+                    logger.warning(f"Error clustering genes: {str(e)}. Using original order.")
+                    clustered_genes = heatmap_df.index.tolist()
+            else:
+                clustered_genes = heatmap_df.index.tolist()
+
+            # 2. Cluster contrasts (columns)
+            if len(heatmap_df.columns) > 1:
+                try:
+                    if non_zero_count > 0:
+                        contrast_linkage = sch.linkage(pdist(heatmap_df.values.T), method='complete')
+                        contrast_order = sch.leaves_list(contrast_linkage)
+                        clustered_contrasts = [heatmap_df.columns[i] for i in contrast_order]
+                    else:
+                        logger.warning("Skipping contrast clustering due to lack of non-zero values")
+                        clustered_contrasts = heatmap_df.columns.tolist()
+                except Exception as e:
+                    logger.warning(f"Error clustering contrasts: {str(e)}. Using original order.")
+                    clustered_contrasts = heatmap_df.columns.tolist()
+            else:
+                clustered_contrasts = heatmap_df.columns.tolist()
+
+            self._heatmap_order_cache[cache_key] = (clustered_genes, clustered_contrasts)
 
         # Reorder the DataFrame according to clustering
         heatmap_df = heatmap_df.loc[clustered_genes, clustered_contrasts]
+
+        # Reorder contrast-related lists to match clustered order
+        original_contrast_labels = contrast_labels
+        contrasts = [contrasts[original_contrast_labels.index(c)] for c in clustered_contrasts]
+        simplified_labels = [simplified_labels[original_contrast_labels.index(c)] for c in clustered_contrasts]
+        contrast_labels = list(clustered_contrasts)
+
         logger.info(f"Final heatmap dimensions: {len(clustered_genes)} genes × {len(clustered_contrasts)} contrasts")
 
         # Create heatmap using plotly
