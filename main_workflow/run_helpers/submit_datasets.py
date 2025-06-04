@@ -154,43 +154,57 @@ def extract_analysis_results(accession, output_dir):
             try:
                 with open(info_path, 'r') as f:
                     analysis_info = json.load(f)
-                
+
                 print(f"DEBUG [{accession}]: Successfully loaded JSON with keys: {list(analysis_info.keys())}")
-                print(f"DEBUG [{accession}]: analysis_success field: {analysis_info.get('analysis_success', 'NOT_FOUND')}")
-                print(f"DEBUG [{accession}]: reflection_iterations field: {analysis_info.get('reflection_iterations', 'NOT_FOUND')}")
-                
+                print(
+                    f"DEBUG [{accession}]: [{info_path}] 'analysis_success' -> {analysis_info.get('analysis_success', 'NOT_FOUND')}"
+                )
+                print(
+                    f"DEBUG [{accession}]: [{info_path}] 'reflection_iterations' -> {analysis_info.get('reflection_iterations', 'NOT_FOUND')}"
+                )
+
                 # Trust analysis_success if present - this is the authoritative source
                 if 'analysis_success' in analysis_info:
                     results['success'] = bool(analysis_info['analysis_success'])
-                    print(f"DEBUG [{accession}]: Using authoritative analysis_success: {results['success']}")
-                
+                    print(
+                        f"DEBUG [{accession}]: Using authoritative analysis_success from {info_path}: {results['success']}"
+                    )
+
                 analysis_info_found = True
-                
+
                 # Get reflection iterations from analysis_info.json
                 results['reflection_iterations'] = analysis_info.get('reflection_iterations', 0)
                 
                 # Evaluate checkpoints if available (but don't override analysis_success unless missing)
                 checkpoints = analysis_info.get('checkpoints', {})
                 if checkpoints:
-                    print(f"DEBUG [{accession}]: Found checkpoints: {list(checkpoints.keys())}")
-                    
+                    print(f"DEBUG [{accession}]: [{info_path}] Found checkpoints: {list(checkpoints.keys())}")
+
                     completed, failed, furthest = _checkpoint_summary(checkpoints)
                     results['checkpoints_completed'] = completed
                     results['checkpoints_failed'] = failed
                     results['furthest_checkpoint'] = furthest or 'none'
-                    
-                    print(f"DEBUG [{accession}]: Checkpoint summary: {completed} completed, {failed} failed, furthest: {furthest}")
-                    
+
+                    print(
+                        f"DEBUG [{accession}]: [{info_path}] Checkpoint summary -> {completed} completed, {failed} failed, furthest: {furthest}"
+                    )
+
                     # Only use checkpoint-based success if analysis_success was missing
                     if 'analysis_success' not in analysis_info:
                         results['success'] = failed == 0 and completed > 0
-                        print(f"DEBUG [{accession}]: No analysis_success field, using checkpoint-based success: {results['success']}")
+                        print(
+                            f"DEBUG [{accession}]: Derived success from checkpoints in {info_path}: {results['success']}"
+                        )
                     else:
                         # Check for contradiction: if analysis_success=True but we have failures, flag it
                         if results['success'] and failed > 0:
                             print(f"DEBUG [{accession}]: WARNING: analysis_success=True but {failed} checkpoint failures detected")
                 
-                print(f"DEBUG [{accession}]: Final results from JSON: success={results['success']}, reflections={results['reflection_iterations']}, checkpoints={results['checkpoints_completed']}/{completed + failed + len([cp for cp in checkpoints.values() if cp.get('status') == 'not_started'])}")
+                print(
+                    f"DEBUG [{accession}]: Final results from {info_path}: success={results['success']}, "
+                    f"reflections={results['reflection_iterations']}, "
+                    f"checkpoints={results['checkpoints_completed']}/{completed + failed + len([cp for cp in checkpoints.values() if cp.get('status') == 'not_started'])}"
+                )
                 break
             except (json.JSONDecodeError, FileNotFoundError, KeyError) as e:
                 print(f"DEBUG [{accession}]: Error reading JSON: {str(e)}")
@@ -207,6 +221,7 @@ def extract_analysis_results(accession, output_dir):
 
     if os.path.exists(log_file):
         try:
+            print(f"DEBUG [{accession}]: Checking log file {log_file} for success indicators")
             with open(log_file, 'r') as f:
                 log_content = f.read()
 
@@ -224,8 +239,10 @@ def extract_analysis_results(accession, output_dir):
                 # Look for success indicators in logs
                 if "✅ Analysis attempt" in log_content and "succeeded!" in log_content:
                     results['success'] = True
+                    print(f"DEBUG [{accession}]: {log_file} -> success pattern found")
                 elif "❌ Final analysis attempt failed" in log_content:
                     results['success'] = False
+                    print(f"DEBUG [{accession}]: {log_file} -> failure pattern found")
                 
         except Exception as e:
             print(f"DEBUG [{accession}]: Could not read log file: {str(e)}")
