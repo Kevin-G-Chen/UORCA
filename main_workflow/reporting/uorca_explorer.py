@@ -704,25 +704,33 @@ if ri and ri.cpm_data:
         st.sidebar.markdown("1. **Frequent DEGs**: Genes significant across multiple contrasts")
         st.sidebar.markdown("2. **Contrast-specific DEGs**: High fold-change genes unique to few contrasts")
 
-        col1, col2 = st.sidebar.columns([3, 1])
-        with col1:
-            top_frequent_genes = st.slider("Frequent DEGs to include", 5, 50, 20, help="Number of genes that are differentially expressed across the most contrasts")
-        with col2:
-            freq_text = st.text_input("", value=str(top_frequent_genes), key="freq_text")
-            try:
-                top_frequent_genes = int(freq_text)
-            except ValueError:
-                pass
+        include_frequent = st.sidebar.checkbox("Include frequent DEGs", value=True, key="adv_include_frequent")
+        if include_frequent:
+            top_frequent_genes = int(
+                st.number_input(
+                    "Frequent DEGs to include",
+                    min_value=1,
+                    value=top_frequent_genes,
+                    step=1,
+                    key="freq_num_adv",
+                )
+            )
+        else:
+            top_frequent_genes = 0
 
-        col1, col2 = st.sidebar.columns([3, 1])
-        with col1:
-            top_unique_genes = st.slider("Contrast-specific DEGs per contrast", 1, 20, 10, help="Number of high fold-change genes to select from each contrast that appear in few other contrasts")
-        with col2:
-            unique_text = st.text_input("", value=str(top_unique_genes), key="unique_text_simple")
-            try:
-                top_unique_genes = int(unique_text)
-            except ValueError:
-                pass
+        include_unique = st.sidebar.checkbox("Include contrast-specific DEGs", value=False, key="adv_include_unique")
+        if include_unique:
+            top_unique_genes = int(
+                st.number_input(
+                    "Contrast-specific DEGs per contrast",
+                    min_value=1,
+                    value=top_unique_genes,
+                    step=1,
+                    key="unique_num_adv",
+                )
+            )
+        else:
+            top_unique_genes = 0
 
         col1, col2 = st.sidebar.columns([3, 1])
         with col1:
@@ -867,25 +875,33 @@ if ri and ri.cpm_data:
             st.sidebar.markdown("1. **Frequent DEGs**: Genes significant across multiple contrasts")
             st.sidebar.markdown("2. **Contrast-specific DEGs**: High fold-change genes unique to few contrasts")
 
-            col1, col2 = st.sidebar.columns([3, 1])
-            with col1:
-                top_frequent_genes = st.slider("Frequent DEGs to include", 5, 50, 20, help="Number of genes that are differentially expressed across the most contrasts")
-            with col2:
-                freq_text = st.text_input("", value=str(top_frequent_genes), key="freq_text_simple")
-                try:
-                    top_frequent_genes = int(freq_text)
-                except ValueError:
-                    pass
+            include_frequent = st.sidebar.checkbox("Include frequent DEGs", value=True, key="simple_include_frequent")
+            if include_frequent:
+                top_frequent_genes = int(
+                    st.number_input(
+                        "Frequent DEGs to include",
+                        min_value=1,
+                        value=top_frequent_genes,
+                        step=1,
+                        key="freq_num_simple",
+                    )
+                )
+            else:
+                top_frequent_genes = 0
 
-            col1, col2 = st.sidebar.columns([3, 1])
-            with col1:
-                top_unique_genes = st.slider("Contrast-specific DEGs per contrast", 1, 20, 10, help="Number of high fold-change genes to select from each contrast that appear in few other contrasts")
-            with col2:
-                unique_text = st.text_input("", value=str(top_unique_genes), key="unique_text_simple")
-                try:
-                    top_unique_genes = int(unique_text)
-                except ValueError:
-                    pass
+            include_unique = st.sidebar.checkbox("Include contrast-specific DEGs", value=False, key="simple_include_unique")
+            if include_unique:
+                top_unique_genes = int(
+                    st.number_input(
+                        "Contrast-specific DEGs per contrast",
+                        min_value=1,
+                        value=top_unique_genes,
+                        step=1,
+                        key="unique_num_simple",
+                    )
+                )
+            else:
+                top_unique_genes = 0
 
             col1, col2 = st.sidebar.columns([3, 1])
             with col1:
