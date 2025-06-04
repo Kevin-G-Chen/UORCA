@@ -45,8 +45,10 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     
     # Update checkpoint: metadata extraction started
     if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-        ctx.deps.checkpoints.metadata_extraction.status = CheckpointStatus.IN_PROGRESS
-        ctx.deps.checkpoints.metadata_extraction.timestamp = datetime.datetime.now().isoformat()
+        cp = ctx.deps.checkpoints.metadata_extraction
+        cp.status = CheckpointStatus.IN_PROGRESS
+        cp.error_message = None
+        cp.timestamp = datetime.datetime.now().isoformat()
         logger.info("📋 Checkpoint: Metadata extraction started")
 
     out_root = pathlib.Path(ctx.deps.output_dir or ".").resolve()
@@ -205,9 +207,11 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
 
     # Update checkpoint: metadata extraction completed successfully
     if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-        ctx.deps.checkpoints.metadata_extraction.status = CheckpointStatus.COMPLETED
-        ctx.deps.checkpoints.metadata_extraction.details = f"Extracted metadata for {unique_samples} unique samples"
-        ctx.deps.checkpoints.metadata_extraction.timestamp = datetime.datetime.now().isoformat()
+        cp = ctx.deps.checkpoints.metadata_extraction
+        cp.status = CheckpointStatus.COMPLETED
+        cp.details = f"Extracted metadata for {unique_samples} unique samples"
+        cp.error_message = None
+        cp.timestamp = datetime.datetime.now().isoformat()
         logger.info("✅ Checkpoint: Metadata extraction completed successfully")
 
     return (
@@ -231,8 +235,10 @@ async def download_fastqs(
     
     # Update checkpoint: FASTQ extraction started
     if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-        ctx.deps.checkpoints.fastq_extraction.status = CheckpointStatus.IN_PROGRESS
-        ctx.deps.checkpoints.fastq_extraction.timestamp = datetime.datetime.now().isoformat()
+        cp = ctx.deps.checkpoints.fastq_extraction
+        cp.status = CheckpointStatus.IN_PROGRESS
+        cp.error_message = None
+        cp.timestamp = datetime.datetime.now().isoformat()
         logger.info("📥 Checkpoint: FASTQ extraction started")
 
     if ctx.deps.metadata_df is None or "SRR" not in ctx.deps.metadata_df.columns:
@@ -413,9 +419,11 @@ async def download_fastqs(
 
     # Update checkpoint: FASTQ extraction completed successfully
     if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
-        ctx.deps.checkpoints.fastq_extraction.status = CheckpointStatus.COMPLETED
-        ctx.deps.checkpoints.fastq_extraction.details = f"Downloaded and converted {converted} SRRs to FASTQ files"
-        ctx.deps.checkpoints.fastq_extraction.timestamp = datetime.datetime.now().isoformat()
+        cp = ctx.deps.checkpoints.fastq_extraction
+        cp.status = CheckpointStatus.COMPLETED
+        cp.details = f"Downloaded and converted {converted} SRRs to FASTQ files"
+        cp.error_message = None
+        cp.timestamp = datetime.datetime.now().isoformat()
         logger.info("✅ Checkpoint: FASTQ extraction completed successfully")
 
     return (
