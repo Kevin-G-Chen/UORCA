@@ -154,43 +154,57 @@ def extract_analysis_results(accession, output_dir):
             try:
                 with open(info_path, 'r') as f:
                     analysis_info = json.load(f)
-                
+
                 print(f"DEBUG [{accession}]: Successfully loaded JSON with keys: {list(analysis_info.keys())}")
-                print(f"DEBUG [{accession}]: analysis_success field: {analysis_info.get('analysis_success', 'NOT_FOUND')}")
-                print(f"DEBUG [{accession}]: reflection_iterations field: {analysis_info.get('reflection_iterations', 'NOT_FOUND')}")
-                
+                print(
+                    f"DEBUG [{accession}]: [{info_path}] 'analysis_success' -> {analysis_info.get('analysis_success', 'NOT_FOUND')}"
+                )
+                print(
+                    f"DEBUG [{accession}]: [{info_path}] 'reflection_iterations' -> {analysis_info.get('reflection_iterations', 'NOT_FOUND')}"
+                )
+
                 # Trust analysis_success if present - this is the authoritative source
                 if 'analysis_success' in analysis_info:
                     results['success'] = bool(analysis_info['analysis_success'])
-                    print(f"DEBUG [{accession}]: Using authoritative analysis_success: {results['success']}")
-                
+                    print(
+                        f"DEBUG [{accession}]: Using authoritative analysis_success from {info_path}: {results['success']}"
+                    )
+
                 analysis_info_found = True
-                
+
                 # Get reflection iterations from analysis_info.json
                 results['reflection_iterations'] = analysis_info.get('reflection_iterations', 0)
                 
                 # Evaluate checkpoints if available (but don't override analysis_success unless missing)
                 checkpoints = analysis_info.get('checkpoints', {})
                 if checkpoints:
-                    print(f"DEBUG [{accession}]: Found checkpoints: {list(checkpoints.keys())}")
-                    
+                    print(f"DEBUG [{accession}]: [{info_path}] Found checkpoints: {list(checkpoints.keys())}")
+
                     completed, failed, furthest = _checkpoint_summary(checkpoints)
                     results['checkpoints_completed'] = completed
                     results['checkpoints_failed'] = failed
                     results['furthest_checkpoint'] = furthest or 'none'
-                    
-                    print(f"DEBUG [{accession}]: Checkpoint summary: {completed} completed, {failed} failed, furthest: {furthest}")
-                    
+
+                    print(
+                        f"DEBUG [{accession}]: [{info_path}] Checkpoint summary -> {completed} completed, {failed} failed, furthest: {furthest}"
+                    )
+
                     # Only use checkpoint-based success if analysis_success was missing
                     if 'analysis_success' not in analysis_info:
                         results['success'] = failed == 0 and completed > 0
-                        print(f"DEBUG [{accession}]: No analysis_success field, using checkpoint-based success: {results['success']}")
+                        print(
+                            f"DEBUG [{accession}]: Derived success from checkpoints in {info_path}: {results['success']}"
+                        )
                     else:
                         # Check for contradiction: if analysis_success=True but we have failures, flag it
                         if results['success'] and failed > 0:
                             print(f"DEBUG [{accession}]: WARNING: analysis_success=True but {failed} checkpoint failures detected")
                 
-                print(f"DEBUG [{accession}]: Final results from JSON: success={results['success']}, reflections={results['reflection_iterations']}, checkpoints={results['checkpoints_completed']}/{completed + failed + len([cp for cp in checkpoints.values() if cp.get('status') == 'not_started'])}")
+                print(
+                    f"DEBUG [{accession}]: Final results from {info_path}: success={results['success']}, "
+                    f"reflections={results['reflection_iterations']}, "
+                    f"checkpoints={results['checkpoints_completed']}/{completed + failed + len([cp for cp in checkpoints.values() if cp.get('status') == 'not_started'])}"
+                )
                 break
             except (json.JSONDecodeError, FileNotFoundError, KeyError) as e:
                 print(f"DEBUG [{accession}]: Error reading JSON: {str(e)}")
@@ -207,6 +221,7 @@ def extract_analysis_results(accession, output_dir):
 
     if os.path.exists(log_file):
         try:
+            print(f"DEBUG [{accession}]: Checking log file {log_file} for success indicators")
             with open(log_file, 'r') as f:
                 log_content = f.read()
 
@@ -224,8 +239,10 @@ def extract_analysis_results(accession, output_dir):
                 # Look for success indicators in logs
                 if "✅ Analysis attempt" in log_content and "succeeded!" in log_content:
                     results['success'] = True
+                    print(f"DEBUG [{accession}]: {log_file} -> success pattern found")
                 elif "❌ Final analysis attempt failed" in log_content:
                     results['success'] = False
+                    print(f"DEBUG [{accession}]: {log_file} -> failure pattern found")
                 
         except Exception as e:
             print(f"DEBUG [{accession}]: Could not read log file: {str(e)}")
@@ -238,152 +255,41 @@ def extract_analysis_results(accession, output_dir):
     return results
 
 def update_job_statuses(output_dir):
-    """Update status of all tracked jobs with robust error detection."""
+    """Update status of all tracked jobs."""
     status_dir = os.path.join(output_dir, "job_status")
 
     if not os.path.exists(status_dir):
         return
 
     for status_file in os.listdir(status_dir):
-        if status_file.endswith("_status.json"):
-            status_path = os.path.join(status_dir, status_file)
-            try:
-                with open(status_path, 'r') as f:
-                    status = json.load(f)
+        if not status_file.endswith("_status.json"):
+            continue
+        status_path = os.path.join(status_dir, status_file)
+        try:
+            with open(status_path, "r") as f:
+                status = json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not read status file {status_file}: {e}")
+            continue
 
-                if status.get('state') == 'running':
-                    job_id = status.get('job_id')
-                    accession = status.get('accession')
+        if status.get("state") != "running":
+            continue
 
-                    # First check job status using squeue with more detailed info
-                    squeue_result = subprocess.run(
-                        ["squeue", "-j", job_id, "-h", "-o", "%T,%R"],
-                        capture_output=True, text=True
-                    )
+        job_id = status.get("job_id")
+        accession = status.get("accession")
 
-                    job_still_running = False
-                    job_failed = False
-                    failure_reason = None
+        squeue_result = subprocess.run(
+            ["squeue", "-j", job_id, "-h"], capture_output=True, text=True
+        )
 
-                    if squeue_result.returncode == 0 and squeue_result.stdout.strip():
-                        # Job is still in the queue
-                        job_info = squeue_result.stdout.strip().split(',')
-                        job_state = job_info[0] if job_info else "UNKNOWN"
+        if squeue_result.returncode == 0 and squeue_result.stdout.strip():
+            continue  # still running
 
-                        if job_state in ["RUNNING", "PENDING", "CONFIGURING"]:
-                            job_still_running = True
-                        elif job_state in ["FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL"]:
-                            job_failed = True
-                            failure_reason = f"SLURM state: {job_state}"
-                            if len(job_info) > 1:
-                                failure_reason += f", Reason: {job_info[1]}"
-                    else:
-                        # Job not in queue - check if it completed or failed
-                        # Use sacct to get completion status if available
-                        sacct_result = subprocess.run(
-                            ["sacct", "-j", job_id, "-n", "-o", "State,ExitCode", "--parsable2"],
-                            capture_output=True, text=True
-                        )
-
-                        if sacct_result.returncode == 0 and sacct_result.stdout.strip():
-                            sacct_lines = sacct_result.stdout.strip().split('\n')
-                            for line in sacct_lines:
-                                if line and not line.endswith('.batch') and not line.endswith('.extern'):
-                                    parts = line.split('|')
-                                    if len(parts) >= 2:
-                                        state = parts[0]
-                                        exit_code = parts[1]
-
-                                        if state in ["FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL"] or exit_code != "0:0":
-                                            job_failed = True
-                                            failure_reason = f"SLURM state: {state}, Exit code: {exit_code}"
-                                        break
-
-                    # Check SLURM output files for immediate errors
-                    if not job_still_running:
-                        logs_dir = os.path.join(output_dir, "logs")
-                        error_file = os.path.join(logs_dir, f"run_{accession}.err")
-                        output_file = os.path.join(logs_dir, f"run_{accession}.out")
-
-                        # Check error file for obvious failures
-                        error_content = ""
-                        if os.path.exists(error_file):
-                            try:
-                                with open(error_file, 'r') as f:
-                                    error_content = f.read()
-
-                                # Look for common error patterns
-                                error_patterns = [
-                                    "IndentationError", "SyntaxError", "ImportError",
-                                    "ModuleNotFoundError", "FileNotFoundError",
-                                    "command not found", "No such file or directory",
-                                    "Permission denied", "Traceback (most recent call last)"
-                                ]
-
-                                for pattern in error_patterns:
-                                    if pattern in error_content:
-                                        job_failed = True
-                                        if not failure_reason:
-                                            failure_reason = f"Error detected in SLURM stderr: {pattern}"
-                                        break
-                            except Exception:
-                                pass
-
-                        # Also check if the job produced any output at all
-                        if not job_failed and os.path.exists(output_file):
-                            try:
-                                with open(output_file, 'r') as f:
-                                    output_content = f.read()
-
-                                # If there's very little output and errors, likely failed early
-                                if len(output_content.strip()) < 100 and error_content:
-                                    job_failed = True
-                                    if not failure_reason:
-                                        failure_reason = "Job produced minimal output with errors"
-                            except Exception:
-                                pass
-
-                    if job_still_running:
-                        # Job is still running, no update needed
-                        continue
-                    elif job_failed:
-                        # Job failed
-                        status['state'] = 'failed'
-                        status['completed_time'] = datetime.now().isoformat()
-                        status['failure_reason'] = failure_reason or "Unknown failure"
-                        status['success'] = False
-
-                        # Still try to extract what results we can
-                        analysis_results = extract_analysis_results(accession, output_dir)
-                        status.update(analysis_results)
-
-                        with open(status_path, 'w') as f:
-                            json.dump(status, f, indent=2)
-
-                        print(f"Job {job_id} ({accession}) FAILED ❌ - {failure_reason}")
-
-                    else:
-                        # Job completed (hopefully successfully)
-                        status['state'] = 'completed'
-                        status['completed_time'] = datetime.now().isoformat()
-
-                        # Extract analysis results
-                        analysis_results = extract_analysis_results(accession, output_dir)
-                        status.update(analysis_results)
-
-                        with open(status_path, 'w') as f:
-                            json.dump(status, f, indent=2)
-
-                        success_indicator = "✅" if status.get('success', False) else "❌"
-                        reflection_info = f" ({status.get('reflection_iterations', 0)} reflections)" if status.get('reflection_iterations', 0) > 0 else ""
-                        print(f"Job {job_id} ({accession}) completed {success_indicator}{reflection_info}")
-
-                    # Script files are now cleaned up immediately after submission
-                    pass
-
-            except (json.JSONDecodeError, FileNotFoundError, subprocess.SubprocessError) as e:
-                print(f"Warning: Error updating status for {status_file}: {str(e)}")
-                continue
+        status["state"] = "completed"
+        status["completed_time"] = datetime.now().isoformat()
+        with open(status_path, "w") as f:
+            json.dump(status, f, indent=2)
+        print(f"Job {job_id} ({accession}) finished running")
 
 def main():
     ap = argparse.ArgumentParser()
@@ -610,51 +516,44 @@ def generate_summary_report(output_dir):
     running = []
 
     for status_file in os.listdir(status_dir):
-        if status_file.endswith("_status.json"):
-            status_path = os.path.join(status_dir, status_file)
-            try:
-                with open(status_path, 'r') as f:
-                    status = json.load(f)
+        if not status_file.endswith("_status.json"):
+            continue
+        status_path = os.path.join(status_dir, status_file)
+        try:
+            with open(status_path, "r") as f:
+                status = json.load(f)
 
-                accession = status.get('accession', 'unknown')
-                reflections = status.get('reflection_iterations', 0)
-                job_state = status.get('state', 'unknown')
+            accession = status.get("accession", "unknown")
+            job_state = status.get("state", "unknown")
 
-                if job_state == 'running':
-                    running.append({
-                        'accession': accession,
-                        'storage_gb': status.get('storage_gb', 0),
-                        'submitted_time': status.get('submitted_time', 'Unknown')
-                    })
-                elif status.get('success', False):
-                    successful.append({
-                        'accession': accession,
-                        'reflections': reflections,
-                        'storage_gb': status.get('storage_gb', 0),
-                        'checkpoints_completed': status.get('checkpoints_completed', 0),
-                        'furthest_checkpoint': status.get('furthest_checkpoint', 'unknown')
-                    })
-                else:
-                    # Job failed or completed unsuccessfully
-                    error_info = status.get('error_message', 'Unknown error')
-                    failure_reason = status.get('failure_reason', None)
-
-                    # Combine error information
-                    if failure_reason and failure_reason not in error_info:
-                        error_info = f"{failure_reason}; {error_info}" if error_info != 'Unknown error' else failure_reason
-
-                    failed.append({
-                        'accession': accession,
-                        'reflections': reflections,
-                        'storage_gb': status.get('storage_gb', 0),
-                        'state': job_state,
-                        'failure_reason': failure_reason,
-                        'checkpoints_completed': status.get('checkpoints_completed', 0),
-                        'furthest_checkpoint': status.get('furthest_checkpoint', 'none')
-                    })
-            except Exception as e:
-                print(f"Warning: Could not read status file {status_file}: {str(e)}")
+            if job_state == "running":
+                running.append({
+                    "accession": accession,
+                    "storage_gb": status.get("storage_gb", 0),
+                    "submitted_time": status.get("submitted_time", "Unknown"),
+                })
                 continue
+
+            results = extract_analysis_results(accession, output_dir)
+            status.update(results)
+            with open(status_path, "w") as f:
+                json.dump(status, f, indent=2)
+
+            entry = {
+                "accession": accession,
+                "reflections": results.get("reflection_iterations", 0),
+                "storage_gb": status.get("storage_gb", 0),
+                "checkpoints_completed": results.get("checkpoints_completed", 0),
+                "furthest_checkpoint": results.get("furthest_checkpoint", "unknown"),
+            }
+
+            if results.get("success"):
+                successful.append(entry)
+            else:
+                failed.append(entry)
+        except Exception as e:
+            print(f"Warning: Could not read status file {status_file}: {e}")
+            continue
 
     # Write summary to file
     summary_path = os.path.join(output_dir, "batch_analysis_summary.txt")
@@ -690,24 +589,15 @@ def generate_summary_report(output_dir):
             f.write("\n")
 
         if failed:
-            f.write(f"Failed Analyses:\n")
-            # Group failures by type
-            slurm_failures = [s for s in failed if s.get('failure_reason') and 'SLURM' in s.get('failure_reason', '')]
-            analysis_failures = [s for s in failed if s not in slurm_failures]
-
-            if slurm_failures:
-                f.write(f"  SLURM/System Failures ({len(slurm_failures)}):\n")
-                for s in slurm_failures:
-                    f.write(f"    {s['accession']}: {s['storage_gb']:.2f} GB\n")
-                    f.write(f"      Reason: {s.get('failure_reason', 'Unknown')}\n")
-                f.write("\n")
-
-            if analysis_failures:
-                f.write(f"  Analysis Failures ({len(analysis_failures)}):\n")
-                for s in sorted(analysis_failures, key=lambda x: x['reflections'], reverse=True):
-                    f.write(f"    {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB\n")
-                    f.write(f"      Furthest checkpoint: {s.get('furthest_checkpoint', 'unknown')} ({s.get('checkpoints_completed', 0)}/7 completed)\n")
-
+            f.write(f"Failed Analyses ({len(failed)}):\n")
+            for s in sorted(failed, key=lambda x: x['reflections'], reverse=True):
+                checkpoints_info = (
+                    f"({s.get('checkpoints_completed', 0)} checkpoints, reached {s.get('furthest_checkpoint', 'unknown')})"
+                )
+                f.write(
+                    f"  {s['accession']}: {s['reflections']} reflections, {s['storage_gb']:.2f} GB {checkpoints_info}\n"
+                )
+            
     print(f"\n" + "=" * 50)
     print(f"BATCH ANALYSIS SUMMARY")
     print(f"=" * 50)
@@ -774,22 +664,11 @@ def generate_summary_report(output_dir):
             print(f"  ... and {len(running)-5} more")
 
     if failed:
-        print(f"\nFailed datasets:")
-        slurm_failures = [s for s in failed if s.get('failure_reason') and 'SLURM' in s.get('failure_reason', '')]
-        analysis_failures = [s for s in failed if s not in slurm_failures]
-
-        if slurm_failures:
-            print(f"  SLURM/System failures: {len(slurm_failures)}")
-            for s in slurm_failures[:3]:
-                print(f"    {s['accession']}: {s.get('failure_reason', 'Unknown')}")
-
-        if analysis_failures:
-            print(f"  Analysis failures: {len(analysis_failures)}")
-            for s in analysis_failures[:3]:
-                furthest = s.get('furthest_checkpoint', 'none')
-                completed = s.get('checkpoints_completed', 0)
-                print(f"    {s['accession']}: {s['reflections']} reflections, reached {furthest} ({completed}/7)")
-
+        print(f"\nFailed datasets ({len(failed)}):")
+        for s in failed[:6]:
+            furthest = s.get('furthest_checkpoint', 'none')
+            completed = s.get('checkpoints_completed', 0)
+            print(f"  {s['accession']}: {s['reflections']} reflections, reached {furthest} ({completed}/7)")
         if len(failed) > 6:
             print(f"  ... and {len(failed)-6} more (see {summary_path} for details)")
 
