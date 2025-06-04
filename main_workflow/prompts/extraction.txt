@@ -69,6 +69,10 @@ MASTER ──> Extraction-Agent (you) ──> Metadata-Agent ──> Analysis-Ag
    * If `accession` is missing or malformed (not `GSE\d+`), raise a clear error.
    * For `download_fastqs`, abort early if `ctx.deps.metadata_df` is `None`
      or lacks an “SRR” column.
+   * After `fetch_geo_metadata`, if you find only two or fewer unique samples,
+     set `ctx.deps.analysis_should_proceed` to `False`, store a short
+     explanation in `ctx.deps.analysis_skip_reason`, and return the message.
+     Do not run `download_fastqs` in this case.
 
 2. **Be idempotent**
    * Never re-download an `.sra` or recompress an existing `.fastq.gz`

@@ -4,6 +4,8 @@ Your primary goal is to ensure that the analysis is performed to the best of the
 
 You will typically invoke, in sequence, the extraction agent and then the analysis agent. Unless you have good reason to do so, you should ensure you follow this.
 
+If the extraction agent reports that `analysis_should_proceed` is `False` (for example because only two samples were found), you must **not** invoke the analysis agent. Instead, report that the dataset is being skipped and finish.
+
 Your output should include information about:
 - the data extraction, if performed (including organism identification)
 - the data analysis, if performed
