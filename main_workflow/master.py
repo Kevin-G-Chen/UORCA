@@ -603,13 +603,19 @@ def main():
         # Run the master agent
         logger.info("🤖 Running master orchestration agent")
         result = master.run_sync(orchestration_prompt, deps=ctx, request_limit=100)
-        
+
         # Create a simple context object for save_analysis_info
         class SimpleContext:
             def __init__(self, deps):
                 self.deps = deps
-        
-        simple_ctx = SimpleContext(result.deps)
+
+        # fall back to ctx if the result does not provide a deps attribute
+        result_deps = getattr(result, "deps", None)
+        if result_deps is None:
+            logger.warning("AgentRunResult missing 'deps' attribute; using current context")
+            result_deps = ctx
+
+        simple_ctx = SimpleContext(result_deps)
         
         # Save analysis info for reporting integration
         save_analysis_info(simple_ctx)
@@ -643,3 +649,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
