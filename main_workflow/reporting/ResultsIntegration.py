@@ -95,6 +95,8 @@ class ResultsIntegrator:
         self.deg_data = {}        # DEG data for each contrast
         self.cpm_data = {}        # CPM data for each analysis
         self.contrast_info = {}   # Information about contrasts
+        self.sample_groups = {}   # Sample -> group mapping per analysis
+        self.cpm_long = {}        # Melted CPM data per analysis
 
         logger.info(f"Initialized ResultsIntegrator with results_dir: {self.results_dir}")
 
@@ -295,7 +297,7 @@ class ResultsIntegrator:
                 except Exception as e:
                     logger.error(f"Error loading DEG file {deg_file}: {str(e)}")
 
-        # Load CPM data
+        # Load CPM data and associated sample groups
         for analysis_id, cpm_file in cpm_files.items():
             try:
                 df = pd.read_csv(cpm_file)
@@ -315,9 +317,67 @@ class ResultsIntegrator:
                 # Standardize column name to 'Gene'
                 df = df.rename(columns={gene_col: 'Gene'})
 
-                # Store in dictionary
+                # Store wide CPM table
                 self.cpm_data[analysis_id] = df
-                logger.debug(f"Loaded CPM data for {analysis_id} with {len(df)} genes and {len(df.columns)-1} samples")
+
+                # Determine sample groups from edger_analysis_samples.csv
+                sample_to_group = {}
+
+                analysis_dir = os.path.join(self.results_dir, analysis_id)
+                sample_file_locations = [
+                    os.path.join(analysis_dir, "metadata", "edger_analysis_samples.csv"),
+                    os.path.join(analysis_dir, "edger_analysis_samples.csv"),
+                    os.path.join(self.results_dir, "edger_analysis_samples.csv"),
+                    os.path.join(os.path.dirname(self.results_dir), "edger_analysis_samples.csv"),
+                ]
+
+                sample_file = next((p for p in sample_file_locations if os.path.isfile(p)), None)
+                if sample_file:
+                    try:
+                        sample_mapping_df = pd.read_csv(sample_file, nrows=0)
+                        first_col = sample_mapping_df.columns[0]
+                        has_index = first_col == '' or first_col.startswith('Unnamed')
+                        sample_mapping_df = pd.read_csv(sample_file, index_col=0 if has_index else None)
+
+                        group_col = None
+                        if self.analysis_info and analysis_id in self.analysis_info and 'analysis_column' in self.analysis_info[analysis_id]:
+                            group_col = self.analysis_info[analysis_id]['analysis_column']
+                        elif 'merged_analysis_group' in sample_mapping_df.columns:
+                            group_col = 'merged_analysis_group'
+                        else:
+                            for col in sample_mapping_df.columns:
+                                if 'group' in col.lower() or 'condition' in col.lower():
+                                    group_col = col
+                                    break
+
+                        if group_col and group_col in sample_mapping_df.columns:
+                            cpm_columns = df.columns.tolist()
+                            sample_cols = [c for c in cpm_columns if c.startswith('Sample') and c != 'Gene']
+                            if sample_cols:
+                                for i in range(len(sample_mapping_df)):
+                                    if i < len(sample_cols):
+                                        sample_to_group[sample_cols[i]] = sample_mapping_df.iloc[i][group_col]
+                            else:
+                                for i in range(len(sample_mapping_df)):
+                                    sample_key = f"Sample{i+1}"
+                                    sample_to_group[sample_key] = sample_mapping_df.iloc[i][group_col]
+                    except Exception as e:
+                        logger.warning(f"Error loading sample mapping file {sample_file}: {str(e)}")
+
+                self.sample_groups[analysis_id] = sample_to_group
+
+                # Melt CPM to long format and annotate
+                melted_df = df.melt(id_vars='Gene', var_name='Sample', value_name='Expression')
+                melted_df['Analysis'] = analysis_id
+                if sample_to_group:
+                    melted_df['Group'] = melted_df['Sample'].map(sample_to_group).fillna(melted_df['Sample'])
+                else:
+                    melted_df['Group'] = analysis_id
+                melted_df['SampleLabel'] = melted_df['Analysis'] + ':' + melted_df['Sample']
+                self.cpm_long[analysis_id] = melted_df
+
+                logger.debug(
+                    f"Loaded CPM data for {analysis_id} with {len(df)} genes and {len(df.columns)-1} samples")
 
             except Exception as e:
                 logger.error(f"Error loading CPM file {cpm_file}: {str(e)}")
@@ -874,13 +934,13 @@ class ResultsIntegrator:
         --------
         plotly.graph_objects.Figure
         """
-        if not self.cpm_data:
+        if not self.cpm_long:
             logger.error("No CPM data loaded. Cannot create expression plots.")
             return None
 
         # If analyses not specified, use all
         if analyses is None:
-            analyses = list(self.cpm_data.keys())
+            analyses = list(self.cpm_long.keys())
 
         # Create a tidy (long) dataframe for all expression data
         all_long_data = []
@@ -904,126 +964,18 @@ class ResultsIntegrator:
 
         # Process each analysis and build tidy data
         for analysis_id in analyses:
-            if analysis_id not in self.cpm_data:
+            if analysis_id not in self.cpm_long:
                 logger.warning(f"No CPM data for analysis {analysis_id}")
                 continue
 
-            # Get CPM data for this analysis
-            cpm_df = self.cpm_data[analysis_id].copy()
+            df_long = self.cpm_long[analysis_id]
+            subset = df_long[df_long['Gene'].isin(genes)]
 
-            # Skip if Gene column doesn't exist
-            if 'Gene' not in cpm_df.columns:
-                logger.warning(f"No 'Gene' column in CPM data for {analysis_id}")
-                continue
-
-            # Filter to only the genes we're working with
-            cpm_filtered = cpm_df[cpm_df['Gene'].isin(genes)]
-
-            if cpm_filtered.empty:
+            if subset.empty:
                 logger.warning(f"No matching genes found in CPM data for {analysis_id}")
                 continue
 
-            # Get the sample groups from the edger_analysis_samples.csv file
-            sample_to_group = {}
-
-            # Helper function to find first existing file
-            def first_existing(paths):
-                for path in paths:
-                    if os.path.isfile(path):
-                        return path
-                return None
-
-            # Look inside the current analysis directory first
-            analysis_dir = os.path.join(self.results_dir, analysis_id)
-            sample_file_locations = [
-                os.path.join(analysis_dir, "metadata", "edger_analysis_samples.csv"),  # New primary location
-                os.path.join(analysis_dir, "edger_analysis_samples.csv"),  # Old location for backward compatibility
-                os.path.join(self.results_dir, "edger_analysis_samples.csv"),
-                os.path.join(os.path.dirname(self.results_dir), "edger_analysis_samples.csv")
-            ]
-
-            edger_samples_file = first_existing(sample_file_locations)
-            if edger_samples_file:
-                logger.info(f"Found sample mapping file at {edger_samples_file}")
-
-            if edger_samples_file:
-                try:
-                    # First try loading the file to check its structure
-                    sample_mapping_df = pd.read_csv(edger_samples_file, nrows=0)
-
-                    # If the first column has no name or starts with 'Unnamed', it's probably an index
-                    first_col = sample_mapping_df.columns[0]
-                    has_index = first_col == '' or first_col.startswith('Unnamed')
-
-                    # Now load the full file with appropriate index_col setting
-                    sample_mapping_df = pd.read_csv(edger_samples_file, index_col=0 if has_index else None)
-                    logger.info(f"Loaded sample mapping with columns: {', '.join(sample_mapping_df.columns)}")
-
-                    # Find the group column
-                    group_col = None
-                    if self.analysis_info and analysis_id in self.analysis_info and 'analysis_column' in self.analysis_info[analysis_id]:
-                        group_col = self.analysis_info[analysis_id]['analysis_column']
-                        logger.info(f"Using analysis column '{group_col}' from analysis_info")
-                    elif 'merged_analysis_group' in sample_mapping_df.columns:
-                        group_col = 'merged_analysis_group'
-                        logger.info(f"Using 'merged_analysis_group' column")
-                    else:
-                        for col in sample_mapping_df.columns:
-                            if 'group' in col.lower() or 'condition' in col.lower():
-                                group_col = col
-                                logger.info(f"Using '{col}' column as group")
-                                break
-
-                    if group_col and group_col in sample_mapping_df.columns:
-                        # Look for a 'Sample1', 'Sample2', etc. naming pattern in CPM columns
-                        cpm_columns = self.cpm_data[analysis_id].columns.tolist()
-                        sample_cols = [col for col in cpm_columns if col.startswith('Sample') and col != 'Gene']
-
-                        if sample_cols:
-                            # Create a mapping from sample name to group
-                            for i in range(len(sample_mapping_df)):
-                                if i < len(sample_cols):  # Ensure we don't go out of bounds
-                                    sample_key = sample_cols[i]
-                                    sample_to_group[sample_key] = sample_mapping_df.iloc[i][group_col]
-                            logger.info(f"Created mapping for {len(sample_to_group)} samples using Sample# pattern")
-                        else:
-                            # Fall back to index-based mapping
-                            for i in range(len(sample_mapping_df)):
-                                # Use sample index (i) as the key (starting with Sample1)
-                                sample_key = f"Sample{i+1}"
-                                sample_to_group[sample_key] = sample_mapping_df.iloc[i][group_col]
-                            logger.info(f"Created mapping for {len(sample_to_group)} samples using index")
-                    else:
-                        logger.warning(f"No group column found in sample mapping file")
-                except Exception as e:
-                    logger.warning(f"Error loading sample mapping file: {str(e)}")
-            else:
-                logger.warning("Could not find edger_analysis_samples.csv file. Using default sample names.")
-
-            # Convert to long format
-            melted_df = cpm_filtered.melt(
-                id_vars='Gene',
-                var_name='Sample',
-                value_name='Expression'
-            )
-
-            # Add analysis ID
-            melted_df['Analysis'] = analysis_id
-
-            # Create a more descriptive sample label for hover info
-            melted_df['SampleLabel'] = melted_df['Analysis'] + ":" + melted_df['Sample']
-
-            # Map samples to groups if available
-            if sample_to_group:
-                melted_df['Group'] = melted_df['Sample'].map(sample_to_group)
-                # Fill any missing mappings
-                melted_df['Group'] = melted_df['Group'].fillna(melted_df['Sample'])
-            else:
-                # Use analysis ID as group if no mapping available
-                melted_df['Group'] = analysis_id
-
-            # Append to all data
-            all_long_data.append(melted_df)
+            all_long_data.append(subset.copy())
 
         # Combine all data
         if not all_long_data:
