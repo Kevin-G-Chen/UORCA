@@ -152,9 +152,12 @@ class LandingPageGenerator:
             logger.error(f"Error generating landing page: {e}")
             return None
         finally:
-            # Cleanup
+            # Always cleanup agent resources
             if self.agent:
-                self.agent.cleanup()
+                try:
+                    self.agent.cleanup()
+                except Exception as e:
+                    logger.warning(f"Error during agent cleanup: {e}")
     
     async def _select_contrasts_with_agent(self, biological_prompt: str) -> List[ContrastSelection]:
         """Select contrasts using the reporting agent."""
@@ -527,6 +530,7 @@ def auto_analyze_on_load(integrator, progress_callback=None) -> Optional[Dict[st
     Returns:
         Analysis results or None
     """
+    manager = None
     try:
         results_dir = integrator.results_dir
         
@@ -560,11 +564,15 @@ def auto_analyze_on_load(integrator, progress_callback=None) -> Optional[Dict[st
                 manager.run_initial_analysis(progress_callback)
             )
         
-        # Cleanup
-        manager.cleanup()
-        
         return result
         
     except Exception as e:
         logger.error(f"Error in auto-analysis: {e}")
         return None
+    finally:
+        # Always cleanup manager resources
+        if manager:
+            try:
+                manager.cleanup()
+            except Exception as e:
+                logger.warning(f"Error during manager cleanup: {e}")

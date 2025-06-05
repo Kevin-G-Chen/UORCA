@@ -289,6 +289,16 @@ with st.sidebar.status("Loading data...", expanded=True) as status:
         # Check if this is the first time loading this directory
         if 'previous_results_dir' not in st.session_state or st.session_state.previous_results_dir != results_dir:
             st.session_state.previous_results_dir = results_dir
+            # Tear down old MCP servers if any
+            if 'mcp_servers' in st.session_state:
+                for srv in st.session_state.mcp_servers:
+                    try:
+                        srv.terminate()
+                    except Exception as e:
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Error terminating MCP server: {e}")
+                del st.session_state.mcp_servers
+            # Clear auto-analysis state
             st.session_state.auto_analysis_complete = False
             st.session_state.auto_analysis_result = None
 
@@ -399,7 +409,7 @@ if ri and ri.cpm_data:
         with col1:
             pvalue_thresh = st.slider("Adjusted P-value threshold", 0.0, 0.1, 0.05, 0.001, help="Genes must have adj.P.Val below this threshold to be considered significant")
         with col2:
-            pvalue_text = st.text_input("", value=f"{pvalue_thresh:.3f}", key="pvalue_text")
+            pvalue_text = st.text_input("P-value threshold", value=f"{pvalue_thresh:.3f}", key="pvalue_text", label_visibility="collapsed")
             try:
                 pvalue_thresh = float(pvalue_text)
             except ValueError:
@@ -409,7 +419,7 @@ if ri and ri.cpm_data:
         with col1:
             lfc_thresh = st.slider("Log2FC threshold", 0.0, 5.0, 1.0, 0.1, help="Absolute log2 fold change threshold")
         with col2:
-            lfc_text = st.text_input("", value=f"{lfc_thresh:.1f}", key="lfc_text")
+            lfc_text = st.text_input("LFC threshold", value=f"{lfc_thresh:.1f}", key="lfc_text", label_visibility="collapsed")
             try:
                 lfc_thresh = float(lfc_text)
             except ValueError:
@@ -424,7 +434,7 @@ if ri and ri.cpm_data:
         with col1:
             top_frequent_genes = st.slider("Frequent DEGs to include", 5, 50, 20, help="Number of genes that are differentially expressed across the most contrasts")
         with col2:
-            freq_text = st.text_input("", value=str(top_frequent_genes), key="freq_text")
+            freq_text = st.text_input("Frequent genes count", value=str(top_frequent_genes), key="freq_text", label_visibility="collapsed")
             try:
                 top_frequent_genes = int(freq_text)
             except ValueError:
@@ -434,7 +444,7 @@ if ri and ri.cpm_data:
         with col1:
             top_unique_genes = st.slider("Contrast-specific DEGs per contrast", 1, 20, 10, help="Number of high fold-change genes to select from each contrast that appear in few other contrasts")
         with col2:
-            unique_text = st.text_input("", value=str(top_unique_genes), key="unique_text_simple")
+            unique_text = st.text_input("Unique genes count", value=str(top_unique_genes), key="unique_text_simple", label_visibility="collapsed")
             try:
                 top_unique_genes = int(unique_text)
             except ValueError:
@@ -444,7 +454,7 @@ if ri and ri.cpm_data:
         with col1:
             max_contrasts_unique = st.slider("Max contrasts for 'contrast-specific'", 1, 10, 2, help="A gene is considered 'contrast-specific' if it appears as significant in this many contrasts or fewer")
         with col2:
-            max_text = st.text_input("", value=str(max_contrasts_unique), key="max_text")
+            max_text = st.text_input("Max contrasts", value=str(max_contrasts_unique), key="max_text", label_visibility="collapsed")
             try:
                 max_contrasts_unique = int(max_text)
             except ValueError:
@@ -454,7 +464,7 @@ if ri and ri.cpm_data:
         with col1:
             min_unique = st.slider("Min contrast-specific DEGs per contrast", 0, 10, 1, help="Minimum number of contrast-specific genes that must be selected from each contrast (quality control)")
         with col2:
-            min_text = st.text_input("", value=str(min_unique), key="min_text")
+            min_text = st.text_input("Min unique", value=str(min_unique), key="min_text", label_visibility="collapsed")
             try:
                 min_unique = int(min_text)
             except ValueError:
@@ -472,7 +482,7 @@ if ri and ri.cpm_data:
             with col1:
                 heatmap_pvalue_thresh = st.slider("Heatmap P-value threshold", 0.0, 0.1, 0.05, 0.001, help="P-value threshold for heatmap coloring")
             with col2:
-                heatmap_pvalue_text = st.text_input("", value=f"{heatmap_pvalue_thresh:.3f}", key="heatmap_pvalue_text")
+                heatmap_pvalue_text = st.text_input("Heatmap P-value", value=f"{heatmap_pvalue_thresh:.3f}", key="heatmap_pvalue_text", label_visibility="collapsed")
                 try:
                     heatmap_pvalue_thresh = float(heatmap_pvalue_text)
                 except ValueError:
@@ -482,7 +492,7 @@ if ri and ri.cpm_data:
             with col1:
                 heatmap_lfc_thresh = st.slider("Heatmap LFC threshold", 0.0, 5.0, 1.0, 0.1, help="LFC threshold for heatmap coloring")
             with col2:
-                heatmap_lfc_text = st.text_input("", value=f"{heatmap_lfc_thresh:.1f}", key="heatmap_lfc_text")
+                heatmap_lfc_text = st.text_input("Heatmap LFC", value=f"{heatmap_lfc_thresh:.1f}", key="heatmap_lfc_text", label_visibility="collapsed")
                 try:
                     heatmap_lfc_thresh = float(heatmap_lfc_text)
                 except ValueError:
@@ -551,7 +561,7 @@ if ri and ri.cpm_data:
             with col1:
                 pvalue_thresh = st.slider("Adjusted P-value threshold", 0.0, 0.1, 0.05, 0.001, help="Use adjusted P-value (adj.P.Val) for filtering DEGs")
             with col2:
-                pvalue_text = st.text_input("", value=f"{pvalue_thresh:.3f}", key="pvalue_text_simple")
+                pvalue_text = st.text_input("P-value threshold", value=f"{pvalue_thresh:.3f}", key="pvalue_text_simple", label_visibility="collapsed")
                 try:
                     pvalue_thresh = float(pvalue_text)
                 except ValueError:
@@ -561,7 +571,7 @@ if ri and ri.cpm_data:
             with col1:
                 lfc_thresh = st.slider("abs(Log2FC) threshold", 0.0, 5.0, 1.0, 0.1, help="Genes must have absolute log2 fold change above this threshold to be considered significant")
             with col2:
-                lfc_text = st.text_input("", value=f"{lfc_thresh:.1f}", key="lfc_text_simple")
+                lfc_text = st.text_input("LFC threshold", value=f"{lfc_thresh:.1f}", key="lfc_text_simple", label_visibility="collapsed")
                 try:
                     lfc_thresh = float(lfc_text)
                 except ValueError:
@@ -585,7 +595,7 @@ if ri and ri.cpm_data:
             with col1:
                 top_frequent_genes = st.slider("Frequent DEGs to include", 5, 50, 20, help="Number of genes that are differentially expressed across the most contrasts")
             with col2:
-                freq_text = st.text_input("", value=str(top_frequent_genes), key="freq_text_simple")
+                freq_text = st.text_input("Frequent genes count", value=str(top_frequent_genes), key="freq_text_simple", label_visibility="collapsed")
                 try:
                     top_frequent_genes = int(freq_text)
                 except ValueError:
@@ -595,7 +605,7 @@ if ri and ri.cpm_data:
             with col1:
                 top_unique_genes = st.slider("Contrast-specific DEGs per contrast", 1, 20, 10, help="Number of high fold-change genes to select from each contrast that appear in few other contrasts")
             with col2:
-                unique_text = st.text_input("", value=str(top_unique_genes), key="unique_text_simple")
+                unique_text = st.text_input("Unique genes count", value=str(top_unique_genes), key="unique_text_simple", label_visibility="collapsed")
                 try:
                     top_unique_genes = int(unique_text)
                 except ValueError:
@@ -605,7 +615,7 @@ if ri and ri.cpm_data:
             with col1:
                 max_contrasts_unique = st.slider("Max contrasts for 'contrast-specific'", 1, 10, 2, help="A gene is considered 'contrast-specific' if it appears as significant in this many contrasts or fewer")
             with col2:
-                max_text = st.text_input("", value=str(max_contrasts_unique), key="max_text_simple")
+                max_text = st.text_input("Max contrasts", value=str(max_contrasts_unique), key="max_text_simple", label_visibility="collapsed")
                 try:
                     max_contrasts_unique = int(max_text)
                 except ValueError:
@@ -623,7 +633,7 @@ if ri and ri.cpm_data:
         top_genes = sorted(top_genes)
         col1, col2 = st.sidebar.columns([3, 1])
         with col2:
-            st.write("")  # Add some spacing
+            st.markdown("")  # Add some spacing
             if st.button("Select All", key="select_all_genes_important") and limited_genes:
                 st.session_state['gene_sel_important'] = limited_genes  # Use limited and ranked genes
                 try:
