@@ -477,3 +477,4 @@ tmux attach -t uorca-explorer
 - Plots update automatically when you change selections - fragment isolation keeps the interface responsive
 - The app automatically paginates large gene sets and limits visualizations to prevent performance issues
 - Take advantage of synchronized checkboxes across tabs for consistent selection management
+- In Debug mode, enable **Show MCP logs only** to focus logging output on Multi-Core Pipeline modules
