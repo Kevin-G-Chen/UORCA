@@ -90,7 +90,7 @@ def short_label(full_label: str) -> str:
 # Otherwise define minimal versions for compatibility
 if not MCP_LANDING_PAGE_AVAILABLE:
     from dataclasses import dataclass
-    
+
     @dataclass
     class ContrastSelection:
         """Container for selected contrast with justification"""
@@ -117,7 +117,7 @@ if not MCP_LANDING_PAGE_AVAILABLE:
         heatmap_fig: Optional[go.Figure]
         gene_table: pd.DataFrame
         narrative: str
-    
+
     # Fallback function if MCP integration not available
     def generate_ai_landing_page(integrator, biological_prompt: str, max_genes: int = 50) -> Optional[LandingPageData]:
         """Fallback if MCP integration not available."""
@@ -254,16 +254,16 @@ with st.sidebar.status("Loading data...", expanded=True) as status:
         status.update(label="No data found. Please check the directory path.", state="error")
     else:
         status.update(label=f"✅ Loaded {len(ri.cpm_data)} datasets", state="complete")
-        
+
         # Check if this is the first time loading this directory
         if 'previous_results_dir' not in st.session_state or st.session_state.previous_results_dir != results_dir:
             st.session_state.previous_results_dir = results_dir
             st.session_state.auto_analysis_complete = False
             st.session_state.auto_analysis_result = None
-        
+
         # Trigger auto-analysis if not done yet and MCP is available
-        if (not st.session_state.get('auto_analysis_complete', False) and 
-            MCP_LANDING_PAGE_AVAILABLE and 
+        if (not st.session_state.get('auto_analysis_complete', False) and
+            MCP_LANDING_PAGE_AVAILABLE and
             bool(os.getenv("OPENAI_API_KEY"))):
             with st.spinner("🤖 Automatically analyzing your dataset..."):
                 try:
@@ -769,23 +769,23 @@ if ri and ri.cpm_data:
             )
 
         # Display auto-analysis results if available
-        if (not hasattr(st.session_state, 'landing_data') and 
-            st.session_state.get('auto_analysis_result') and 
+        if (not hasattr(st.session_state, 'landing_data') and
+            st.session_state.get('auto_analysis_result') and
             st.session_state.auto_analysis_result.get('success')):
-            
+
             st.info("🤖 Showing automatic dataset analysis. You can refine it with a specific research question below.")
-            
+
             # Display the auto-analysis report
             auto_report = st.session_state.auto_analysis_result.get('report', '')
-            
+
             with st.container():
                 st.markdown("### 📊 Automatic Dataset Overview")
                 st.markdown(auto_report)
-            
+
             st.markdown("---")
             st.markdown("### 🎯 Want a More Focused Analysis?")
             st.markdown("Enter a specific research question below to get targeted insights.")
-        
+
         # Check if landing page functionality is available
         if not landing_available:
             st.error("❌ AI landing page functionality is not available.")
@@ -802,18 +802,18 @@ if ri and ri.cpm_data:
                     # Progress callback for user feedback
                     progress_bar = st.progress(0)
                     progress_text = st.empty()
-                    
+
                     def update_progress(progress, message):
                         progress_bar.progress(progress)
                         progress_text.text(f"🔄 {message}")
-                    
+
                     # Generate landing page data using MCP-based system
                     landing_data = generate_ai_landing_page(
                         integrator=ri,
                         biological_prompt=biological_prompt,
                         max_genes=50
                     )
-                    
+
                     # Clear progress indicators
                     progress_bar.empty()
                     progress_text.empty()
@@ -1107,7 +1107,8 @@ if ri and ri.cpm_data:
 
                 - **Be Specific**: Describe your research focus (e.g., "MYCN amplification in neuroblastoma")
                 - **Include Context**: Mention key pathways, genes, or processes of interest
-                - **State Comparisons**: Specify what you're comparing (tumor vs normal, treate
+                - **State Comparisons**: Specify what you're comparing (tumor vs normal)
+                """)
 
     with tab_sel:
         st.header("☑️ Select Data & Contrasts")
