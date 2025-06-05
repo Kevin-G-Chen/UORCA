@@ -82,10 +82,7 @@ async def test_mcp_servers():
             working_servers.append(server)
 
             # Cleanup
-            if hasattr(server, "close"):
-                server.close()
-            elif hasattr(server, "terminate"):
-                server.terminate()
+            server.terminate()
             
         except Exception as e:
             console.print(f"[red]❌ Failed to create {server_name} server: {e}[/red]")
@@ -150,10 +147,7 @@ async def test_basic_tools():
         console.print(f"Result preview: {str(result.data)[:200]}...")
         
         # Cleanup
-        if hasattr(data_server, "close"):
-            data_server.close()
-        elif hasattr(data_server, "terminate"):
-            data_server.terminate()
+        data_server.terminate()
         
     except Exception as e:
         console.print(f"[red]❌ Tool test failed: {e}[/red]")

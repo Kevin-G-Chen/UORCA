@@ -61,6 +61,7 @@ class ReportingAgent:
     def setup_servers(self) -> List:
         """Set up the MCP servers for data extraction and analysis."""
         try:
+            # Ensure the MCP child sees the same results_dir the user selected
             env_vars = {"RESULTS_DIR": self.results_dir}
             api_key = os.getenv("OPENAI_API_KEY")
             if api_key:
@@ -425,10 +426,8 @@ Provide a clear comparison with specific genes and pathways that distinguish the
         """Clean up resources and close MCP servers."""
         for server in self.servers:
             try:
-                if hasattr(server, "close"):
-                    server.close()
-                elif hasattr(server, "terminate"):
-                    server.terminate()
+                # MCPServerStdio uses terminate() to kill the subprocess
+                server.terminate()
             except Exception as e:
                 logger.warning(f"Error cleaning up server: {e}")
         
@@ -456,7 +455,10 @@ async def quick_analysis(results_dir: str,
     try:
         return await agent.analyze_research_question(research_question)
     finally:
-        agent.cleanup()
+        try:
+            agent.cleanup()
+        except Exception as e:
+            logger.warning(f"Error during quick_analysis cleanup: {e}")
 
 
 async def dataset_summary(results_dir: str,
@@ -475,7 +477,10 @@ async def dataset_summary(results_dir: str,
     try:
         return await agent.analyze_dataset_overview()
     finally:
-        agent.cleanup()
+        try:
+            agent.cleanup()
+        except Exception as e:
+            logger.warning(f"Error during dataset_summary cleanup: {e}")
 
 
 if __name__ == "__main__":

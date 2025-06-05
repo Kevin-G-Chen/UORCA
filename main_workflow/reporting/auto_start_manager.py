@@ -189,10 +189,6 @@ Be specific with gene names, fold changes, and numbers rather than generic state
                 # Run the actual analysis
                 result = await self.agent.agent.run(initial_prompt)
                 
-                # Stop progress updates
-                stop_progress = True
-                await progress_task
-                
                 if progress_callback:
                     progress_callback(1.0, "Analysis complete")
                 
@@ -211,8 +207,14 @@ Be specific with gene names, fold changes, and numbers rather than generic state
                 
             except asyncio.CancelledError:
                 # Handle cancellation gracefully
-                stop_progress = True
                 raise
+            finally:
+                # Always stop the progress updater task
+                stop_progress = True
+                progress_task.cancel()
+                import contextlib
+                with contextlib.suppress(asyncio.CancelledError):
+                    await progress_task
                 
         except Exception as e:
             logger.error(f"Error during initial analysis: {e}")
@@ -326,8 +328,12 @@ Make the questions specific and actionable based on the actual data available.""
     def cleanup(self):
         """Clean up resources."""
         if self.agent:
-            self.agent.cleanup()
-            self.agent = None
+            try:
+                self.agent.cleanup()
+            except Exception as e:
+                logger.warning(f"Error during agent cleanup: {e}")
+            finally:
+                self.agent = None
         logger.info("AutoStartManager cleanup complete")
 
 
