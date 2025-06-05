@@ -22,6 +22,7 @@ import plotly.graph_objects as go
 from pathlib import Path
 import sys
 import json
+import logging
 from datetime import datetime
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple, Set
@@ -50,6 +51,22 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 # ResultsIntegration.py is in the same directory
 from ResultsIntegration import ResultsIntegrator
 
+# Import the new MCP-based landing page integration
+try:
+    from landing_page_integration import (
+        generate_ai_landing_page,
+        auto_analyze_on_load,
+        LandingPageData,
+        ContrastSelection,
+        ThresholdSelection
+    )
+    MCP_LANDING_PAGE_AVAILABLE = True
+except ImportError as e:
+    MCP_LANDING_PAGE_AVAILABLE = False
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.warning(f"MCP landing page integration not available: {e}")
+
 # AI Landing Page functionality - integrated directly
 try:
     import openai
@@ -66,75 +83,45 @@ def short_label(full_label: str) -> str:
     return full_label.split(":", 1)[-1].split(" –")[0].split(" - ")[0][:25]
 
 # ========================================================================
-# AI LANDING PAGE FUNCTIONALITY - INTEGRATED
+# AI LANDING PAGE FUNCTIONALITY - MCP-BASED
 # ========================================================================
 
-@dataclass
-class ContrastSelection:
-    """Container for selected contrast with justification"""
-    analysis_id: str
-    contrast_id: str
-    relevance_score: float
-    justification: str
-    deg_count: int
+# Data structures are imported from landing_page_integration if available
+# Otherwise define minimal versions for compatibility
+if not MCP_LANDING_PAGE_AVAILABLE:
+    from dataclasses import dataclass
+    
+    @dataclass
+    class ContrastSelection:
+        """Container for selected contrast with justification"""
+        analysis_id: str
+        contrast_id: str
+        relevance_score: float
+        justification: str
+        deg_count: int
 
-@dataclass
-class ThresholdSelection:
-    """Container for automatically selected statistical thresholds"""
-    fdr_cutoff: float
-    logfc_cutoff: float
-    min_frequency: int
-    justification: str
+    @dataclass
+    class ThresholdSelection:
+        """Container for automatically selected statistical thresholds"""
+        fdr_cutoff: float
+        logfc_cutoff: float
+        min_frequency: int
+        justification: str
 
-@dataclass
-class LandingPageData:
-    """Container for all landing page data"""
-    selected_contrasts: List[ContrastSelection]
-    thresholds: ThresholdSelection
-    top_genes: List[str]
-    heatmap_fig: Optional[go.Figure]
-    gene_table: pd.DataFrame
-    narrative: str
-
-def generate_ai_landing_page(integrator, biological_prompt: str, max_genes: int = 50) -> Optional[LandingPageData]:
-    """
-    Generate AI-assisted landing page data using the provided integrator.
-    """
-    try:
-        # Step 1: Select relevant contrasts using LLM
-        selected_contrasts = select_contrasts_with_llm(integrator, biological_prompt)
-        if not selected_contrasts:
-            return None
-
-        # Step 2: Select genes based on simple criteria
-        top_genes = select_genes_simple(integrator, selected_contrasts, max_genes)
-
-        # Step 3: Create visualizations
-        heatmap_fig = create_landing_heatmap(integrator, top_genes, selected_contrasts)
-        gene_table = create_gene_table_simple(integrator, top_genes, selected_contrasts)
-
-        # Step 4: Generate narrative using LLM
-        narrative = generate_narrative_llm(integrator, selected_contrasts, top_genes, biological_prompt)
-
-        # Create simple thresholds object for compatibility
-        thresholds = ThresholdSelection(
-            fdr_cutoff=0.05,
-            logfc_cutoff=1.0,
-            min_frequency=1,
-            justification="Standard thresholds: FDR < 0.05, |logFC| > 1.0"
-        )
-
-        return LandingPageData(
-            selected_contrasts=selected_contrasts,
-            thresholds=thresholds,
-            top_genes=top_genes,
-            heatmap_fig=heatmap_fig,
-            gene_table=gene_table,
-            narrative=narrative
-        )
-
-    except Exception as e:
-        st.error(f"Error generating AI landing page: {str(e)}")
+    @dataclass
+    class LandingPageData:
+        """Container for all landing page data"""
+        selected_contrasts: List[ContrastSelection]
+        thresholds: ThresholdSelection
+        top_genes: List[str]
+        heatmap_fig: Optional[go.Figure]
+        gene_table: pd.DataFrame
+        narrative: str
+    
+    # Fallback function if MCP integration not available
+    def generate_ai_landing_page(integrator, biological_prompt: str, max_genes: int = 50) -> Optional[LandingPageData]:
+        """Fallback if MCP integration not available."""
+        st.error("MCP-based landing page not available. Please ensure all dependencies are installed.")
         return None
 
 
@@ -165,340 +152,7 @@ def generate_ai_landing_page(integrator, biological_prompt: str, max_genes: int 
 
 
 
-# ========================================================================
-# SIMPLIFIED AI SELECTION FUNCTIONS
-# ========================================================================
-
-def select_contrasts_with_llm(integrator, biological_prompt: str) -> List[ContrastSelection]:
-    """Select contrasts using LLM with emphasis on query matching, diversity, and interpretable number."""
-
-    # Get all available contrasts
-    all_contrasts = []
-    for analysis_id, contrasts in integrator.deg_data.items():
-        for contrast_id in contrasts.keys():
-            description = integrator._get_contrast_description(analysis_id, contrast_id)
-
-            # Count significant DEGs
-            df = contrasts[contrast_id]
-            deg_count = 0
-            if 'adj.P.Val' in df.columns and 'logFC' in df.columns:
-                deg_count = ((df['adj.P.Val'] < 0.05) & (abs(df['logFC']) > 1.0)).sum()
-
-            all_contrasts.append({
-                'analysis_id': analysis_id,
-                'contrast_id': contrast_id,
-                'description': description,
-                'deg_count': deg_count
-            })
-
-    if not all_contrasts:
-        return []
-
-    # Use LLM to select contrasts
-    client = OpenAI()
-
-    # Prepare contrast descriptions for LLM
-    contrast_descriptions = []
-    for i, contrast in enumerate(all_contrasts):
-        contrast_descriptions.append(
-            f"{i+1}. {contrast['analysis_id']}_{contrast['contrast_id']}: "
-            f"{contrast['description']} (DEGs: {contrast['deg_count']})"
-        )
-
-    prompt = f"""
-You are an expert RNA-seq analyst selecting the most relevant differential expression contrasts for this research question: "{biological_prompt}"
-
-Available contrasts:
-{chr(10).join(contrast_descriptions)}
-
-Select contrasts based on:
-1. MATCHING: How well does each contrast address the research question?
-2. DIVERSITY: Select contrasts that complement each other and avoid redundancy
-3. INTERPRETABLE NUMBER: Choose an appropriate number of contrasts (typically 3-12) that provides comprehensive coverage without overwhelming complexity
-
-For each selected contrast, provide:
-- Contrast number (from the list above)
-- Relevance score (0-10)
-- Brief justification explaining its relevance to the research question
-
-Respond in JSON format:
-{{
-  "selected_contrasts": [
-    {{
-      "contrast_number": 1,
-      "relevance_score": 8.5,
-      "justification": "This contrast directly addresses..."
-    }},
-    ...
-  ]
-}}
-"""
-
-    try:
-        response = client.chat.completions.create(
-            model="o4-mini",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}
-        )
-
-        result = json.loads(response.choices[0].message.content)
-        selected_contrasts = []
-
-        for selection in result.get("selected_contrasts", []):
-            idx = selection["contrast_number"] - 1
-            if 0 <= idx < len(all_contrasts):
-                contrast = all_contrasts[idx]
-                selected_contrasts.append(ContrastSelection(
-                    analysis_id=contrast['analysis_id'],
-                    contrast_id=contrast['contrast_id'],
-                    relevance_score=selection["relevance_score"],
-                    justification=selection["justification"],
-                    deg_count=contrast['deg_count']
-                ))
-
-        return selected_contrasts
-
-    except Exception as e:
-        st.error(f"LLM contrast selection failed: {str(e)}")
-        return []
-
-def select_genes_simple(integrator, selected_contrasts: List[ContrastSelection], max_genes: int = 50) -> List[str]:
-    """Select genes based on: |LFC| > 1, p.adjust < 0.05, and differentially expressed in >80% of contrasts."""
-
-    gene_contrast_counts = {}
-    gene_max_lfc = {}
-
-    total_contrasts = len(selected_contrasts)
-    min_contrasts_required = int(0.8 * total_contrasts)  # 80% threshold
-
-    # Count how many contrasts each gene is significant in
-    for contrast in selected_contrasts:
-        if (contrast.analysis_id in integrator.deg_data and
-            contrast.contrast_id in integrator.deg_data[contrast.analysis_id]):
-
-            df = integrator.deg_data[contrast.analysis_id][contrast.contrast_id]
-
-            if 'Gene' in df.columns and 'adj.P.Val' in df.columns and 'logFC' in df.columns:
-                # Filter for significant genes
-                significant = df[(df['adj.P.Val'] < 0.05) & (abs(df['logFC']) > 1.0)]
-
-                for _, row in significant.iterrows():
-                    gene = row['Gene']
-                    lfc = abs(row['logFC'])
-
-                    # Count contrasts
-                    if gene not in gene_contrast_counts:
-                        gene_contrast_counts[gene] = 0
-                        gene_max_lfc[gene] = 0
-
-                    gene_contrast_counts[gene] += 1
-                    gene_max_lfc[gene] = max(gene_max_lfc[gene], lfc)
-
-    # Filter genes that appear in >80% of contrasts
-    candidate_genes = []
-    for gene, count in gene_contrast_counts.items():
-        if count >= min_contrasts_required:
-            candidate_genes.append((gene, count, gene_max_lfc[gene]))
-
-    # Sort by number of contrasts (primary) and max LFC (secondary)
-    candidate_genes.sort(key=lambda x: (x[1], x[2]), reverse=True)
-
-    # Return top genes
-    selected_genes = [gene for gene, _, _ in candidate_genes[:max_genes]]
-
-    return selected_genes
-
-def create_gene_table_simple(integrator, top_genes: List[str], selected_contrasts: List[ContrastSelection]) -> pd.DataFrame:
-    """Create simple gene summary table."""
-
-    gene_data = []
-
-    for gene in top_genes:
-        up_count = 0
-        down_count = 0
-        total_tested = 0
-        logfcs = []
-
-        for contrast in selected_contrasts:
-            if (contrast.analysis_id in integrator.deg_data and
-                contrast.contrast_id in integrator.deg_data[contrast.analysis_id]):
-
-                df = integrator.deg_data[contrast.analysis_id][contrast.contrast_id]
-
-                if 'Gene' in df.columns and 'adj.P.Val' in df.columns and 'logFC' in df.columns:
-                    gene_row = df[df['Gene'] == gene]
-
-                    if not gene_row.empty:
-                        total_tested += 1
-                        row = gene_row.iloc[0]
-                        p_val = row['adj.P.Val']
-                        logfc = row['logFC']
-                        logfcs.append(logfc)
-
-                        # Count significant directions
-                        if p_val < 0.05 and abs(logfc) > 1.0:
-                            if logfc > 0:
-                                up_count += 1
-                            else:
-                                down_count += 1
-
-        if logfcs:
-            median_logfc = np.median(logfcs)
-            direction_summary = f"↑{up_count}/↓{down_count} (of {total_tested})"
-
-            gene_data.append({
-                'Gene': gene,
-                'Median LogFC': round(median_logfc, 2),
-                'Direction': direction_summary,
-                'Significant in': f"{up_count + down_count}/{total_tested}"
-            })
-
-    return pd.DataFrame(gene_data)
-
-def create_landing_heatmap(integrator, top_genes: List[str], selected_contrasts: List[ContrastSelection]) -> Optional[go.Figure]:
-    """Create simple heatmap for landing page with improved gene label visibility."""
-
-    try:
-        contrast_pairs = [(c.analysis_id, c.contrast_id) for c in selected_contrasts]
-
-        fig = integrator.create_lfc_heatmap(
-            genes=top_genes,
-            contrasts=contrast_pairs,
-            output_file=None,
-            p_value_threshold=0.05,
-            lfc_threshold=1.0,
-            hide_empty_rows_cols=True,
-            font_size=11
-        )
-
-        if fig:
-            # Calculate height to ensure all gene labels are visible
-            # Use more generous spacing: 25-30px per gene, with minimum 500px and maximum 1200px
-            calculated_height = max(500, min(1200, len(top_genes) * 28))
-
-            fig.update_layout(
-                title="Selected Genes Across Relevant Contrasts",
-                title_font_size=16,
-                height=calculated_height,
-                # Ensure gene labels are fully visible
-                margin=dict(l=150, r=20, t=60, b=80)  # Increase left margin for gene labels
-            )
-
-            # Make y-axis labels more readable
-            fig.update_yaxes(
-                tickfont=dict(size=10),
-                tickmode='linear'
-            )
-
-        return fig
-    except Exception as e:
-        st.error(f"Error creating heatmap: {str(e)}")
-        return None
-
-def generate_narrative_llm(integrator, selected_contrasts, top_genes: List[str], biological_prompt: str) -> str:
-    """Generate comprehensive LLM-based interpretation."""
-
-    client = OpenAI()
-
-    # Prepare contrast summaries with formulas
-    contrast_summaries = []
-    for contrast in selected_contrasts:
-        # Get the description and expression formula for each contrast
-        description = integrator._get_contrast_description(contrast.analysis_id, contrast.contrast_id)
-
-        # Get contrast formula from integrator's contrast_info dictionary
-        formula = ""
-        if hasattr(integrator, "contrast_info") and contrast.contrast_id in integrator.contrast_info:
-            formula = integrator.contrast_info[contrast.contrast_id].get('expression', '')
-
-        # Create a summary that includes both description and formula
-        contrast_summary = f"- {contrast.contrast_id}: {description} (Score: {contrast.relevance_score:.1f})"
-        if formula:
-            contrast_summary += f"\n  Formula: {formula} (positive LFC means upregulated in the first condition, negative means downregulated)"
-
-        contrast_summaries.append(contrast_summary)
-
-    # Prepare gene expression patterns
-    gene_patterns = []
-    for gene in top_genes[:10]:  # Focus on top 10 genes for detailed analysis
-        up_count = 0
-        down_count = 0
-        logfcs = []
-
-        for contrast in selected_contrasts:
-            if (contrast.analysis_id in integrator.deg_data and
-                contrast.contrast_id in integrator.deg_data[contrast.analysis_id]):
-
-                df = integrator.deg_data[contrast.analysis_id][contrast.contrast_id]
-
-                if 'Gene' in df.columns and 'adj.P.Val' in df.columns and 'logFC' in df.columns:
-                    gene_row = df[df['Gene'] == gene]
-
-                    if not gene_row.empty:
-                        row = gene_row.iloc[0]
-                        p_val = row['adj.P.Val']
-                        logfc = row['logFC']
-                        logfcs.append(logfc)
-
-                        if p_val < 0.05 and abs(logfc) > 1.0:
-                            if logfc > 0:
-                                up_count += 1
-                            else:
-                                down_count += 1
-
-        if logfcs:
-            median_lfc = np.median(logfcs)
-            pattern = f"{gene}: median logFC = {median_lfc:.2f}, upregulated in {up_count} contrasts, downregulated in {down_count} contrasts"
-            gene_patterns.append(pattern)
-
-    prompt = f"""
-You are an expert computational biologist analyzing RNA-seq differential expression results. Provide a comprehensive interpretation covering:
-
-RESEARCH QUESTION: {biological_prompt}
-
-SELECTED CONTRASTS, THEIR RELEVANCE, AND FORMULAS EXPRESSIONS:
-{chr(10).join(contrast_summaries)}
-
-TOP GENE EXPRESSION PATTERNS:
-{chr(10).join(gene_patterns)}
-
-ADDITIONAL GENES IDENTIFIED: {', '.join(top_genes[10:20]) if len(top_genes) > 10 else 'None'}
-
-Please provide an interpretation that addresses:
-
-1. CONTRAST RELEVANCE: Explain how each selected contrast relates to the original research question and why this set of contrasts provides good coverage. You don't need to specify the score you gave, however for all contrasts you should describe the contrast, and explain its relevance to the research question.
-
-2. DATA-DRIVEN GENE COMMENTARY:
-   - Describe the expression patterns of key genes (when/where typically over/under-expressed)
-   - Provide direct interpretation of the log fold changes and their biological meaning. When doing so, engage carefully with the meaning of contrasts - for example, a positive LFC in a contrast like "KO-WT" means the gene is upregulated in the KO condition compared to WT, but also note that a negative contrast like "WT-KO" would mean the same. Keep this internal - you do not need to share the formulas with the user, only share the meaningful biological interpretation.
-   - Discuss broader implications for the research question (pathways, mechanisms, therapeutic targets)
-
-3. DIRECT RESEARCH QUESTION ANSWER: Provide a succinct, evidence-based answer to the original research question based on the differential expression patterns observed.
-
-Write in clear, scientific language suitable for researchers. Be specific about the data and avoid generic statements.
-
-Format your response in a nice readable way - use markdown as appropriate to enhance readability and engagement, but keep in mind the intended audience is researchers and scientists. Generate only the report, with no further commentary. Use descriptive headings and bullet points where appropriate to organize the information clearly. For example, a title "Direct Answer to the Research Question" is too direct - think about what would be more interesting for the researcher.
-"""
-
-    try:
-        response = client.chat.completions.create(
-            model="o4-mini",
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        return response.choices[0].message.content.strip()
-
-    except Exception as e:
-        # Simple fallback if LLM fails
-        return f"""
-Analysis of {len(selected_contrasts)} relevant contrasts for: {biological_prompt}
-
-The selected contrasts were chosen for their relevance to the research question. Key findings include {len(top_genes)} genes that are consistently differentially expressed across multiple conditions.
-
-Top genes such as {', '.join(top_genes[:5])} show consistent expression changes that may be directly relevant to the biological processes under investigation.
-
-Based on the differential expression patterns observed, these results provide molecular insights into the mechanisms underlying the research question.
-"""
+# The old AI functions have been removed - they are now provided by the MCP-based system
 
 # Check if fragment is available (Streamlit >=1.33.0)
 # If not, fallback to experimental_fragment
@@ -600,22 +254,50 @@ with st.sidebar.status("Loading data...", expanded=True) as status:
         status.update(label="No data found. Please check the directory path.", state="error")
     else:
         status.update(label=f"✅ Loaded {len(ri.cpm_data)} datasets", state="complete")
+        
+        # Check if this is the first time loading this directory
+        if 'previous_results_dir' not in st.session_state or st.session_state.previous_results_dir != results_dir:
+            st.session_state.previous_results_dir = results_dir
+            st.session_state.auto_analysis_complete = False
+            st.session_state.auto_analysis_result = None
+        
+        # Trigger auto-analysis if not done yet and MCP is available
+        if (not st.session_state.get('auto_analysis_complete', False) and 
+            MCP_LANDING_PAGE_AVAILABLE and 
+            bool(os.getenv("OPENAI_API_KEY"))):
+            with st.spinner("🤖 Automatically analyzing your dataset..."):
+                try:
+                    auto_result = auto_analyze_on_load(ri)
+                    if auto_result and auto_result.get('success'):
+                        st.session_state.auto_analysis_result = auto_result
+                        st.session_state.auto_analysis_complete = True
+                        st.success("✅ Initial analysis complete! Check the AI Summary tab.")
+                except Exception as e:
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Auto-analysis failed: {e}")
+                    st.session_state.auto_analysis_complete = True  # Mark as complete to avoid retrying
 
 # Show AI landing page availability status
 api_key_available = bool(os.getenv("OPENAI_API_KEY"))
 
-if LANDING_PAGE_AVAILABLE and api_key_available:
+# Check for both old and new implementations
+landing_available = LANDING_PAGE_AVAILABLE or MCP_LANDING_PAGE_AVAILABLE
+
+if landing_available and api_key_available:
     st.sidebar.success("🤖 AI Landing Page: Fully Available")
-elif LANDING_PAGE_AVAILABLE and not api_key_available:
+    if MCP_LANDING_PAGE_AVAILABLE:
+        st.sidebar.info("Using MCP-based agent system")
+elif landing_available and not api_key_available:
     st.sidebar.error("🤖 AI Landing Page: API Key Required")
     with st.sidebar.expander("ℹ️ Enable AI Features", expanded=False):
         st.markdown("""
-        **Current Status:** OpenAI package installed ✅, but API key missing ❌
+        **Current Status:** AI packages installed ✅, but API key missing ❌
 
         **Required for AI Landing Page:**
-        - LLM-based contrast selection
-        - Intelligent gene ranking and analysis
+        - Agent-based contrast selection and analysis
+        - Intelligent gene ranking across contrasts
         - Comprehensive biological interpretation
+        - Auto-analysis on data load
 
         **To enable AI features:**
 
@@ -636,22 +318,26 @@ else:
     st.sidebar.error("🤖 AI Landing Page: Not Available")
     with st.sidebar.expander("ℹ️ Enable AI Features", expanded=False):
         st.markdown("""
-        **Current Status:** OpenAI package not available ❌
+        **Current Status:** AI packages not available ❌
 
         **To enable AI landing page:**
         ```bash
-        uv add openai
+        pip install openai pydantic-ai
         ```
+
+        Also ensure MCP servers are installed:
+        - mcp_data_extractor.py
+        - mcp_analysis.py
 
         Then set your API key:
         - Environment: `export OPENAI_API_KEY=your_key`
         - .env file: Add `OPENAI_API_KEY=your_key` to `.env`
 
         AI features provide:
-        - LLM-based contrast selection (optimal number determined automatically)
-        - Simple gene filtering (|LFC| > 1, p.adj < 0.05, >80% contrast frequency)
-        - Comprehensive biological interpretation and research question answers
-        - Publication-ready narratives with data-driven insights
+        - MCP agent-based analysis with structured data extraction
+        - Automatic analysis when data is loaded
+        - Comprehensive biological interpretation
+        - Research-focused insights and pathway analysis
         """)
 
 # Only show the rest of the UI if we successfully loaded data
@@ -1082,10 +768,28 @@ if ri and ri.cpm_data:
                 help="Uses AI to automatically select relevant contrasts and create interpretive summaries"
             )
 
+        # Display auto-analysis results if available
+        if (not hasattr(st.session_state, 'landing_data') and 
+            st.session_state.get('auto_analysis_result') and 
+            st.session_state.auto_analysis_result.get('success')):
+            
+            st.info("🤖 Showing automatic dataset analysis. You can refine it with a specific research question below.")
+            
+            # Display the auto-analysis report
+            auto_report = st.session_state.auto_analysis_result.get('report', '')
+            
+            with st.container():
+                st.markdown("### 📊 Automatic Dataset Overview")
+                st.markdown(auto_report)
+            
+            st.markdown("---")
+            st.markdown("### 🎯 Want a More Focused Analysis?")
+            st.markdown("Enter a specific research question below to get targeted insights.")
+        
         # Check if landing page functionality is available
-        if not LANDING_PAGE_AVAILABLE:
-            st.error("❌ AI landing page functionality requires OpenAI package and landing page module.")
-            st.info("💡 To enable: `pip install openai` and ensure landing_page_generator.py is available.")
+        if not landing_available:
+            st.error("❌ AI landing page functionality is not available.")
+            st.info("💡 To enable: Install required packages and ensure MCP servers are available.")
         elif not ri or not ri.cpm_data:
             st.info("📁 Please load data first using the sidebar controls.")
         elif generate_landing:
@@ -1095,12 +799,24 @@ if ri and ri.cpm_data:
             # Generate AI-assisted landing page
             with st.spinner("🤖 AI is analyzing your data and generating the landing page..."):
                 try:
-                    # Generate landing page data using integrated functionality
+                    # Progress callback for user feedback
+                    progress_bar = st.progress(0)
+                    progress_text = st.empty()
+                    
+                    def update_progress(progress, message):
+                        progress_bar.progress(progress)
+                        progress_text.text(f"🔄 {message}")
+                    
+                    # Generate landing page data using MCP-based system
                     landing_data = generate_ai_landing_page(
                         integrator=ri,
                         biological_prompt=biological_prompt,
                         max_genes=50
                     )
+                    
+                    # Clear progress indicators
+                    progress_bar.empty()
+                    progress_text.empty()
 
                     if landing_data:
                         # Store in session state
@@ -1110,9 +826,16 @@ if ri and ri.cpm_data:
 
                 except Exception as e:
                     st.error(f"❌ Error generating landing page: {str(e)}")
-                    if "openai" in str(e).lower():
-                        st.info("💡 Tip: Make sure your OpenAI API key is set as an environment variable: `export OPENAI_API_KEY=your_key`")
+                    if "api" in str(e).lower() or "key" in str(e).lower():
+                        st.info("💡 Make sure your OpenAI API key is set: `export OPENAI_API_KEY=your_key`")
+                    elif "mcp" in str(e).lower():
+                        st.info("💡 MCP servers may not be available. Check installation.")
                 finally:
+                    # Clear progress indicators if they exist
+                    if 'progress_bar' in locals():
+                        progress_bar.empty()
+                    if 'progress_text' in locals():
+                        progress_text.empty()
                     # Clear the flag after generation completes
                     if 'ai_generating' in st.session_state:
                         del st.session_state.ai_generating
@@ -1384,14 +1107,7 @@ if ri and ri.cpm_data:
 
                 - **Be Specific**: Describe your research focus (e.g., "MYCN amplification in neuroblastoma")
                 - **Include Context**: Mention key pathways, genes, or processes of interest
-                - **State Comparisons**: Specify what you're comparing (tumor vs normal, treated vs control)
-                - **Add Goals**: Include what you hope to discover or validate
-
-                **Example Prompts:**
-                - "Immune checkpoint response in melanoma patients"
-                - "Developmental gene expression in neural differentiation"
-                - "Drug resistance mechanisms in cancer cell lines"
-                """)
+                - **State Comparisons**: Specify what you're comparing (tumor vs normal, treate
 
     with tab_sel:
         st.header("☑️ Select Data & Contrasts")
