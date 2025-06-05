@@ -452,7 +452,6 @@ tmux attach -t uorca-explorer
 - **Per-tab Display Settings**: Customize font sizes, grid opacity, legend position
 - **Violin Plot Options**: Lock y-axis across genes, toggle raw points, adjust transparency
 - **Heatmap Customization**: Grid line control, font sizing, simplified contrast labels
-- Debug mode for troubleshooting
 
 ### Performance Features
 
