@@ -32,6 +32,14 @@ import re
 from collections import Counter
 import math
 
+class ModuleFilter(logging.Filter):
+    def __init__(self, names):
+        super().__init__()
+        self.names = names
+
+    def filter(self, record):
+        return any(record.name.startswith(n) for n in self.names)
+
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
@@ -469,7 +477,6 @@ if ri and ri.cpm_data:
         hide_empty_rows_cols = st.sidebar.checkbox("Hide genes/contrasts with no significant values", value=False, help="Remove rows/columns where no values meet significance criteria")
         if hide_empty_rows_cols:
             st.sidebar.info("🧹 Genes/contrasts with no significant values will be completely removed from the heatmap")
-
 
     # Initialize session state for selections
     if 'datasets_selected' not in st.session_state:
@@ -1264,6 +1271,7 @@ if ri and ri.cpm_data:
                     with st.spinner("Generating heatmap..."):
                         try:
 
+
                             # Create heatmap with possibly modified parameters
                             # Use cached version if available for older Streamlit versions
                             if 'cached_figure_creation' in globals():
@@ -1289,6 +1297,7 @@ if ri and ri.cpm_data:
                                 )
 
                             # Display settings are now handled in the create_lfc_heatmap function
+
 
 
                             if fig:
@@ -1322,7 +1331,6 @@ if ri and ri.cpm_data:
                 @st.fragment
                 def draw_heatmap_manual(gene_selection, contrast_pairs, show_adv=False):
                     with st.spinner("Generating heatmap..."):
-                        try:
 
                             # Create heatmap with possibly modified parameters
                             # Use cached version if available for older Streamlit versions
@@ -1349,7 +1357,6 @@ if ri and ri.cpm_data:
                                 )
 
                             # Display settings are now handled in the create_lfc_heatmap function
-
 
                             if fig:
                                 # Add notes about functionality
