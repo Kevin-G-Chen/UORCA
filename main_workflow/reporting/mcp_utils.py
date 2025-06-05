@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 import tomllib
 from typing import Mapping, Optional
@@ -52,9 +53,9 @@ def setup_mcp_server(name: str, env_vars: Mapping[str, str] | None = None) -> MC
     if env_vars:
         env.update(env_vars)
 
-    # Spawn server using python interpreter
+    # Spawn server using the same Python executable
     return MCPServerStdio(
-        "python",
+        sys.executable,
         args=[str(script_path), "server"],
         env=env,
     )

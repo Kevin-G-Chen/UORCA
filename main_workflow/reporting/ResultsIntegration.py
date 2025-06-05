@@ -80,6 +80,8 @@ class ResultsIntegrator:
             Number of top genes to include in visualizations by default
         """
         self.results_dir = os.path.abspath(results_dir)
+        if not os.path.isdir(self.results_dir):
+            raise FileNotFoundError(f"Results directory not found: {self.results_dir}")
 
         # Store requested output directory but don't create it yet
         self._output_dir_requested = output_dir
