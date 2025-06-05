@@ -58,6 +58,13 @@ except ImportError:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # ResultsIntegration.py is in the same directory
 from ResultsIntegration import ResultsIntegrator
+from single_analysis_plots import (
+    create_pca_plot,
+    create_volcano_plot,
+    create_ma_plot,
+    create_deg_heatmap,
+    load_sample_groups,
+)
 
 # Import the new MCP-based landing page integration
 try:
@@ -1549,9 +1556,24 @@ if ri and ri.cpm_data:
                 # Display QC plots in a structured layout with tabs
                 plot_tabs = st.tabs(["Quality Overview", "Expression Filtering", "Normalization", "Variance Modeling"])
 
-                # Tab 1: Quality Overview (MDS plot)
+                # Tab 1: Quality Overview (interactive PCA plot replacing MDS)
                 with plot_tabs[0]:
-                    if os.path.exists(qc_plot_files["MDS Plot"]["file"]):
+                    pca_fig = None
+                    if ri and selected_dataset in ri.cpm_data:
+                        try:
+                            cpm_df = ri.cpm_data[selected_dataset]
+                            analysis_info = None
+                            if hasattr(ri, "analysis_info"):
+                                analysis_info = ri.analysis_info.get(selected_dataset)
+                            groups = load_sample_groups(ri.results_dir, selected_dataset, cpm_df, analysis_info)
+                            pca_fig = create_pca_plot(cpm_df, groups)
+                        except Exception:
+                            pca_fig = None
+                    if pca_fig is not None:
+                        st.plotly_chart(pca_fig, use_container_width=True)
+                        with st.expander("What does this plot mean?", expanded=True):
+                            st.markdown(qc_plot_files["MDS Plot"]["description"])
+                    elif os.path.exists(qc_plot_files["MDS Plot"]["file"]):
                         st.image(qc_plot_files["MDS Plot"]["file"])
                         with st.expander("What does this plot mean?", expanded=True):
                             st.markdown(qc_plot_files["MDS Plot"]["description"])
@@ -1651,7 +1673,23 @@ if ri and ri.cpm_data:
 
                         # Tab 1: Volcano Plot
                         with de_plot_tabs[0]:
-                            if os.path.exists(contrast_plot_files["Volcano Plot"]["file"]):
+                            volcano_fig = None
+                            if (
+                                ri
+                                and selected_dataset in ri.deg_data
+                                and selected_contrast in ri.deg_data[selected_dataset]
+                            ):
+                                try:
+                                    deg_df = ri.deg_data[selected_dataset][selected_contrast]
+                                    volcano_fig = create_volcano_plot(deg_df)
+                                except Exception:
+                                    volcano_fig = None
+
+                            if volcano_fig is not None:
+                                st.plotly_chart(volcano_fig, use_container_width=True)
+                                with st.expander("What does this plot mean?", expanded=True):
+                                    st.markdown(contrast_plot_files["Volcano Plot"]["description"])
+                            elif os.path.exists(contrast_plot_files["Volcano Plot"]["file"]):
                                 st.image(contrast_plot_files["Volcano Plot"]["file"])
                                 with st.expander("What does this plot mean?", expanded=True):
                                     st.markdown(contrast_plot_files["Volcano Plot"]["description"])
@@ -1660,7 +1698,23 @@ if ri and ri.cpm_data:
 
                         # Tab 2: MA Plot
                         with de_plot_tabs[1]:
-                            if os.path.exists(contrast_plot_files["MA Plot"]["file"]):
+                            ma_fig = None
+                            if (
+                                ri
+                                and selected_dataset in ri.deg_data
+                                and selected_contrast in ri.deg_data[selected_dataset]
+                            ):
+                                try:
+                                    deg_df = ri.deg_data[selected_dataset][selected_contrast]
+                                    ma_fig = create_ma_plot(deg_df)
+                                except Exception:
+                                    ma_fig = None
+
+                            if ma_fig is not None:
+                                st.plotly_chart(ma_fig, use_container_width=True)
+                                with st.expander("What does this plot mean?", expanded=True):
+                                    st.markdown(contrast_plot_files["MA Plot"]["description"])
+                            elif os.path.exists(contrast_plot_files["MA Plot"]["file"]):
                                 st.image(contrast_plot_files["MA Plot"]["file"])
                                 with st.expander("What does this plot mean?", expanded=True):
                                     st.markdown(contrast_plot_files["MA Plot"]["description"])
@@ -1669,7 +1723,29 @@ if ri and ri.cpm_data:
 
                         # Tab 3: Heatmap
                         with de_plot_tabs[2]:
-                            if os.path.exists(contrast_plot_files["Heatmap of Top DEGs"]["file"]):
+                            heatmap_fig = None
+                            if (
+                                ri
+                                and selected_dataset in ri.deg_data
+                                and selected_contrast in ri.deg_data[selected_dataset]
+                                and selected_dataset in ri.cpm_data
+                            ):
+                                try:
+                                    deg_df = ri.deg_data[selected_dataset][selected_contrast]
+                                    cpm_df = ri.cpm_data[selected_dataset]
+                                    analysis_info = None
+                                    if hasattr(ri, "analysis_info"):
+                                        analysis_info = ri.analysis_info.get(selected_dataset)
+                                    groups = load_sample_groups(ri.results_dir, selected_dataset, cpm_df, analysis_info)
+                                    heatmap_fig = create_deg_heatmap(cpm_df, deg_df, groups)
+                                except Exception:
+                                    heatmap_fig = None
+
+                            if heatmap_fig is not None:
+                                st.plotly_chart(heatmap_fig, use_container_width=True)
+                                with st.expander("What does this plot mean?", expanded=True):
+                                    st.markdown(contrast_plot_files["Heatmap of Top DEGs"]["description"])
+                            elif os.path.exists(contrast_plot_files["Heatmap of Top DEGs"]["file"]):
                                 st.image(contrast_plot_files["Heatmap of Top DEGs"]["file"])
                                 with st.expander("What does this plot mean?", expanded=True):
                                     st.markdown(contrast_plot_files["Heatmap of Top DEGs"]["description"])
