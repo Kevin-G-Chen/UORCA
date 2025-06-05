@@ -32,6 +32,14 @@ import re
 from collections import Counter
 import math
 
+class ModuleFilter(logging.Filter):
+    def __init__(self, names):
+        super().__init__()
+        self.names = names
+
+    def filter(self, record):
+        return any(record.name.startswith(n) for n in self.names)
+
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
@@ -362,6 +370,7 @@ if ri and ri.cpm_data:
     top_unique_genes = 10
     hide_x_labels = True
     debug_mode = False
+    mcp_only = False
 
     if show_advanced:
         # Add slider and number input side by side for precision
@@ -472,6 +481,7 @@ if ri and ri.cpm_data:
             st.sidebar.info("🧹 Genes/contrasts with no significant values will be completely removed from the heatmap")
 
         debug_mode = st.sidebar.checkbox("Debug mode", value=False)
+        mcp_only = st.sidebar.checkbox("Show MCP logs only", value=False)
 
     # Initialize session state for selections
     if 'datasets_selected' not in st.session_state:
@@ -1274,11 +1284,19 @@ if ri and ri.cpm_data:
                                 log_stream = io.StringIO()
                                 handler = logging.StreamHandler(log_stream)
                                 handler.setLevel(logging.DEBUG)
+                                if mcp_only:
+                                    handler.addFilter(ModuleFilter([
+                                        "mcp-analysis",
+                                        "mcp-data-extractor",
+                                        "reporting_agent",
+                                        "landing_page_integration",
+                                        "auto_start_manager",
+                                    ]))
                                 formatter = logging.Formatter('%(levelname)s - %(message)s')
                                 handler.setFormatter(formatter)
 
-                                # Add the handler to the logger
-                                logger = logging.getLogger("ResultsIntegration")
+                                # Add the handler to the root logger
+                                logger = logging.getLogger()
                                 logger.setLevel(logging.DEBUG)
                                 logger.addHandler(handler)
 
@@ -1310,7 +1328,7 @@ if ri and ri.cpm_data:
 
                             if show_adv and show_debug:
                                 # Remove the handler to avoid duplicates
-                                logger.removeHandler(handler)
+                                logging.getLogger().removeHandler(handler)
 
                                 # Display the log
                                 st.expander("Debug Log", expanded=True).code(log_stream.getvalue())
@@ -1356,11 +1374,19 @@ if ri and ri.cpm_data:
                                 log_stream = io.StringIO()
                                 handler = logging.StreamHandler(log_stream)
                                 handler.setLevel(logging.DEBUG)
+                                if mcp_only:
+                                    handler.addFilter(ModuleFilter([
+                                        "mcp-analysis",
+                                        "mcp-data-extractor",
+                                        "reporting_agent",
+                                        "landing_page_integration",
+                                        "auto_start_manager",
+                                    ]))
                                 formatter = logging.Formatter('%(levelname)s - %(message)s')
                                 handler.setFormatter(formatter)
 
-                                # Add the handler to the logger
-                                logger = logging.getLogger("ResultsIntegration")
+                                # Add the handler to the root logger
+                                logger = logging.getLogger()
                                 logger.setLevel(logging.DEBUG)
                                 logger.addHandler(handler)
 
@@ -1392,7 +1418,7 @@ if ri and ri.cpm_data:
 
                             if show_adv and show_debug:
                                 # Remove the handler to avoid duplicates
-                                logger.removeHandler(handler)
+                                logging.getLogger().removeHandler(handler)
 
                                 # Display the log
                                 st.expander("Debug Log", expanded=True).code(log_stream.getvalue())
