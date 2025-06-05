@@ -61,19 +61,24 @@ class ReportingAgent:
     def setup_servers(self) -> List:
         """Set up the MCP servers for data extraction and analysis."""
         try:
+            env_vars = {"RESULTS_DIR": self.results_dir}
+            api_key = os.getenv("OPENAI_API_KEY")
+            if api_key:
+                env_vars["OPENAI_API_KEY"] = api_key
+
             # Data extraction server
             logger.info("Setting up data extraction MCP server...")
             data_server = setup_mcp_server(
                 "data_extractor",
-                env_vars={"RESULTS_DIR": self.results_dir}
+                env_vars=env_vars,
             )
             self.servers.append(data_server)
-            
+
             # Analysis server
             logger.info("Setting up analysis MCP server...")
             analysis_server = setup_mcp_server(
                 "analysis",
-                env_vars={"RESULTS_DIR": self.results_dir}
+                env_vars=env_vars,
             )
             self.servers.append(analysis_server)
             
@@ -420,7 +425,10 @@ Provide a clear comparison with specific genes and pathways that distinguish the
         """Clean up resources and close MCP servers."""
         for server in self.servers:
             try:
-                server.cleanup()
+                if hasattr(server, "close"):
+                    server.close()
+                elif hasattr(server, "terminate"):
+                    server.terminate()
             except Exception as e:
                 logger.warning(f"Error cleaning up server: {e}")
         

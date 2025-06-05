@@ -239,8 +239,18 @@ if not default_dir:
 # absolute path on the server
 results_dir = st.sidebar.text_input(
     "Results directory",
-    value=default_dir
+    value=default_dir,
+    help="Folder containing UORCA RNAseqAnalysis results"
 )
+
+def _validate_results_dir(path: str) -> tuple[bool, str]:
+    """Simple validation for the user supplied results directory."""
+    if not os.path.isdir(path):
+        return False, "Directory does not exist"
+    for root, dirs, files in os.walk(path):
+        if "RNAseqAnalysis" in dirs or "DEG.csv" in files:
+            return True, ""
+    return False, "No RNAseqAnalysis data found"
 
 # expensive → cache resource (keeps the object alive for the whole session)
 @st.cache_resource
@@ -253,7 +263,13 @@ def get_integrator(path):
         return None, str(e)
 
 # Load the integrator (cached)
+valid_dir, validation_error = _validate_results_dir(results_dir)
+
 with st.sidebar.status("Loading data...", expanded=True) as status:
+    if not valid_dir:
+        status.update(label=f"Error: {validation_error}", state="error")
+        st.stop()
+
     ri, error = get_integrator(results_dir)
 
     if error:
@@ -1331,18 +1347,24 @@ if ri and ri.cpm_data:
                 @st.fragment
                 def draw_heatmap_manual(gene_selection, contrast_pairs, show_adv=False):
                     with st.spinner("Generating heatmap..."):
-
+                        try:
                             # Create heatmap with possibly modified parameters
                             # Use cached version if available for older Streamlit versions
                             if 'cached_figure_creation' in globals():
-                                fig = cached_figure_creation("create_lfc_heatmap",
-                                                            gene_selection,
-                                                            contrast_pairs,
-                                                            None)
+                                fig = cached_figure_creation(
+                                    "create_lfc_heatmap",
+                                    gene_selection,
+                                    contrast_pairs,
+                                    None,
+                                )
                             else:
                                 # Apply dynamic filtering if enabled
-                                p_thresh = effective_pvalue_thresh if use_dynamic_filtering else None
-                                lfc_thresh_val = effective_lfc_thresh if use_dynamic_filtering else None
+                                p_thresh = (
+                                    effective_pvalue_thresh if use_dynamic_filtering else None
+                                )
+                                lfc_thresh_val = (
+                                    effective_lfc_thresh if use_dynamic_filtering else None
+                                )
 
                                 fig = ri.create_lfc_heatmap(
                                     genes=gene_selection,
@@ -1353,14 +1375,16 @@ if ri and ri.cpm_data:
                                     hide_empty_rows_cols=hide_empty_rows_cols,
                                     font_size=heatmap_font_size,
                                     show_grid_lines=show_grid_lines,
-                                    grid_opacity=grid_opacity
+                                    grid_opacity=grid_opacity,
                                 )
 
                             # Display settings are now handled in the create_lfc_heatmap function
 
                             if fig:
                                 # Add notes about functionality
-                                info_messages = ["💡 Hover over cells in the heatmap to see contrast descriptions and gene information."]
+                                info_messages = [
+                                    "💡 Hover over cells in the heatmap to see contrast descriptions and gene information."
+                                ]
 
                                 for msg in info_messages:
                                     st.info(msg)
@@ -1368,7 +1392,9 @@ if ri and ri.cpm_data:
                                 # Display the plot
                                 st.plotly_chart(fig, use_container_width=True)
                             else:
-                                st.error("Could not generate heatmap. Please check your selections.")
+                                st.error(
+                                    "Could not generate heatmap. Please check your selections."
+                                )
                         except Exception as e:
                             st.error(f"Error generating heatmap: {str(e)}")
 
