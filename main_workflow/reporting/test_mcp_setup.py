@@ -19,7 +19,6 @@ from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'scratch', 'MCP_examples'))
 
 from rich.console import Console
 from rich.table import Table
