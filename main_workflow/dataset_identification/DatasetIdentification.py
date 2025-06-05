@@ -101,7 +101,7 @@ def setup_logging(output_dir=None):
 
     # Configure root logger
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.WARNING,
         format=log_format,
         handlers=handlers,
         force=True

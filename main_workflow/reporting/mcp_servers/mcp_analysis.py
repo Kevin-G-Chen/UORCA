@@ -39,7 +39,7 @@ log = lambda m: print(f"[ANALYSIS] {m}", file=sys.stderr, flush=True)
 
 # Set up logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     stream=sys.stderr
 )

@@ -13,7 +13,7 @@ DEFAULT_FMT = "%(asctime)s  %(levelname)-8s  %(name)s ▶  %(message)s"
 # 1. Root configuration – called **once** at the start of the run              #
 ################################################################################
 
-def setup_logging(log_dir: str | os.PathLike = "logs", *, level: int = logging.INFO,
+def setup_logging(log_dir: str | os.PathLike = "logs", *, level: int = logging.WARNING,
                   run_id: str | None = None) -> pathlib.Path:
     """Create *logs/YYYYMMDD_HHMMSS.log* and hook both file & console handlers.
 
