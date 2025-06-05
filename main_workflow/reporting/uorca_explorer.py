@@ -1331,14 +1331,16 @@ if ri and ri.cpm_data:
                 @st.fragment
                 def draw_heatmap_manual(gene_selection, contrast_pairs, show_adv=False):
                     with st.spinner("Generating heatmap..."):
-
+                        try:
                             # Create heatmap with possibly modified parameters
                             # Use cached version if available for older Streamlit versions
                             if 'cached_figure_creation' in globals():
-                                fig = cached_figure_creation("create_lfc_heatmap",
-                                                            gene_selection,
-                                                            contrast_pairs,
-                                                            None)
+                                fig = cached_figure_creation(
+                                    "create_lfc_heatmap",
+                                    gene_selection,
+                                    contrast_pairs,
+                                    None
+                                )
                             else:
                                 # Apply dynamic filtering if enabled
                                 p_thresh = effective_pvalue_thresh if use_dynamic_filtering else None
@@ -1357,20 +1359,18 @@ if ri and ri.cpm_data:
                                 )
 
                             # Display settings are now handled in the create_lfc_heatmap function
-
                             if fig:
-                                # Add notes about functionality
-                                info_messages = ["💡 Hover over cells in the heatmap to see contrast descriptions and gene information."]
-
+                                info_messages = [
+                                    "💡 Hover over cells in the heatmap to see contrast descriptions and gene information."
+                                ]
                                 for msg in info_messages:
                                     st.info(msg)
-
-                                # Display the plot
                                 st.plotly_chart(fig, use_container_width=True)
                             else:
                                 st.error("Could not generate heatmap. Please check your selections.")
                         except Exception as e:
                             st.error(f"Error generating heatmap: {str(e)}")
+
 
                 # Allow manual generation if user wants to override AI selections
                 if st.button("🔄 Generate Manual Heatmap", help="Generate heatmap with current manual selections, ignoring AI selections"):
