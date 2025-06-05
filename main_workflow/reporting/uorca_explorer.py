@@ -369,8 +369,6 @@ if ri and ri.cpm_data:
     top_frequent_genes = 20
     top_unique_genes = 10
     hide_x_labels = True
-    debug_mode = False
-    mcp_only = False
 
     if show_advanced:
         # Add slider and number input side by side for precision
@@ -479,9 +477,6 @@ if ri and ri.cpm_data:
         hide_empty_rows_cols = st.sidebar.checkbox("Hide genes/contrasts with no significant values", value=False, help="Remove rows/columns where no values meet significance criteria")
         if hide_empty_rows_cols:
             st.sidebar.info("🧹 Genes/contrasts with no significant values will be completely removed from the heatmap")
-
-        debug_mode = st.sidebar.checkbox("Debug mode", value=False)
-        mcp_only = st.sidebar.checkbox("Show MCP logs only", value=False)
 
     # Initialize session state for selections
     if 'datasets_selected' not in st.session_state:
@@ -1269,36 +1264,13 @@ if ri and ri.cpm_data:
             if not (hasattr(st.session_state, 'landing_data') and st.session_state.landing_data):
                 # Create and display the heatmap using isolated fragment
                 @st.fragment
-                def draw_heatmap(gene_selection, contrast_pairs, show_debug=False, show_adv=False):
+                def draw_heatmap(gene_selection, contrast_pairs, show_adv=False):
                     # Skip execution if AI is currently generating
                     if st.session_state.get('ai_generating', False):
                         return
                     with st.spinner("Generating heatmap..."):
                         try:
-                            if show_adv and show_debug:
-                                st.info("Debug mode: Showing detailed heatmap generation info")
-                                import logging
-                                import io
 
-                                # Set up a string IO to capture log messages
-                                log_stream = io.StringIO()
-                                handler = logging.StreamHandler(log_stream)
-                                handler.setLevel(logging.DEBUG)
-                                if mcp_only:
-                                    handler.addFilter(ModuleFilter([
-                                        "mcp-analysis",
-                                        "mcp-data-extractor",
-                                        "reporting_agent",
-                                        "landing_page_integration",
-                                        "auto_start_manager",
-                                    ]))
-                                formatter = logging.Formatter('%(levelname)s - %(message)s')
-                                handler.setFormatter(formatter)
-
-                                # Add the handler to the root logger
-                                logger = logging.getLogger()
-                                logger.setLevel(logging.DEBUG)
-                                logger.addHandler(handler)
 
                             # Create heatmap with possibly modified parameters
                             # Use cached version if available for older Streamlit versions
@@ -1326,12 +1298,7 @@ if ri and ri.cpm_data:
 
                             # Display settings are now handled in the create_lfc_heatmap function
 
-                            if show_adv and show_debug:
-                                # Remove the handler to avoid duplicates
-                                logging.getLogger().removeHandler(handler)
 
-                                # Display the log
-                                st.expander("Debug Log", expanded=True).code(log_stream.getvalue())
 
                             if fig:
                                 # Add notes about functionality
@@ -1355,40 +1322,15 @@ if ri and ri.cpm_data:
                             st.error(f"Error generating heatmap: {str(e)}")
 
                 # Call the fragment with just the input parameters
-                draw_heatmap(gene_sel, selected_contrasts, debug_mode, show_advanced)
+                draw_heatmap(gene_sel, selected_contrasts, show_advanced)
             else:
                 # If landing page data exists, show a message and link to apply selections
                 st.info("💡 You have AI-generated selections available. Use the 'Apply These Selections to Other Tabs' button in the AI Summary tab to update this heatmap, or make manual selections below.")
 
                 # Still allow manual override
                 @st.fragment
-                def draw_heatmap_manual(gene_selection, contrast_pairs, show_debug=False, show_adv=False):
+                def draw_heatmap_manual(gene_selection, contrast_pairs, show_adv=False):
                     with st.spinner("Generating heatmap..."):
-                        try:
-                            if show_adv and show_debug:
-                                st.info("Debug mode: Showing detailed heatmap generation info")
-                                import logging
-                                import io
-
-                                # Set up a string IO to capture log messages
-                                log_stream = io.StringIO()
-                                handler = logging.StreamHandler(log_stream)
-                                handler.setLevel(logging.DEBUG)
-                                if mcp_only:
-                                    handler.addFilter(ModuleFilter([
-                                        "mcp-analysis",
-                                        "mcp-data-extractor",
-                                        "reporting_agent",
-                                        "landing_page_integration",
-                                        "auto_start_manager",
-                                    ]))
-                                formatter = logging.Formatter('%(levelname)s - %(message)s')
-                                handler.setFormatter(formatter)
-
-                                # Add the handler to the root logger
-                                logger = logging.getLogger()
-                                logger.setLevel(logging.DEBUG)
-                                logger.addHandler(handler)
 
                             # Create heatmap with possibly modified parameters
                             # Use cached version if available for older Streamlit versions
@@ -1416,13 +1358,6 @@ if ri and ri.cpm_data:
 
                             # Display settings are now handled in the create_lfc_heatmap function
 
-                            if show_adv and show_debug:
-                                # Remove the handler to avoid duplicates
-                                logging.getLogger().removeHandler(handler)
-
-                                # Display the log
-                                st.expander("Debug Log", expanded=True).code(log_stream.getvalue())
-
                             if fig:
                                 # Add notes about functionality
                                 info_messages = ["💡 Hover over cells in the heatmap to see contrast descriptions and gene information."]
@@ -1443,7 +1378,7 @@ if ri and ri.cpm_data:
                     temp_landing_data = st.session_state.get('landing_data')
                     if 'landing_data' in st.session_state:
                         del st.session_state.landing_data
-                    draw_heatmap_manual(gene_sel, selected_contrasts, debug_mode, show_advanced)
+                    draw_heatmap_manual(gene_sel, selected_contrasts, show_advanced)
                     # Restore AI data
                     if temp_landing_data:
                         st.session_state.landing_data = temp_landing_data
@@ -1664,9 +1599,6 @@ if ri and ri.cpm_data:
                     for i, opt in enumerate(contrast_options):
                         contrast_display_to_id[opt] = contrast_dirs[i]
 
-                    # Debug: Log available contrasts
-                    if debug_mode:
-                        st.write(f"Available contrasts: {', '.join(contrast_dirs)}")
 
                     selected_contrast_display = st.selectbox("Select a contrast:", contrast_options)
                     selected_contrast = contrast_display_to_id[selected_contrast_display]
