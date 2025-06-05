@@ -58,6 +58,13 @@ except ImportError:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # ResultsIntegration.py is in the same directory
 from ResultsIntegration import ResultsIntegrator
+from single_analysis_plots import (
+    create_pca_plot,
+    create_volcano_plot,
+    create_ma_plot,
+    create_deg_heatmap,
+    load_sample_groups,
+)
 
 # Import the new MCP-based landing page integration
 try:
@@ -239,8 +246,18 @@ if not default_dir:
 # absolute path on the server
 results_dir = st.sidebar.text_input(
     "Results directory",
-    value=default_dir
+    value=default_dir,
+    help="Folder containing UORCA RNAseqAnalysis results"
 )
+
+def _validate_results_dir(path: str) -> tuple[bool, str]:
+    """Simple validation for the user supplied results directory."""
+    if not os.path.isdir(path):
+        return False, "Directory does not exist"
+    for root, dirs, files in os.walk(path):
+        if "RNAseqAnalysis" in dirs or "DEG.csv" in files:
+            return True, ""
+    return False, "No RNAseqAnalysis data found"
 
 # expensive → cache resource (keeps the object alive for the whole session)
 @st.cache_resource
@@ -253,7 +270,13 @@ def get_integrator(path):
         return None, str(e)
 
 # Load the integrator (cached)
+valid_dir, validation_error = _validate_results_dir(results_dir)
+
 with st.sidebar.status("Loading data...", expanded=True) as status:
+    if not valid_dir:
+        status.update(label=f"Error: {validation_error}", state="error")
+        st.stop()
+
     ri, error = get_integrator(results_dir)
 
     if error:
@@ -1339,12 +1362,16 @@ if ri and ri.cpm_data:
                                     "create_lfc_heatmap",
                                     gene_selection,
                                     contrast_pairs,
-                                    None
+                                    None,
                                 )
                             else:
                                 # Apply dynamic filtering if enabled
-                                p_thresh = effective_pvalue_thresh if use_dynamic_filtering else None
-                                lfc_thresh_val = effective_lfc_thresh if use_dynamic_filtering else None
+                                p_thresh = (
+                                    effective_pvalue_thresh if use_dynamic_filtering else None
+                                )
+                                lfc_thresh_val = (
+                                    effective_lfc_thresh if use_dynamic_filtering else None
+                                )
 
                                 fig = ri.create_lfc_heatmap(
                                     genes=gene_selection,
@@ -1355,19 +1382,23 @@ if ri and ri.cpm_data:
                                     hide_empty_rows_cols=hide_empty_rows_cols,
                                     font_size=heatmap_font_size,
                                     show_grid_lines=show_grid_lines,
-                                    grid_opacity=grid_opacity
+                                    grid_opacity=grid_opacity,
                                 )
 
                             # Display settings are now handled in the create_lfc_heatmap function
                             if fig:
+                                # Add notes about functionality
                                 info_messages = [
                                     "💡 Hover over cells in the heatmap to see contrast descriptions and gene information."
                                 ]
+
                                 for msg in info_messages:
                                     st.info(msg)
                                 st.plotly_chart(fig, use_container_width=True)
                             else:
-                                st.error("Could not generate heatmap. Please check your selections.")
+                                st.error(
+                                    "Could not generate heatmap. Please check your selections."
+                                )
                         except Exception as e:
                             st.error(f"Error generating heatmap: {str(e)}")
 
@@ -1523,9 +1554,24 @@ if ri and ri.cpm_data:
                 # Display QC plots in a structured layout with tabs
                 plot_tabs = st.tabs(["Quality Overview", "Expression Filtering", "Normalization", "Variance Modeling"])
 
-                # Tab 1: Quality Overview (MDS plot)
+                # Tab 1: Quality Overview (interactive PCA plot replacing MDS)
                 with plot_tabs[0]:
-                    if os.path.exists(qc_plot_files["MDS Plot"]["file"]):
+                    pca_fig = None
+                    if ri and selected_dataset in ri.cpm_data:
+                        try:
+                            cpm_df = ri.cpm_data[selected_dataset]
+                            analysis_info = None
+                            if hasattr(ri, "analysis_info"):
+                                analysis_info = ri.analysis_info.get(selected_dataset)
+                            groups = load_sample_groups(ri.results_dir, selected_dataset, cpm_df, analysis_info)
+                            pca_fig = create_pca_plot(cpm_df, groups)
+                        except Exception:
+                            pca_fig = None
+                    if pca_fig is not None:
+                        st.plotly_chart(pca_fig, use_container_width=True)
+                        with st.expander("What does this plot mean?", expanded=True):
+                            st.markdown(qc_plot_files["MDS Plot"]["description"])
+                    elif os.path.exists(qc_plot_files["MDS Plot"]["file"]):
                         st.image(qc_plot_files["MDS Plot"]["file"])
                         with st.expander("What does this plot mean?", expanded=True):
                             st.markdown(qc_plot_files["MDS Plot"]["description"])
@@ -1625,7 +1671,23 @@ if ri and ri.cpm_data:
 
                         # Tab 1: Volcano Plot
                         with de_plot_tabs[0]:
-                            if os.path.exists(contrast_plot_files["Volcano Plot"]["file"]):
+                            volcano_fig = None
+                            if (
+                                ri
+                                and selected_dataset in ri.deg_data
+                                and selected_contrast in ri.deg_data[selected_dataset]
+                            ):
+                                try:
+                                    deg_df = ri.deg_data[selected_dataset][selected_contrast]
+                                    volcano_fig = create_volcano_plot(deg_df)
+                                except Exception:
+                                    volcano_fig = None
+
+                            if volcano_fig is not None:
+                                st.plotly_chart(volcano_fig, use_container_width=True)
+                                with st.expander("What does this plot mean?", expanded=True):
+                                    st.markdown(contrast_plot_files["Volcano Plot"]["description"])
+                            elif os.path.exists(contrast_plot_files["Volcano Plot"]["file"]):
                                 st.image(contrast_plot_files["Volcano Plot"]["file"])
                                 with st.expander("What does this plot mean?", expanded=True):
                                     st.markdown(contrast_plot_files["Volcano Plot"]["description"])
@@ -1634,7 +1696,23 @@ if ri and ri.cpm_data:
 
                         # Tab 2: MA Plot
                         with de_plot_tabs[1]:
-                            if os.path.exists(contrast_plot_files["MA Plot"]["file"]):
+                            ma_fig = None
+                            if (
+                                ri
+                                and selected_dataset in ri.deg_data
+                                and selected_contrast in ri.deg_data[selected_dataset]
+                            ):
+                                try:
+                                    deg_df = ri.deg_data[selected_dataset][selected_contrast]
+                                    ma_fig = create_ma_plot(deg_df)
+                                except Exception:
+                                    ma_fig = None
+
+                            if ma_fig is not None:
+                                st.plotly_chart(ma_fig, use_container_width=True)
+                                with st.expander("What does this plot mean?", expanded=True):
+                                    st.markdown(contrast_plot_files["MA Plot"]["description"])
+                            elif os.path.exists(contrast_plot_files["MA Plot"]["file"]):
                                 st.image(contrast_plot_files["MA Plot"]["file"])
                                 with st.expander("What does this plot mean?", expanded=True):
                                     st.markdown(contrast_plot_files["MA Plot"]["description"])
@@ -1643,7 +1721,29 @@ if ri and ri.cpm_data:
 
                         # Tab 3: Heatmap
                         with de_plot_tabs[2]:
-                            if os.path.exists(contrast_plot_files["Heatmap of Top DEGs"]["file"]):
+                            heatmap_fig = None
+                            if (
+                                ri
+                                and selected_dataset in ri.deg_data
+                                and selected_contrast in ri.deg_data[selected_dataset]
+                                and selected_dataset in ri.cpm_data
+                            ):
+                                try:
+                                    deg_df = ri.deg_data[selected_dataset][selected_contrast]
+                                    cpm_df = ri.cpm_data[selected_dataset]
+                                    analysis_info = None
+                                    if hasattr(ri, "analysis_info"):
+                                        analysis_info = ri.analysis_info.get(selected_dataset)
+                                    groups = load_sample_groups(ri.results_dir, selected_dataset, cpm_df, analysis_info)
+                                    heatmap_fig = create_deg_heatmap(cpm_df, deg_df, groups)
+                                except Exception:
+                                    heatmap_fig = None
+
+                            if heatmap_fig is not None:
+                                st.plotly_chart(heatmap_fig, use_container_width=True)
+                                with st.expander("What does this plot mean?", expanded=True):
+                                    st.markdown(contrast_plot_files["Heatmap of Top DEGs"]["description"])
+                            elif os.path.exists(contrast_plot_files["Heatmap of Top DEGs"]["file"]):
                                 st.image(contrast_plot_files["Heatmap of Top DEGs"]["file"])
                                 with st.expander("What does this plot mean?", expanded=True):
                                     st.markdown(contrast_plot_files["Heatmap of Top DEGs"]["description"])
