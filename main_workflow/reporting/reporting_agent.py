@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 
 class ReportingAgent:
     """Controller for the RNA-seq reporting agent."""
-    
-    def __init__(self, 
-                 results_dir: str, 
+
+    def __init__(self,
+                 results_dir: str,
                  model_name: str = "openai:gpt-4o-mini",
                  temperature: float = 0.1):
         """
         Initialize the reporting agent.
-        
+
         Args:
             results_dir: Path to UORCA results directory
             model_name: Model identifier (e.g., "openai:gpt-4o-mini", "ollama:llama3.3:latest")
@@ -54,10 +54,10 @@ class ReportingAgent:
         self.temperature = temperature
         self.servers = []
         self.agent = None
-        
+
         logger.info(f"Initialized ReportingAgent with results_dir: {self.results_dir}")
         logger.info(f"Using model: {self.model_name}")
-    
+
     def setup_servers(self) -> List:
         """Set up the MCP servers for data extraction and analysis."""
         try:
@@ -82,14 +82,14 @@ class ReportingAgent:
                 env_vars=env_vars,
             )
             self.servers.append(analysis_server)
-            
+
             logger.info(f"Successfully set up {len(self.servers)} MCP servers")
             return self.servers
-            
+
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
             raise
-    
+
     def _get_model_instance(self) -> Model:
         """Get the appropriate model instance based on model name."""
         if self.model_name.startswith("openai:"):
@@ -107,24 +107,24 @@ class ReportingAgent:
         else:
             # Default to OpenAI
             return f"openai:{self.model_name}"
-    
+
     def create_agent(self, research_question: str = None) -> Agent:
         """
         Create the agent with the specified research question.
-        
+
         Args:
             research_question: Optional specific research question to focus on
-            
+
         Returns:
             Configured Agent instance
         """
         # Set up servers if not already done
         if not self.servers:
             self.setup_servers()
-        
+
         # Get model instance
         model_instance = self._get_model_instance()
-        
+
         # Create the agent
         self.agent = Agent(
             model=model_instance,
@@ -132,10 +132,10 @@ class ReportingAgent:
             mcp_servers=self.servers,
             system=self._get_system_prompt(research_question)
         )
-        
+
         logger.info("Created agent with MCP servers and system prompt")
         return self.agent
-    
+
     def _get_system_prompt(self, research_question: str = None) -> str:
         """Generate the system prompt for the agent."""
         base_prompt = """You are an expert computational biologist specializing in RNA-seq data analysis and interpretation.
@@ -149,7 +149,7 @@ Your role is to help researchers understand their differential expression result
 You have access to MCP tools for data extraction and analysis:
 - list_available_contrasts: See all contrasts in the dataset
 - get_deg_counts: Get differential expression statistics for contrasts
-- find_common_degs: Find genes differentially expressed across multiple contrasts  
+- find_common_degs: Find genes differentially expressed across multiple contrasts
 - get_gene_info: Get detailed expression data for specific genes
 - rank_contrasts_by_relevance: Rank contrasts by relevance to research questions
 - analyze_gene_patterns: Analyze expression patterns across genes
@@ -160,19 +160,19 @@ Always provide data-driven insights backed by specific numbers and patterns from
         if research_question:
             base_prompt += f"\n\nCurrent research focus: '{research_question}'"
             base_prompt += "\n\nPrioritize findings and interpretations that directly address this research question."
-        
+
         return base_prompt
-    
+
     async def analyze_dataset_overview(self) -> Dict[str, Any]:
         """
         Generate an overview analysis of the entire dataset.
-        
+
         Returns:
             Dictionary containing overview analysis results
         """
         if not self.agent:
             self.create_agent()
-        
+
         prompt = """Please provide a comprehensive overview of this RNA-seq dataset:
 
 1. First, list all available contrasts using the list_available_contrasts tool
@@ -196,25 +196,25 @@ Focus on providing actionable insights that would help a researcher understand w
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
-    
-    async def analyze_research_question(self, 
+
+    async def analyze_research_question(self,
                                       research_question: str,
                                       max_contrasts: int = 10,
                                       max_genes: int = 50) -> Dict[str, Any]:
         """
         Analyze the dataset with a specific research question in mind.
-        
+
         Args:
             research_question: The biological question to investigate
             max_contrasts: Maximum number of contrasts to analyze
             max_genes: Maximum number of genes to report
-            
+
         Returns:
             Dictionary containing analysis results
         """
         # Create agent with research question focus
         self.create_agent(research_question)
-        
+
         prompt = f"""Analyze this RNA-seq dataset to address the research question: "{research_question}"
 
 Please follow this structured approach:
@@ -259,25 +259,25 @@ Be specific with numbers, gene names, and fold changes. Avoid generic statements
                 "research_question": research_question,
                 "timestamp": datetime.now().isoformat()
             }
-    
+
     async def find_biomarkers(self,
                             condition_keywords: List[str],
                             min_frequency: float = 0.8,
                             consistency_threshold: float = 0.9) -> Dict[str, Any]:
         """
         Find potential biomarker genes for specified conditions.
-        
+
         Args:
             condition_keywords: Keywords to identify relevant contrasts
             min_frequency: Minimum frequency of differential expression
             consistency_threshold: Minimum consistency in direction
-            
+
         Returns:
             Dictionary containing biomarker analysis
         """
         if not self.agent:
             self.create_agent()
-        
+
         keywords_str = ", ".join(condition_keywords)
         prompt = f"""Identify potential biomarker genes for conditions related to: {keywords_str}
 
@@ -315,27 +315,27 @@ Provide a ranked list of potential biomarkers with:
                 "condition_keywords": condition_keywords,
                 "timestamp": datetime.now().isoformat()
             }
-    
+
     async def generate_pathway_analysis(self,
                                       genes: List[str],
                                       research_context: str = None) -> Dict[str, Any]:
         """
         Generate pathway and network analysis for a set of genes.
-        
+
         Args:
             genes: List of genes to analyze
             research_context: Optional context for the analysis
-            
+
         Returns:
             Dictionary containing pathway analysis
         """
         if not self.agent:
             self.create_agent(research_context)
-        
+
         genes_str = ", ".join(genes[:20])  # Limit to first 20 for prompt
         if len(genes) > 20:
             genes_str += f" and {len(genes) - 20} more"
-        
+
         prompt = f"""Analyze potential pathways and networks for these genes: {genes_str}
 
 1. Use analyze_gene_patterns to understand how these genes behave together
@@ -370,23 +370,23 @@ Provide insights on:
                 "genes_analyzed": len(genes),
                 "timestamp": datetime.now().isoformat()
             }
-    
+
     async def compare_conditions(self,
                                condition1_keywords: List[str],
                                condition2_keywords: List[str]) -> Dict[str, Any]:
         """
         Compare gene expression between two conditions.
-        
+
         Args:
             condition1_keywords: Keywords for first condition
             condition2_keywords: Keywords for second condition
-            
+
         Returns:
             Dictionary containing comparison analysis
         """
         if not self.agent:
             self.create_agent()
-        
+
         prompt = f"""Compare gene expression between two conditions:
 Condition 1: {', '.join(condition1_keywords)}
 Condition 2: {', '.join(condition2_keywords)}
@@ -394,7 +394,7 @@ Condition 2: {', '.join(condition2_keywords)}
 1. Identify contrasts relevant to each condition
 2. Find genes that are:
    - Uniquely changed in condition 1
-   - Uniquely changed in condition 2  
+   - Uniquely changed in condition 2
    - Changed in both but in opposite directions
    - Changed in both in the same direction
 
@@ -421,7 +421,7 @@ Provide a clear comparison with specific genes and pathways that distinguish the
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
-    
+
     def cleanup(self):
         """Clean up resources and close MCP servers."""
         for server in self.servers:
@@ -430,24 +430,24 @@ Provide a clear comparison with specific genes and pathways that distinguish the
                 server.terminate()
             except Exception as e:
                 logger.warning(f"Error cleaning up server: {e}")
-        
+
         self.servers = []
         self.agent = None
         logger.info("Cleaned up reporting agent resources")
 
 
 # Convenience functions for common analyses
-async def quick_analysis(results_dir: str, 
+async def quick_analysis(results_dir: str,
                         research_question: str,
                         model: str = "openai:gpt-4o-mini") -> Dict[str, Any]:
     """
     Perform a quick analysis of RNA-seq data for a research question.
-    
+
     Args:
         results_dir: Path to UORCA results
         research_question: The research question to investigate
         model: Model to use for analysis
-        
+
     Returns:
         Analysis results dictionary
     """
@@ -456,7 +456,7 @@ async def quick_analysis(results_dir: str,
         return await agent.analyze_research_question(research_question)
     finally:
         try:
-            agent.cleanup()
+            agent.terminate()
         except Exception as e:
             logger.warning(f"Error during quick_analysis cleanup: {e}")
 
@@ -465,11 +465,11 @@ async def dataset_summary(results_dir: str,
                          model: str = "openai:gpt-4o-mini") -> Dict[str, Any]:
     """
     Generate a summary overview of an RNA-seq dataset.
-    
+
     Args:
         results_dir: Path to UORCA results
         model: Model to use for analysis
-        
+
     Returns:
         Dataset overview dictionary
     """
@@ -478,7 +478,7 @@ async def dataset_summary(results_dir: str,
         return await agent.analyze_dataset_overview()
     finally:
         try:
-            agent.cleanup()
+            agent.terminate()
         except Exception as e:
             logger.warning(f"Error during dataset_summary cleanup: {e}")
 
@@ -486,15 +486,15 @@ async def dataset_summary(results_dir: str,
 if __name__ == "__main__":
     # Example usage
     import asyncio
-    
+
     async def main():
         results_dir = os.environ.get("UORCA_RESULTS", "./UORCA_results")
-        
+
         # Example 1: Dataset overview
         print("Generating dataset overview...")
         overview = await dataset_summary(results_dir)
         print(json.dumps(overview, indent=2))
-        
+
         # Example 2: Research question analysis
         print("\nAnalyzing specific research question...")
         analysis = await quick_analysis(
@@ -502,5 +502,5 @@ if __name__ == "__main__":
             "What genes are involved in the inflammatory response?"
         )
         print(json.dumps(analysis, indent=2))
-    
+
     asyncio.run(main())
