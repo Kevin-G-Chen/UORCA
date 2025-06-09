@@ -1,6 +1,8 @@
 import os
 from typing import Optional, Dict
 
+import logging
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -9,6 +11,8 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from scipy.cluster.hierarchy import linkage, leaves_list
 from scipy.spatial.distance import pdist
+
+logger = logging.getLogger(__name__)
 
 
 def load_deg(path: str) -> pd.DataFrame:
@@ -156,16 +160,32 @@ def create_deg_heatmap(
     top_n: int = 50,
 ) -> go.Figure:
     """Interactive heatmap of logCPM values for the top N DE genes."""
-    top_genes = deg.sort_values(p_col).head(top_n)["Gene"]
-    heat_df = cpm.loc[top_genes]
+    logger.debug(
+        "Creating DEG heatmap using p-value column '%s' with top_n=%s",
+        p_col,
+        top_n,
+    )
+
+    top_genes = deg.sort_values(p_col).head(top_n)["Gene"].tolist()
+    logger.debug("Top genes selected: %s", top_genes)
+
+    genes_in_cpm = [g for g in top_genes if g in cpm.index]
+    missing = set(top_genes) - set(genes_in_cpm)
+    if missing:
+        logger.debug("%d genes missing from CPM data: %s", len(missing), list(missing))
+
+    heat_df = cpm.loc[genes_in_cpm]
+    logger.debug("Heatmap dataframe shape before clustering: %s", heat_df.shape)
 
     # Cluster genes and samples for improved visualization
     if heat_df.shape[0] > 1:
         gene_order = leaves_list(linkage(pdist(heat_df), method="average"))
         heat_df = heat_df.iloc[gene_order]
+        logger.debug("Gene clustering order: %s", gene_order)
     if heat_df.shape[1] > 1:
         sample_order = leaves_list(linkage(pdist(heat_df.T), method="average"))
         heat_df = heat_df.iloc[:, sample_order]
+        logger.debug("Sample clustering order: %s", sample_order)
 
     fig = px.imshow(
         heat_df,
@@ -176,10 +196,12 @@ def create_deg_heatmap(
         aspect="auto",
     )
     if group_labels is not None:
+        labels = group_labels.reindex(heat_df.columns)
         fig.update_xaxes(
-            ticktext=group_labels.loc[heat_df.columns].values,
+            ticktext=labels.fillna(heat_df.columns).values,
             tickvals=list(range(len(heat_df.columns))),
         )
+        logger.debug("Applied group labels to heatmap x-axis")
     fig.update_layout(xaxis_title="Sample", yaxis_title="Gene")
     return fig
 
