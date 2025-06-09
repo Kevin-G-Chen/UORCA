@@ -51,7 +51,7 @@ def cleanup_mcp_servers():
             import streamlit as st
             if not hasattr(st, 'session_state'):
                 return
-            
+
             if hasattr(st.session_state, 'mcp_manager') and st.session_state.mcp_manager:
                 manager = st.session_state.mcp_manager
             else:
@@ -59,7 +59,7 @@ def cleanup_mcp_servers():
         except (ImportError, AttributeError, RuntimeError):
             # Streamlit might not be available at exit or session_state might not be accessible
             return
-        
+
         # Cleanup the manager
         try:
             import asyncio
@@ -76,7 +76,7 @@ def cleanup_mcp_servers():
             print(f"Error during manager cleanup: {cleanup_error}")
             import traceback
             print(f"Cleanup traceback: {traceback.format_exc()}")
-            
+
     except Exception as e:
         # Final fallback - use print since logging might not be available
         print(f"Error cleaning up MCP servers on session end: {e}")
@@ -360,7 +360,7 @@ with st.sidebar.status("Loading data...", expanded=True) as status:
                     def update_progress(progress, message):
                         # Simple progress callback for auto-analysis
                         pass
-                    
+
                     auto_result = asyncio.run(auto_analyze_on_load(ri, progress_callback=update_progress))
 
                     if auto_result and auto_result.get("success"):
@@ -940,12 +940,12 @@ if ri and ri.cpm_data:
                 except Exception as e:
                     logger.error(f"Error generating landing page: {str(e)}", exc_info=True)
                     st.error(f"❌ Error generating landing page: {str(e)}")
-                    
+
                     # Show detailed error in expander for debugging
                     with st.expander("🔍 Technical Details (for debugging)", expanded=False):
                         import traceback
                         st.code(traceback.format_exc())
-                    
+
                     if "api" in str(e).lower() or "key" in str(e).lower():
                         st.info("💡 Make sure your OpenAI API key is set: `export OPENAI_API_KEY=your_key`")
                     elif "mcp" in str(e).lower():
@@ -1335,7 +1335,7 @@ if ri and ri.cpm_data:
                         except Exception as e:
                             logger.error(f"Error generating heatmap: {str(e)}", exc_info=True)
                             st.error(f"Error generating heatmap: {str(e)}")
-                            
+
                             # Show detailed error for debugging
                             with st.expander("🔍 Heatmap Error Details", expanded=False):
                                 import traceback
@@ -1399,7 +1399,7 @@ if ri and ri.cpm_data:
                         except Exception as e:
                             logger.error(f"Error generating manual heatmap: {str(e)}", exc_info=True)
                             st.error(f"Error generating heatmap: {str(e)}")
-                            
+
                             # Show detailed error for debugging
                             with st.expander("🔍 Manual Heatmap Error Details", expanded=False):
                                 import traceback
@@ -1505,7 +1505,7 @@ if ri and ri.cpm_data:
                         except Exception as e:
                             logger.error(f"Error generating expression plots: {str(e)}", exc_info=True)
                             st.error(f"Error generating expression plots: {str(e)}")
-                            
+
                             # Show detailed error for debugging
                             with st.expander("🔍 Expression Plot Error Details", expanded=False):
                                 import traceback
@@ -1535,6 +1535,19 @@ if ri and ri.cpm_data:
             if not selected_dataset:
                 st.info("Please select a dataset to view RNA-seq analysis plots.")
                 return
+
+            # Load sample groups for the selected dataset
+            groups = None
+            if selected_dataset in ri.cpm_data:
+                try:
+                    cpm_df = ri.cpm_data[selected_dataset]
+                    analysis_info = None
+                    if hasattr(ri, "analysis_info"):
+                        analysis_info = ri.analysis_info.get(selected_dataset)
+                    groups = load_sample_groups(ri.results_dir, selected_dataset, cpm_df, analysis_info)
+                except Exception as e:
+                    logger.warning(f"Could not load sample groups for {selected_dataset}: {e}")
+                    groups = None
 
             # Now handle the plot display for the selected dataset
             # Find QC plots for this dataset
@@ -1569,10 +1582,6 @@ if ri and ri.cpm_data:
                     if ri and selected_dataset in ri.cpm_data:
                         try:
                             cpm_df = ri.cpm_data[selected_dataset]
-                            analysis_info = None
-                            if hasattr(ri, "analysis_info"):
-                                analysis_info = ri.analysis_info.get(selected_dataset)
-                            groups = load_sample_groups(ri.results_dir, selected_dataset, cpm_df, analysis_info)
                             pca_fig = create_pca_plot(cpm_df, groups)
                         except Exception:
                             pca_fig = None
@@ -1740,12 +1749,9 @@ if ri and ri.cpm_data:
                                 try:
                                     deg_df = ri.deg_data[selected_dataset][selected_contrast]
                                     cpm_df = ri.cpm_data[selected_dataset]
-                                    analysis_info = None
-                                    if hasattr(ri, "analysis_info"):
-                                        analysis_info = ri.analysis_info.get(selected_dataset)
-                                    groups = load_sample_groups(ri.results_dir, selected_dataset, cpm_df, analysis_info)
                                     heatmap_fig = create_deg_heatmap(cpm_df, deg_df, groups)
-                                except Exception:
+                                except Exception as e:
+                                    st.warning(f"Error creating interactive DEG heatmap: {e}")
                                     heatmap_fig = None
 
                             if heatmap_fig is not None:
@@ -1753,6 +1759,7 @@ if ri and ri.cpm_data:
                                 with st.expander("What does this plot mean?", expanded=True):
                                     st.markdown(contrast_plot_files["Heatmap of Top DEGs"]["description"])
                             elif os.path.exists(contrast_plot_files["Heatmap of Top DEGs"]["file"]):
+                                st.warning("Interactive heatmap unavailable; attempting to load static image as fallback.")
                                 st.image(contrast_plot_files["Heatmap of Top DEGs"]["file"])
                                 with st.expander("What does this plot mean?", expanded=True):
                                     st.markdown(contrast_plot_files["Heatmap of Top DEGs"]["description"])
