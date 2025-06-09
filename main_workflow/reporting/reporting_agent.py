@@ -190,7 +190,7 @@ Focus on providing actionable insights that would help a researcher understand w
                 "timestamp": datetime.now().isoformat()
             }
         except Exception as e:
-            logger.error(f"Error in analyze_dataset_overview: {e}")
+            logger.error(f"Error in analyze_dataset_overview: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e),
@@ -252,7 +252,7 @@ Be specific with numbers, gene names, and fold changes. Avoid generic statements
                 "timestamp": datetime.now().isoformat()
             }
         except Exception as e:
-            logger.error(f"Error in analyze_research_question: {e}")
+            logger.error(f"Error in analyze_research_question: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e),
@@ -308,7 +308,7 @@ Provide a ranked list of potential biomarkers with:
                 "timestamp": datetime.now().isoformat()
             }
         except Exception as e:
-            logger.error(f"Error in find_biomarkers: {e}")
+            logger.error(f"Error in find_biomarkers: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e),
@@ -363,7 +363,7 @@ Provide insights on:
                 "timestamp": datetime.now().isoformat()
             }
         except Exception as e:
-            logger.error(f"Error in generate_pathway_analysis: {e}")
+            logger.error(f"Error in generate_pathway_analysis: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e),
@@ -415,21 +415,21 @@ Provide a clear comparison with specific genes and pathways that distinguish the
                 "timestamp": datetime.now().isoformat()
             }
         except Exception as e:
-            logger.error(f"Error in compare_conditions: {e}")
+            logger.error(f"Error in compare_conditions: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e),
                 "timestamp": datetime.now().isoformat()
             }
 
-    def cleanup(self):
+    async def cleanup(self):
         """Clean up resources and close MCP servers."""
         for server in self.servers:
             try:
-                # MCPServerStdio uses terminate() to kill the subprocess
-                server.terminate()
+                # MCPServerStdio uses cleanup() to terminate the subprocess
+                await server.cleanup()
             except Exception as e:
-                logger.warning(f"Error cleaning up server: {e}")
+                logger.warning(f"Error cleaning up server: {e}", exc_info=True)
 
         self.servers = []
         self.agent = None
@@ -458,7 +458,7 @@ async def quick_analysis(results_dir: str,
         try:
             agent.terminate()
         except Exception as e:
-            logger.warning(f"Error during quick_analysis cleanup: {e}")
+            logger.warning(f"Error during quick_analysis cleanup: {e}", exc_info=True)
 
 
 async def dataset_summary(results_dir: str,
@@ -480,7 +480,7 @@ async def dataset_summary(results_dir: str,
         try:
             agent.terminate()
         except Exception as e:
-            logger.warning(f"Error during dataset_summary cleanup: {e}")
+            logger.warning(f"Error during dataset_summary cleanup: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
