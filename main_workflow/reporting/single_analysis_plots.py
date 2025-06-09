@@ -7,6 +7,8 @@ import plotly.graph_objects as go
 import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from scipy.cluster.hierarchy import linkage, leaves_list
+from scipy.spatial.distance import pdist
 
 
 def load_deg(path: str) -> pd.DataFrame:
@@ -72,52 +74,117 @@ def load_sample_groups(results_dir: str, analysis_id: str, cpm_df: pd.DataFrame,
     return pd.Series({c: c for c in sample_cols})
 
 
-def create_volcano_plot(deg: pd.DataFrame,
-                        lfc_col: str = "logFC",
-                        p_col: str = "adj.P.Val",
-                        lfc_thresh: float = 1.0,
-                        p_thresh: float = 0.05) -> go.Figure:
+def create_volcano_plot(
+    deg: pd.DataFrame,
+    lfc_col: str = "logFC",
+    p_col: str = "adj.P.Val",
+    lfc_thresh: float = 1.0,
+    p_thresh: float = 0.05,
+) -> go.Figure:
     """Create an interactive volcano plot."""
     df = deg.dropna(subset=[lfc_col, p_col]).copy()
     df["minus_log10_p"] = -np.log10(df[p_col])
-    df["significant"] = (df[p_col] < p_thresh) & (df[lfc_col].abs() > lfc_thresh)
-    fig = px.scatter(df, x=lfc_col, y="minus_log10_p", color="significant",
-                     hover_name="Gene", color_discrete_map={True: "red", False: "gray"})
-    fig.update_layout(xaxis_title="log2 fold change",
-                      yaxis_title="-log10(p value)",
-                      legend_title="Significant")
+
+    # Categorize genes by significance and direction of change
+    conditions = [
+        (df[p_col] < p_thresh) & (df[lfc_col] > lfc_thresh),
+        (df[p_col] < p_thresh) & (df[lfc_col] < -lfc_thresh),
+    ]
+    choices = ["Up", "Down"]
+    df["category"] = np.select(conditions, choices, default="Not significant")
+
+    fig = px.scatter(
+        df,
+        x=lfc_col,
+        y="minus_log10_p",
+        color="category",
+        hover_name="Gene",
+        hover_data={p_col: True, "minus_log10_p": False},
+        color_discrete_map={
+            "Up": "red",
+            "Down": "blue",
+            "Not significant": "gray",
+        },
+    )
+    fig.update_layout(
+        xaxis_title="log2 fold change",
+        yaxis_title="-log10(p value)",
+        legend_title="Gene category",
+    )
     return fig
 
 
-def create_ma_plot(deg: pd.DataFrame,
-                   avg_col: str = "AveExpr",
-                   lfc_col: str = "logFC",
-                   p_col: str = "adj.P.Val",
-                   lfc_thresh: float = 1.0,
-                   p_thresh: float = 0.05) -> go.Figure:
+def create_ma_plot(
+    deg: pd.DataFrame,
+    avg_col: str = "AveExpr",
+    lfc_col: str = "logFC",
+    p_col: str = "adj.P.Val",
+    lfc_thresh: float = 1.0,
+    p_thresh: float = 0.05,
+) -> go.Figure:
     """Create an interactive MA plot."""
     df = deg.dropna(subset=[avg_col, lfc_col, p_col]).copy()
-    df["significant"] = (df[p_col] < p_thresh) & (df[lfc_col].abs() > lfc_thresh)
-    fig = px.scatter(df, x=avg_col, y=lfc_col, color="significant",
-                     hover_name="Gene", color_discrete_map={True: "red", False: "gray"})
-    fig.update_layout(xaxis_title="Average log2 expression",
-                      yaxis_title="log2 fold change",
-                      legend_title="Significant")
+
+    conditions = [
+        (df[p_col] < p_thresh) & (df[lfc_col] > lfc_thresh),
+        (df[p_col] < p_thresh) & (df[lfc_col] < -lfc_thresh),
+    ]
+    choices = ["Up", "Down"]
+    df["category"] = np.select(conditions, choices, default="Not significant")
+
+    fig = px.scatter(
+        df,
+        x=avg_col,
+        y=lfc_col,
+        color="category",
+        hover_name="Gene",
+        color_discrete_map={"Up": "red", "Down": "blue", "Not significant": "gray"},
+    )
+    fig.update_layout(
+        xaxis_title="Average log2 expression",
+        yaxis_title="log2 fold change",
+        legend_title="Gene category",
+    )
     return fig
 
 
-def create_deg_heatmap(cpm: pd.DataFrame, deg: pd.DataFrame,
-                       group_labels: Optional[pd.Series] = None,
-                       p_col: str = "adj.P.Val", top_n: int = 50) -> go.Figure:
-    """Heatmap of logCPM values for the top N DE genes."""
-    top_genes = deg.sort_values(p_col).head(top_n)["Gene"]
+def create_deg_heatmap(
+    cpm: pd.DataFrame,
+    deg: pd.DataFrame,
+    group_labels: Optional[pd.Series] = None,
+    p_col: str = "adj.P.Val",
+    top_n: int = 50,
+) -> go.Figure:
+    """Interactive heatmap of logCPM values for the top N DE genes."""
+    gene_col = "Gene" if "Gene" in deg.columns else deg.columns[0]
+    top_gene_list = deg.sort_values(p_col).head(top_n)[gene_col].dropna().tolist()
+    top_genes = [g for g in top_gene_list if g in cpm.index]
+    if not top_genes:
+        raise ValueError("No overlapping genes found for heatmap")
     heat_df = cpm.loc[top_genes]
-    fig = px.imshow(heat_df, labels={"x": "Sample", "y": "Gene", "color": "log2 CPM"},
-                    zmin=heat_df.values.min(), zmax=heat_df.values.max(),
-                    color_continuous_scale="RdBu_r")
+
+    # Cluster genes and samples for improved visualization
+    if heat_df.shape[0] > 1:
+        gene_order = leaves_list(linkage(pdist(heat_df), method="average"))
+        heat_df = heat_df.iloc[gene_order]
+    if heat_df.shape[1] > 1:
+        sample_order = leaves_list(linkage(pdist(heat_df.T), method="average"))
+        heat_df = heat_df.iloc[:, sample_order]
+
+    fig = px.imshow(
+        heat_df,
+        labels={"x": "Sample", "y": "Gene", "color": "log2CPM"},
+        zmin=heat_df.values.min(),
+        zmax=heat_df.values.max(),
+        color_continuous_scale="RdBu_r",
+        aspect="auto",
+    )
     if group_labels is not None:
-        fig.update_xaxes(ticktext=group_labels.loc[heat_df.columns].values,
-                         tickvals=list(range(len(heat_df.columns))))
+        fig.update_xaxes(
+            ticktext=group_labels.loc[heat_df.columns].values,
+            tickvals=list(range(len(heat_df.columns))),
+        )
+    fig.update_layout(xaxis_title="Sample", yaxis_title="Gene")
     return fig
 
 

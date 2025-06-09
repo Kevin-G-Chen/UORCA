@@ -1743,10 +1743,24 @@ if ri and ri.cpm_data:
                                     analysis_info = None
                                     if hasattr(ri, "analysis_info"):
                                         analysis_info = ri.analysis_info.get(selected_dataset)
-                                    groups = load_sample_groups(ri.results_dir, selected_dataset, cpm_df, analysis_info)
+                                    groups = load_sample_groups(
+                                        ri.results_dir,
+                                        selected_dataset,
+                                        cpm_df,
+                                        analysis_info,
+                                    )
                                     heatmap_fig = create_deg_heatmap(cpm_df, deg_df, groups)
-                                except Exception:
+                                except Exception as e:
                                     heatmap_fig = None
+                                    logger.error(
+                                        f"Error creating contrast heatmap: {e}", exc_info=True
+                                    )
+                                    st.warning(
+                                        f"Debug: failed to create interactive heatmap: {e}"
+                                    )
+                                    with st.expander("Heatmap Debug Details", expanded=False):
+                                        import traceback
+                                        st.code(traceback.format_exc())
 
                             if heatmap_fig is not None:
                                 st.plotly_chart(heatmap_fig, use_container_width=True)
