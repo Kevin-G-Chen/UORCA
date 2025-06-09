@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-import tomllib
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    import tomli as tomllib  # Python 3.9-3.10 fallback
 from typing import Mapping, Optional
 
 from pydantic_ai.mcp import MCPServerStdio

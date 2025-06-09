@@ -16,6 +16,7 @@ Or with custom port:
 
 import os
 import streamlit as st
+import asyncio
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -40,6 +41,53 @@ class ModuleFilter(logging.Filter):
     def filter(self, record):
         return any(record.name.startswith(n) for n in self.names)
 
+import atexit
+
+def cleanup_mcp_servers():
+    """Cleanup MCP servers when Streamlit session ends."""
+    try:
+        # Check if streamlit session_state is available
+        try:
+            import streamlit as st
+            if not hasattr(st, 'session_state'):
+                return
+            
+            if hasattr(st.session_state, 'mcp_manager') and st.session_state.mcp_manager:
+                manager = st.session_state.mcp_manager
+            else:
+                return
+        except (ImportError, AttributeError, RuntimeError):
+            # Streamlit might not be available at exit or session_state might not be accessible
+            return
+        
+        # Cleanup the manager
+        try:
+            import asyncio
+            # Run cleanup in a new event loop since this might be called at shutdown
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(manager.cleanup())
+                loop.close()
+                print("Cleaned up MCP servers on session end")  # Use print instead of logger at exit
+            except Exception as loop_error:
+                print(f"Error in cleanup event loop: {loop_error}")
+        except Exception as cleanup_error:
+            print(f"Error during manager cleanup: {cleanup_error}")
+            import traceback
+            print(f"Cleanup traceback: {traceback.format_exc()}")
+            
+    except Exception as e:
+        # Final fallback - use print since logging might not be available
+        print(f"Error cleaning up MCP servers on session end: {e}")
+        import traceback
+        print(f"Final cleanup traceback: {traceback.format_exc()}")
+
+# Register cleanup function
+atexit.register(cleanup_mcp_servers)
+
+
+
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
@@ -53,6 +101,7 @@ try:
 except ImportError:
     # dotenv not available, continue without it
     pass
+logger = logging.getLogger(__name__)
 
 # Use current directory to import ResultsIntegration
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -131,7 +180,6 @@ if not MCP_LANDING_PAGE_AVAILABLE:
         top_genes: List[str]
         heatmap_fig: Optional[go.Figure]
         gene_table: pd.DataFrame
-        narrative: str
 
     # Fallback function if MCP integration not available
     def generate_ai_landing_page(integrator, biological_prompt: str, max_genes: int = 50) -> Optional[LandingPageData]:
@@ -303,20 +351,27 @@ with st.sidebar.status("Loading data...", expanded=True) as status:
             st.session_state.auto_analysis_result = None
 
         # Trigger auto-analysis if not done yet and MCP is available
-        if (not st.session_state.get('auto_analysis_complete', False) and
-            MCP_LANDING_PAGE_AVAILABLE and
-            bool(os.getenv("OPENAI_API_KEY"))):
-            with st.spinner("🤖 Automatically analyzing your dataset..."):
+        if (not st.session_state.get("auto_analysis_complete", False)
+            and MCP_LANDING_PAGE_AVAILABLE
+            and bool(os.getenv("OPENAI_API_KEY"))):
+
+            with st.spinner("🤖 Automatically analyzing your dataset…"):
                 try:
-                    auto_result = auto_analyze_on_load(ri)
-                    if auto_result and auto_result.get('success'):
+                    def update_progress(progress, message):
+                        # Simple progress callback for auto-analysis
+                        pass
+                    
+                    auto_result = asyncio.run(auto_analyze_on_load(ri, progress_callback=update_progress))
+
+                    if auto_result and auto_result.get("success"):
                         st.session_state.auto_analysis_result = auto_result
-                        st.session_state.auto_analysis_complete = True
                         st.success("✅ Initial analysis complete! Check the AI Summary tab.")
+
                 except Exception as e:
-                    logger = logging.getLogger(__name__)
-                    logger.warning(f"Auto-analysis failed: {e}")
-                    st.session_state.auto_analysis_complete = True  # Mark as complete to avoid retrying
+                    logger.error(f"Auto-analysis failed: {e}", exc_info=True)
+                finally:
+                    # mark it done so we don’t retry on every rerun
+                    st.session_state.auto_analysis_complete = True
 
 # Show AI landing page availability status
 api_key_available = bool(os.getenv("OPENAI_API_KEY"))
@@ -845,12 +900,32 @@ if ri and ri.cpm_data:
                         progress_bar.progress(progress)
                         progress_text.text(f"🔄 {message}")
 
-                    # Generate landing page data using MCP-based system
-                    landing_data = generate_ai_landing_page(
-                        integrator=ri,
-                        biological_prompt=biological_prompt,
-                        max_genes=50
-                    )
+                    # Check if we have existing MCP servers, if not create them
+                    initialization_success = True
+                    if 'mcp_manager' not in st.session_state:
+                        # First time - this should have been created by auto_analyze_on_load
+                        # but create as fallback
+                        try:
+                            temp_result = asyncio.run(auto_analyze_on_load(ri, update_progress))
+                            if not temp_result or not temp_result.get('success'):
+                                st.error("Failed to initialize AI services")
+                                initialization_success = False
+                        except Exception as init_error:
+                            st.error(f"Error initializing AI services: {str(init_error)}")
+                            initialization_success = False
+
+                    # Generate landing page data using MCP-based system only if initialization succeeded
+                    landing_data = None
+                    if initialization_success:
+                        try:
+                            landing_data = generate_ai_landing_page(
+                                integrator=ri,
+                                biological_prompt=biological_prompt,
+                                max_genes=50
+                            )
+                        except Exception as gen_error:
+                            st.error(f"Error generating AI landing page: {str(gen_error)}")
+                            landing_data = None
 
                     # Clear progress indicators
                     progress_bar.empty()
@@ -863,7 +938,14 @@ if ri and ri.cpm_data:
                         st.error("❌ Failed to generate landing page - no suitable data found.")
 
                 except Exception as e:
+                    logger.error(f"Error generating landing page: {str(e)}", exc_info=True)
                     st.error(f"❌ Error generating landing page: {str(e)}")
+                    
+                    # Show detailed error in expander for debugging
+                    with st.expander("🔍 Technical Details (for debugging)", expanded=False):
+                        import traceback
+                        st.code(traceback.format_exc())
+                    
                     if "api" in str(e).lower() or "key" in str(e).lower():
                         st.info("💡 Make sure your OpenAI API key is set: `export OPENAI_API_KEY=your_key`")
                     elif "mcp" in str(e).lower():
@@ -884,193 +966,93 @@ if ri and ri.cpm_data:
 
             st.success("✅ AI landing page generated successfully!")
 
-            # Create a toggle for layout preference
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.markdown("### 📝 AI-Generated Key Findings")
-            with col2:
-                layout_mode = st.selectbox(
-                    "Layout:",
-                    ["Side-by-side", "Stacked"],
-                    index=0,
-                    help="Choose how to display the narrative and heatmap"
+            # Display key results in tabs
+            landing_tab1, landing_tab2, landing_tab3 = st.tabs(["🔍 AI-Selected Contrasts", "🧬 Top Genes", "🌡️ Expression Heatmap"])
+
+            with landing_tab1:
+                st.markdown("#### Contrasts Selected by AI with Justifications")
+
+                # Create contrast DataFrame
+                contrast_df = pd.DataFrame([
+                    {
+                        "Dataset": c.analysis_id,
+                        "Contrast": c.contrast_id,
+                        "Relevance Score": f"{c.relevance_score:.1f}",
+                        "DEG Count": c.deg_count,
+                        "AI Justification": c.justification
+                    }
+                    for c in landing_data.selected_contrasts
+                ])
+
+                st.dataframe(
+                    contrast_df,
+                    use_container_width=True,
+                    column_config={
+                        "AI Justification": st.column_config.TextColumn(
+                            "AI Justification",
+                            width="large"
+                        ),
+                        "Relevance Score": st.column_config.TextColumn("Relevance Score", width="small"),
+                        "DEG Count": st.column_config.NumberColumn("DEG Count", width="small")
+                    }
                 )
 
-            if layout_mode == "Side-by-side":
-                # Side-by-side layout
-                narrative_col, heatmap_col = st.columns([1, 1.2])  # Give heatmap slightly more space
+            with landing_tab2:
+                st.markdown("#### Top Differentially Expressed Genes")
 
-                with narrative_col:
-                    st.markdown(f"""
-                    <div style="background: #e8f4fd; padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid #3498db; margin: 1rem 0; height: 600px; overflow-y: auto;">
-                    {landing_data.narrative}
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    # Add collapsible sections for additional info
-                    with st.expander("🔍 AI-Selected Contrasts", expanded=False):
-                        contrast_df = pd.DataFrame([
-                            {
-                                "Dataset": c.analysis_id,
-                                "Contrast": c.contrast_id,
-                                "Relevance Score": f"{c.relevance_score:.1f}",
-                                "DEG Count": c.deg_count,
-                                "AI Justification": c.justification
-                            }
-                            for c in landing_data.selected_contrasts
-                        ])
-                        st.dataframe(
-                            contrast_df,
-                            use_container_width=True,
-                            column_config={
-                                "AI Justification": st.column_config.TextColumn(
-                                    "AI Justification",
-                                    width="large"
-                                ),
-                                "Relevance Score": st.column_config.TextColumn("Relevance Score", width="small"),
-                                "DEG Count": st.column_config.NumberColumn("DEG Count", width="small")
-                            }
-                        )
-
-                    with st.expander("🧬 Top Genes Table", expanded=False):
-                        if not landing_data.gene_table.empty:
-                            st.dataframe(
-                                landing_data.gene_table,
-                                use_container_width=True,
-                                column_config={
-                                    "Gene": st.column_config.TextColumn("Gene Symbol", width="medium"),
-                                    "Median LogFC": st.column_config.NumberColumn("Median Log2FC", format="%.2f", help="Median log2 fold change across contrasts"),
-                                    "Direction": st.column_config.TextColumn("↑/↓ Pattern", help="Up/down regulation pattern across contrasts"),
-                                    "Significant in": st.column_config.TextColumn("Significant in", help="Number of contrasts where gene was significant")
-                                }
-                            )
-                        else:
-                            st.info("No genes met the AI-selected significance criteria.")
-
-                    # Gene list for easy copying (moved outside to avoid nested expanders)
-                    if not landing_data.gene_table.empty:
-                        with st.expander("📋 Gene List (for external tools)", expanded=False):
-                            gene_list_text = '\n'.join(landing_data.top_genes)
-                            st.text_area(
-                                "Copy gene symbols:",
-                                value=gene_list_text,
-                                height=150,
-                                help="Gene symbols, one per line. Copy and paste into other tools like DAVID, Enrichr, etc."
-                            )
-
-                with heatmap_col:
-                    st.markdown("#### 🌡️ Expression Heatmap")
-
-                    # Add height control
-                    with st.expander("🎛️ Heatmap Settings", expanded=False):
-                        heatmap_height = st.slider(
-                            "Heatmap height (pixels)",
-                            min_value=400,
-                            max_value=1500,
-                            value=max(500, min(1200, len(landing_data.top_genes) * 28)),
-                            step=50,
-                            help="Adjust height to better see gene labels"
-                        )
-
-                    if landing_data.heatmap_fig:
-                        # Update the figure height
-                        updated_fig = landing_data.heatmap_fig
-                        updated_fig.update_layout(height=heatmap_height)
-                        st.plotly_chart(updated_fig, use_container_width=True)
-
-                        st.markdown("""
-                        💡 **How to interpret this heatmap:**
-                        - Each row represents a gene, each column represents a biological contrast
-                        - Colors indicate log2 fold change: red (upregulated), blue (downregulated), white (not significant)
-                        - Hover over cells to see detailed information including contrast descriptions
-                        - Genes and contrasts are automatically clustered to reveal biological patterns
-                        """)
-                    else:
-                        st.warning("Could not generate heatmap.")
-
-            else:
-                # Original stacked layout
-                st.markdown(f"""
-                <div style="background: #e8f4fd; padding: 1.5rem; border-radius: 0.5rem; border-left: 4px solid #3498db; margin: 1rem 0;">
-                {landing_data.narrative}
-                </div>
-                """, unsafe_allow_html=True)
-
-                # Tabbed results view
-                landing_tab1, landing_tab2, landing_tab3 = st.tabs(["🔍 AI-Selected Contrasts", "🧬 Top Genes", "🌡️ Expression Heatmap"])
-
-                with landing_tab1:
-                    st.markdown("#### Contrasts Selected by AI with Justifications")
-
-                    # Create contrast DataFrame
-                    contrast_df = pd.DataFrame([
-                        {
-                            "Dataset": c.analysis_id,
-                            "Contrast": c.contrast_id,
-                            "Relevance Score": f"{c.relevance_score:.1f}",
-                            "DEG Count": c.deg_count,
-                            "AI Justification": c.justification
-                        }
-                        for c in landing_data.selected_contrasts
-                    ])
-
+                if not landing_data.gene_table.empty:
                     st.dataframe(
-                        contrast_df,
+                        landing_data.gene_table,
                         use_container_width=True,
                         column_config={
-                            "AI Justification": st.column_config.TextColumn(
-                                "AI Justification",
-                                width="large"
-                            ),
-                            "Relevance Score": st.column_config.TextColumn("Relevance Score", width="small"),
-                            "DEG Count": st.column_config.NumberColumn("DEG Count", width="small")
+                            "Gene": st.column_config.TextColumn("Gene Symbol", width="medium"),
+                            "Median LogFC": st.column_config.NumberColumn("Median Log2FC", format="%.2f", help="Median log2 fold change across contrasts"),
+                            "Direction": st.column_config.TextColumn("↑/↓ Pattern", help="Up/down regulation pattern across contrasts"),
+                            "Significant in": st.column_config.TextColumn("Significant in", help="Number of contrasts where gene was significant")
                         }
                     )
 
-                with landing_tab2:
-                    st.markdown("#### Top Differentially Expressed Genes")
+                    # Gene list for easy copying
+                    with st.expander("📋 Gene List (for external tools)", expanded=False):
+                        gene_list_text = '\n'.join(landing_data.top_genes)
+                        st.text_area(
+                            "Copy gene symbols:",
+                            value=gene_list_text,
+                            height=150,
+                            help="Gene symbols, one per line. Copy and paste into other tools like DAVID, Enrichr, etc."
+                        )
+                else:
+                    st.info("No genes met the AI-selected significance criteria.")
 
-                    with st.expander("🧬 Top Genes Table", expanded=False):
-                        if not landing_data.gene_table.empty:
-                            st.dataframe(
-                                landing_data.gene_table,
-                                use_container_width=True,
-                                column_config={
-                                    "Gene": st.column_config.TextColumn("Gene Symbol", width="medium"),
-                                    "Median LogFC": st.column_config.NumberColumn("Median Log2FC", format="%.2f", help="Median log2 fold change across contrasts"),
-                                    "Direction": st.column_config.TextColumn("↑/↓ Pattern", help="Up/down regulation pattern across contrasts"),
-                                    "Significant in": st.column_config.TextColumn("Significant in", help="Number of contrasts where gene was significant")
-                                }
-                            )
-                        else:
-                            st.info("No genes met the AI-selected significance criteria.")
+            with landing_tab3:
+                st.markdown("#### AI-Generated Expression Heatmap")
 
-                    # Gene list for easy copying (moved outside to avoid nested expanders)
-                    if not landing_data.gene_table.empty:
-                        with st.expander("📋 Gene List (for external tools)", expanded=False):
-                            gene_list_text = '\n'.join(landing_data.top_genes)
-                            st.text_area(
-                                "Copy gene symbols:",
-                                value=gene_list_text,
-                                height=150,
-                                help="Gene symbols, one per line. Copy and paste into other tools like DAVID, Enrichr, etc."
-                            )
+                # Add height control
+                with st.expander("🎛️ Heatmap Settings", expanded=False):
+                    heatmap_height = st.slider(
+                        "Heatmap height (pixels)",
+                        min_value=400,
+                        max_value=1500,
+                        value=max(500, min(1200, len(landing_data.top_genes) * 28)),
+                        step=50,
+                        help="Adjust height to better see gene labels"
+                    )
 
-                with landing_tab3:
-                    st.markdown("#### AI-Generated Expression Heatmap")
+                if landing_data.heatmap_fig:
+                    # Update the figure height
+                    updated_fig = landing_data.heatmap_fig
+                    updated_fig.update_layout(height=heatmap_height)
+                    st.plotly_chart(updated_fig, use_container_width=True)
 
-                    if landing_data.heatmap_fig:
-                        st.plotly_chart(landing_data.heatmap_fig, use_container_width=True)
-
-                        st.markdown("""
-                        💡 **How to interpret this heatmap:**
-                        - Each row represents a gene, each column represents a biological contrast
-                        - Colors indicate log2 fold change: red (upregulated), blue (downregulated), white (not significant)
-                        - Hover over cells to see detailed information including contrast descriptions
-                        - Genes and contrasts are automatically clustered to reveal biological patterns
-                        """)
-                    else:
-                        st.warning("Could not generate heatmap. This may occur if no genes meet the AI-selected significance criteria.")
+                    st.markdown("""
+                    💡 **How to interpret this heatmap:**
+                    - Each row represents a gene, each column represents a biological contrast
+                    - Colors indicate log2 fold change: red (upregulated), blue (downregulated), white (not significant)
+                    - Hover over cells to see detailed information including contrast descriptions
+                    - Genes and contrasts are automatically clustered to reveal biological patterns
+                    """)
+                else:
+                    st.warning("Could not generate heatmap. This may occur if no genes meet the AI-selected significance criteria.")
 
             # Auto-apply selections to other tabs (moved to bottom)
             st.markdown("---")
@@ -1110,7 +1092,6 @@ if ri and ri.cpm_data:
                         'logfc': landing_data.thresholds.logfc_cutoff,
                         'min_frequency': landing_data.thresholds.min_frequency
                     },
-                    'ai_narrative': landing_data.narrative,
                     'generated_at': pd.Timestamp.now().isoformat()
                 }
 
@@ -1352,7 +1333,13 @@ if ri and ri.cpm_data:
                             else:
                                 st.error("Could not generate heatmap. Please check your selections.")
                         except Exception as e:
+                            logger.error(f"Error generating heatmap: {str(e)}", exc_info=True)
                             st.error(f"Error generating heatmap: {str(e)}")
+                            
+                            # Show detailed error for debugging
+                            with st.expander("🔍 Heatmap Error Details", expanded=False):
+                                import traceback
+                                st.code(traceback.format_exc())
 
                 # Call the fragment with just the input parameters
                 draw_heatmap(gene_sel, selected_contrasts, show_advanced)
@@ -1410,7 +1397,13 @@ if ri and ri.cpm_data:
                                     "Could not generate heatmap. Please check your selections."
                                 )
                         except Exception as e:
+                            logger.error(f"Error generating manual heatmap: {str(e)}", exc_info=True)
                             st.error(f"Error generating heatmap: {str(e)}")
+                            
+                            # Show detailed error for debugging
+                            with st.expander("🔍 Manual Heatmap Error Details", expanded=False):
+                                import traceback
+                                st.code(traceback.format_exc())
 
 
                 # Allow manual generation if user wants to override AI selections
@@ -1510,7 +1503,13 @@ if ri and ri.cpm_data:
                             else:
                                 st.error("Could not generate expression plots. Please check your selections.")
                         except Exception as e:
+                            logger.error(f"Error generating expression plots: {str(e)}", exc_info=True)
                             st.error(f"Error generating expression plots: {str(e)}")
+                            
+                            # Show detailed error for debugging
+                            with st.expander("🔍 Expression Plot Error Details", expanded=False):
+                                import traceback
+                                st.code(traceback.format_exc())
 
                 # Call the fragment with all input parameters including display settings
                 draw_expression_plots(gene_sel, selected_datasets, "violin", hide_x_labels, st.session_state.page_num, total_pages, facet_font_size, lock_y_axis, show_raw_points, legend_position)
@@ -2152,6 +2151,7 @@ if ri and ri.cpm_data:
                                 mime="application/zip"
                             )
                 except Exception as e:
+                    logger.error(f"Error exporting HTML: {str(e)}", exc_info=True)
                     st.sidebar.error(f"Error exporting HTML: {str(e)}")
             else:
                 try:
@@ -2198,6 +2198,7 @@ if ri and ri.cpm_data:
                         mime="application/zip"
                     )
                 except Exception as e:
+                    logger.error(f"Error exporting CSV: {str(e)}", exc_info=True)
                     st.sidebar.error(f"Error exporting CSV: {str(e)}")
 
     # ---------- 4. housekeeping ------------------------------------
