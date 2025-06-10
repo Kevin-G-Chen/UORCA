@@ -25,6 +25,7 @@ from typing import List, Dict, Optional, Tuple, Any
 from pathlib import Path
 import logging
 from collections import defaultdict
+import argparse
 
 from mcp.server.fastmcp import FastMCP
 
@@ -537,6 +538,16 @@ async def get_contrast_metadata(analysis_id: str, contrast_id: str) -> str:
 
 def main():
     """Main entry point for the MCP server."""
+    parser = argparse.ArgumentParser(description="MCP Data Extractor Server")
+    parser.add_argument("command", choices=["server"], help="Run as MCP server")
+    parser.add_argument("--results-dir", help="Path to results directory")
+    args = parser.parse_args()
+
+    global RESULTS_DIR
+    if args.results_dir:
+        RESULTS_DIR = args.results_dir
+        log(f"Using results directory from command line: {RESULTS_DIR}")
+
     logger.info(f"Starting data extractor MCP server with results_dir: {RESULTS_DIR}")
     if not RESULTS_DIR:
         logger.warning("RESULTS_DIR environment variable not set")
