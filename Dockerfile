@@ -34,7 +34,7 @@ COPY ./pyproject.toml uv.lock* ./
 RUN uv sync --no-cache-dir   # reproducible, lock-file aware
 
 # project code copied afterwards so dependency cache stays hot
-COPY . .
+COPY ./main_workflow /workspace/main_workflow
 
 ###############################################################################
 #  3.  Command-line genomics tools
