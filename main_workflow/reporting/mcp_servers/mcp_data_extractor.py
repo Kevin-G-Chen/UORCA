@@ -41,6 +41,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp-data-extractor")
 
+# Add a decorator to log tool execution times
+def log_tool_execution(func):
+    async def wrapper(*args, **kwargs):
+        import time
+        logger.info(f"Starting tool: {func.__name__}")
+        start_time = time.time()
+        try:
+            result = await func(*args, **kwargs)
+            logger.info(f"Tool {func.__name__} completed in {time.time() - start_time:.2f}s")
+            return result
+        except Exception as e:
+            logger.error(f"Tool {func.__name__} failed after {time.time() - start_time:.2f}s: {e}")
+            raise
+    return wrapper
+
 # Global variables
 RESULTS_DIR = os.environ.get("RESULTS_DIR", "")
 _cache = {}  # Simple cache for repeated queries
@@ -130,6 +145,7 @@ def _load_contrast_metadata() -> Dict[str, Dict[str, Any]]:
     return _contrast_cache
 
 @mcp.tool()
+@log_tool_execution
 async def list_available_contrasts() -> str:
     """
     List all available contrasts in the dataset.
@@ -202,6 +218,7 @@ async def list_available_contrasts() -> str:
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
+@log_tool_execution
 async def get_deg_counts(analysis_id: str,
                         contrast_id: str,
                         p_value_threshold: float = 0.05,
@@ -278,6 +295,7 @@ async def get_deg_counts(analysis_id: str,
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
+@log_tool_execution
 async def get_gene_info(gene_id: str,
                        analysis_ids: Optional[List[str]] = None,
                        contrast_ids: Optional[List[str]] = None) -> str:
@@ -360,6 +378,7 @@ async def get_gene_info(gene_id: str,
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
+@log_tool_execution
 async def find_common_degs(analysis_ids: List[str],
                           contrast_ids: List[str],
                           min_frequency: int = 2,
@@ -478,6 +497,7 @@ async def find_common_degs(analysis_ids: List[str],
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
+@log_tool_execution
 async def get_contrast_metadata(analysis_id: str, contrast_id: str) -> str:
     """
     Get metadata information about a specific contrast.

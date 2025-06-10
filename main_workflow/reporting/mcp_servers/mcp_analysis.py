@@ -46,6 +46,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("mcp-analysis")
 
+# Add a decorator to log tool execution times
+def log_tool_execution(func):
+    async def wrapper(*args, **kwargs):
+        import time
+        logger.info(f"Starting tool: {func.__name__}")
+        start_time = time.time()
+        try:
+            result = await func(*args, **kwargs)
+            logger.info(f"Tool {func.__name__} completed in {time.time() - start_time:.2f}s")
+            return result
+        except Exception as e:
+            logger.error(f"Tool {func.__name__} failed after {time.time() - start_time:.2f}s: {e}")
+            raise
+    return wrapper
+
 # Global variables
 RESULTS_DIR = os.environ.get("RESULTS_DIR", "")
 _cache = {}  # Simple cache for repeated queries
@@ -124,6 +139,7 @@ def _load_contrast_descriptions() -> Dict[str, str]:
     return descriptions
 
 @mcp.tool()
+@log_tool_execution
 async def rank_contrasts_by_relevance(research_question: str,
                                      max_contrasts: int = 10,
                                      min_deg_count: int = 10) -> str:
@@ -204,7 +220,8 @@ async def rank_contrasts_by_relevance(research_question: str,
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
-async def analyze_gene_patterns(genes: List[str], 
+@log_tool_execution
+async def analyze_gene_patterns(genes: List[str],
                                contrast_keys: List[str]) -> str:
     """
     Analyze expression patterns across a set of genes.
@@ -370,6 +387,7 @@ async def analyze_gene_patterns(genes: List[str],
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
+@log_tool_execution
 async def find_expression_clusters(min_genes_per_cluster: int = 5,
                                   correlation_threshold: float = 0.7,
                                   p_value_threshold: float = 0.05,
@@ -527,6 +545,7 @@ async def find_expression_clusters(min_genes_per_cluster: int = 5,
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
+@log_tool_execution
 async def calculate_gene_statistics(genes: List[str],
                                    min_contrasts: int = 1) -> str:
     """
@@ -643,6 +662,7 @@ async def calculate_gene_statistics(genes: List[str],
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
+@log_tool_execution
 async def identify_consistent_degs(min_frequency: float = 0.8,
                                   consistency_threshold: float = 0.9,
                                   p_value_threshold: float = 0.05,
