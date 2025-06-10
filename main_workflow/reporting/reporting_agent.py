@@ -125,13 +125,33 @@ class ReportingAgent:
         # Get model instance
         model_instance = self._get_model_instance()
 
+        import time
+
         # Create the agent
+        logger.info("Creating agent with system prompt")
+        start_time = time.time()
         self.agent = Agent(
             model=model_instance,
             model_settings={"temperature": self.temperature},
             mcp_servers=self.servers,
             system=self._get_system_prompt(research_question)
         )
+        logger.info(f"Agent created in {time.time() - start_time:.2f} seconds")
+
+        original_run = self.agent.run
+
+        async def run_with_logging(prompt):
+            logger.info(f"Agent run called with prompt of {len(prompt)} chars")
+            start = time.time()
+            try:
+                result = await original_run(prompt)
+                logger.info(f"Agent run completed in {time.time() - start:.2f} seconds")
+                return result
+            except Exception as e:
+                logger.error(f"Agent run failed after {time.time() - start:.2f} seconds: {e}")
+                raise
+
+        self.agent.run = run_with_logging
 
         logger.info("Created agent with MCP servers and system prompt")
         return self.agent
