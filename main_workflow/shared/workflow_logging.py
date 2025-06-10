@@ -13,7 +13,7 @@ DEFAULT_FMT = "%(asctime)s  %(levelname)-8s  %(name)s ▶  %(message)s"
 # 1. Root configuration – called **once** at the start of the run              #
 ################################################################################
 
-def setup_logging(log_dir: str | os.PathLike = "logs", *, level: int = logging.WARNING,
+def setup_logging(log_dir: str | os.PathLike = "logs", *, level: int = logging.INFO,
                   run_id: str | None = None) -> pathlib.Path:
     """Create *logs/YYYYMMDD_HHMMSS.log* and hook both file & console handlers.
 
@@ -136,14 +136,14 @@ def log_agent_tool(func):
 
 def log_tool_for_reflection(func):
     """Decorate tools to log detailed information for reflection.
-    
+
     Similar to log_tool but also records information in ctx.deps.tool_logs for
     later reflection. Particularly tracks:
     - Tool name
     - Parameters (excluding ctx)
     - Output
     - Success/failure status
-    
+
     This information helps the reflection process understand what was attempted
     and with what results.
     """
@@ -157,12 +157,12 @@ def log_tool_for_reflection(func):
             tool_name = func.__name__
             bound = inspect.signature(func).bind_partial(*args, **kwargs)
             params = _as_dict(bound)
-            
+
             # Extract ctx from args
             ctx = args[0] if args else None
-            
+
             logger.info("🛠️ %s called for reflection – params=%s", tool_name, params)
-            
+
             tool_log_entry = {
                 "tool_name": tool_name,
                 "parameters": params,
@@ -171,25 +171,25 @@ def log_tool_for_reflection(func):
                 "output": None,
                 "error": None
             }
-            
+
             try:
                 res = await func(*args, **kwargs)
-                
+
                 # Record successful output
                 tool_log_entry["success"] = True
                 tool_log_entry["output"] = res
-                
+
                 # Special tracking for important files
                 if tool_name == "run_kallisto_quantification" and ctx and hasattr(ctx.deps, "kallisto_index_used"):
                     # Extract the index path from parameters
                     if "kallisto_index" in params:
                         ctx.deps.kallisto_index_used = params["kallisto_index"]
-                
+
                 if tool_name == "run_edger_limma_analysis" and ctx and hasattr(ctx.deps, "tx2gene_file_used"):
                     # Extract the tx2gene path from parameters
                     if "tx2gene_path" in params:
                         ctx.deps.tx2gene_file_used = params["tx2gene_path"]
-                
+
                 if tool_name == "list_files" and ctx:
                     # For list_files, simplify the output to just the count to avoid very large logs
                     if isinstance(res, list):
@@ -198,23 +198,23 @@ def log_tool_for_reflection(func):
                             tool_log_entry["output"] += f": {res}"
                         elif len(res) > 5:
                             tool_log_entry["output"] += f": {res[:5]} and {len(res)-5} more"
-                
+
                 logger.info("✅ %s finished for reflection", tool_name)
-                
+
                 # Add the log entry to context if available
                 if ctx and hasattr(ctx.deps, "tool_logs"):
                     ctx.deps.tool_logs.append(tool_log_entry)
-                
+
                 return res
             except Exception as e:
                 # Record error information
                 tool_log_entry["success"] = False
                 tool_log_entry["error"] = str(e)
-                
+
                 # Add the log entry to context even on failure
                 if ctx and hasattr(ctx.deps, "tool_logs"):
                     ctx.deps.tool_logs.append(tool_log_entry)
-                
+
                 logger.exception("❌ %s crashed during reflection", tool_name)
                 raise
 
@@ -226,12 +226,12 @@ def log_tool_for_reflection(func):
             tool_name = func.__name__
             bound = inspect.signature(func).bind_partial(*args, **kwargs)
             params = _as_dict(bound)
-            
+
             # Extract ctx from args
             ctx = args[0] if args else None
-            
+
             logger.info("🛠️ %s called for reflection – params=%s", tool_name, params)
-            
+
             tool_log_entry = {
                 "tool_name": tool_name,
                 "parameters": params,
@@ -240,25 +240,25 @@ def log_tool_for_reflection(func):
                 "output": None,
                 "error": None
             }
-            
+
             try:
                 res = func(*args, **kwargs)
-                
+
                 # Record successful output
                 tool_log_entry["success"] = True
                 tool_log_entry["output"] = res
-                
+
                 # Special tracking for important files
                 if tool_name == "run_kallisto_quantification" and ctx and hasattr(ctx.deps, "kallisto_index_used"):
                     # Extract the index path from parameters
                     if "kallisto_index" in params:
                         ctx.deps.kallisto_index_used = params["kallisto_index"]
-                
+
                 if tool_name == "run_edger_limma_analysis" and ctx and hasattr(ctx.deps, "tx2gene_file_used"):
                     # Extract the tx2gene path from parameters
                     if "tx2gene_path" in params:
                         ctx.deps.tx2gene_file_used = params["tx2gene_path"]
-                
+
                 if tool_name == "list_files" and ctx:
                     # For list_files, simplify the output to just the count to avoid very large logs
                     if isinstance(res, list):
@@ -267,23 +267,23 @@ def log_tool_for_reflection(func):
                             tool_log_entry["output"] += f": {res}"
                         elif len(res) > 5:
                             tool_log_entry["output"] += f": {res[:5]} and {len(res)-5} more"
-                
+
                 logger.info("✅ %s finished for reflection", tool_name)
-                
+
                 # Add the log entry to context if available
                 if ctx and hasattr(ctx.deps, "tool_logs"):
                     ctx.deps.tool_logs.append(tool_log_entry)
-                
+
                 return res
             except Exception as e:
                 # Record error information
                 tool_log_entry["success"] = False
                 tool_log_entry["error"] = str(e)
-                
+
                 # Add the log entry to context even on failure
                 if ctx and hasattr(ctx.deps, "tool_logs"):
                     ctx.deps.tool_logs.append(tool_log_entry)
-                
+
                 logger.exception("❌ %s crashed during reflection", tool_name)
                 raise
 
