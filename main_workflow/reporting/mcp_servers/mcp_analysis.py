@@ -30,6 +30,7 @@ from pathlib import Path
 import logging
 from collections import defaultdict
 import re
+import argparse
 
 from mcp.server.fastmcp import FastMCP
 
@@ -734,3 +735,28 @@ async def identify_consistent_degs(min_frequency: float = 0.8,
                         "frequency": round(frequency, 3),
                         "consistency": round(direction_consistency, 3),
                         "direction": "up" if data["up_count"] > data["down_
+
+def main():
+    """Main entry point for the MCP analysis server."""
+    parser = argparse.ArgumentParser(description="MCP Analysis Server")
+    parser.add_argument("command", choices=["server"], help="Run as MCP server")
+    parser.add_argument("--results-dir", help="Path to results directory")
+    args = parser.parse_args()
+
+    global RESULTS_DIR
+    if args.results_dir:
+        RESULTS_DIR = args.results_dir
+        log(f"Using results directory from command line: {RESULTS_DIR}")
+
+    logger.info(f"Starting analysis MCP server with results_dir: {RESULTS_DIR}")
+    if not RESULTS_DIR:
+        logger.warning("RESULTS_DIR environment variable not set")
+    elif not os.path.exists(RESULTS_DIR):
+        logger.warning(f"RESULTS_DIR does not exist: {RESULTS_DIR}")
+
+    mcp.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()
+
