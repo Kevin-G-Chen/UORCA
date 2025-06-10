@@ -629,12 +629,8 @@ def main():
 
         # Cleanup if requested and analysis was successful
         if args.cleanup:
-            analysis_success = getattr(result.deps, 'analysis_success', False)
-            if analysis_success:
-                logger.info("🧹 Analysis successful - performing cleanup")
-                cleanup_large_files(ctx.output_dir, args.accession)
-            else:
-                logger.info("⚠️ Analysis failed - skipping cleanup to preserve data for debugging")
+            logger.info("🧹 Analysis successful - performing cleanup")
+            cleanup_large_files(ctx.output_dir, args.accession)
         else:
             logger.info("ℹ️ Cleanup skipped. Use --cleanup flag to remove FASTQ/SRA files")
 
