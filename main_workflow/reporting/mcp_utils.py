@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+import logging
 try:
     import tomllib  # Python 3.11+
 except ImportError:
@@ -10,6 +11,9 @@ except ImportError:
 from typing import Mapping, Optional
 
 from pydantic_ai.mcp import MCPServerStdio
+
+
+logger = logging.getLogger(__name__)
 
 
 _CONFIG_CACHE: Optional[dict] = None
@@ -56,9 +60,14 @@ def setup_mcp_server(name: str, env_vars: Mapping[str, str] | None = None) -> MC
     if env_vars:
         env.update(env_vars)
 
-    # Spawn server using the same Python executable
+    results_dir = env_vars.get("RESULTS_DIR", "") if env_vars else ""
+    args = [str(script_path), "server"]
+    if results_dir:
+        args.extend(["--results-dir", results_dir])
+        logger.info(f"Passing results dir as argument: {results_dir}")
+
     return MCPServerStdio(
         sys.executable,
-        args=[str(script_path), "server"],
+        args=args,
         env=env,
     )
