@@ -127,44 +127,49 @@ class AutoStartManager:
 
     async def run_initial_analysis(self,
                                  progress_callback: Optional[Callable[[float, str], None]] = None) -> Dict[str, Any]:
-        """
-        Run initial analysis on the data without requiring a specific research question.
-
-        Args:
-            progress_callback: Optional function to call with progress updates (progress, message)
-
-        Returns:
-            Dictionary with analysis results
-        """
+        """Run initial analysis on the data without requiring a specific research question."""
         try:
-            # Update progress
+            import time
+            overall_start = time.time()
+            logger.info("Starting run_initial_analysis")
+
             if progress_callback:
                 progress_callback(0.1, "Initializing analysis agent")
+            logger.info("Step 1/6: Initializing analysis agent")
 
-            # Create reporting agent
+            agent_start = time.time()
             self.agent = ReportingAgent(
                 results_dir=self.results_dir,
                 model_name=self.default_model,
                 temperature=self.temperature
             )
+            logger.info(f"Agent created in {time.time() - agent_start:.2f} seconds")
 
-            # Setup servers if not already done
             if progress_callback:
                 progress_callback(0.2, "Setting up analysis servers")
 
+            servers_start = time.time()
             if not self.servers:
+                logger.info("Step 2/6: Setting up servers")
                 self.setup_servers()
+                logger.info(f"Servers setup in {time.time() - servers_start:.2f} seconds")
+            else:
+                logger.info("Step 2/6: Reusing existing servers")
 
-            # Use existing servers
+            logger.info("Step 3/6: Connecting agent to servers")
+            server_connection_start = time.time()
             self.agent.servers = self.servers
+            logger.info(f"Connected agent to servers in {time.time() - server_connection_start:.2f} seconds")
 
-            # Create agent with overview focus
             if progress_callback:
                 progress_callback(0.3, "Creating analysis agent")
 
+            logger.info("Step 4/6: Creating agent")
+            agent_creation_start = time.time()
             self.agent.create_agent()
+            logger.info(f"Agent created in {time.time() - agent_creation_start:.2f} seconds")
 
-            # Define comprehensive initial analysis prompt
+            logger.info("Step 5/6: Preparing prompt")
             initial_prompt = """Please provide a comprehensive initial analysis of this RNA-seq dataset that would be immediately useful to a researcher opening this data for the first time.
 
 Your analysis should include:
@@ -198,67 +203,37 @@ Organize your response with clear sections and use bullet points for readability
 Focus on actionable insights that help the researcher quickly understand their data.
 Be specific with gene names, fold changes, and numbers rather than generic statements."""
 
-            # Run the analysis with progress updates
             if progress_callback:
                 progress_callback(0.4, "Analyzing dataset structure")
 
-            # Create async task for progress updates
-            stop_progress = False
+            logger.info("Step 6/6: Running LLM analysis - this may take several minutes")
+            logger.info("About to call agent.run() with the analysis prompt")
 
-            async def update_progress():
-                """Background task to update progress during analysis."""
-                progress_steps = [
-                    (0.5, "Identifying key contrasts"),
-                    (0.6, "Finding differentially expressed genes"),
-                    (0.7, "Analyzing expression patterns"),
-                    (0.8, "Generating biological insights"),
-                    (0.9, "Finalizing analysis")
-                ]
-
-                for progress, message in progress_steps:
-                    if stop_progress:
-                        break
-                    if progress_callback:
-                        progress_callback(progress, message)
-                    await asyncio.sleep(2)  # Update every 2 seconds
-
-            # Start progress updates
-            progress_task = asyncio.create_task(update_progress())
-
+            llm_start_time = time.time()
             try:
-                # Run the actual analysis
-                try:
-                    result = await self.agent.agent.run(initial_prompt)
-
-                    if progress_callback:
-                        progress_callback(1.0, "Analysis complete")
-
-                    # Format the result
-                    return {
-                        "success": True,
-                        "analysis_type": "initial_overview",
-                        "report": result.data,
-                        "metadata": {
-                            "results_dir": self.results_dir,
-                            "model_used": self.default_model,
-                            "timestamp": datetime.now().isoformat(),
-                            "analysis_version": "2.0"
-                        }
-                    }
-                except Exception as analysis_error:
-                    logger.error(f"Error in agent.run: {analysis_error}", exc_info=True)
-                    raise
-
-            except asyncio.CancelledError:
-                # Handle cancellation gracefully
-                raise
-            finally:
-                # Always stop the progress updater task
-                stop_progress = True
+                progress_task = asyncio.create_task(self._log_progress_during_analysis(llm_start_time))
+                result = await self.agent.agent.run(initial_prompt)
                 progress_task.cancel()
-                import contextlib
-                with contextlib.suppress(asyncio.CancelledError):
-                    await progress_task
+                logger.info(f"LLM analysis completed in {time.time() - llm_start_time:.2f} seconds")
+
+                if progress_callback:
+                    progress_callback(1.0, "Analysis complete")
+
+                return {
+                    "success": True,
+                    "analysis_type": "initial_overview",
+                    "report": result.data,
+                    "metadata": {
+                        "results_dir": self.results_dir,
+                        "model_used": self.default_model,
+                        "timestamp": datetime.now().isoformat(),
+                        "analysis_version": "2.0",
+                        "analysis_duration_seconds": time.time() - overall_start
+                    }
+                }
+            except Exception as analysis_error:
+                logger.error(f"Error in agent.run: {analysis_error}", exc_info=True)
+                raise
 
         except Exception as e:
             logger.error(f"Error during initial analysis: {e}", exc_info=True)
@@ -268,6 +243,20 @@ Be specific with gene names, fold changes, and numbers rather than generic state
                 "error_type": type(e).__name__,
                 "timestamp": datetime.now().isoformat()
             }
+
+    async def _log_progress_during_analysis(self, start_time: float):
+        """Log progress during a long-running analysis periodically."""
+        import time
+        try:
+            interval = 30
+            count = 0
+            while True:
+                await asyncio.sleep(interval)
+                elapsed = time.time() - start_time
+                count += 1
+                logger.info(f"[PROGRESS] LLM analysis running for {elapsed:.1f} seconds (update #{count})")
+        except asyncio.CancelledError:
+            pass
 
     async def run_focused_analysis(self,
                                  research_question: str,
