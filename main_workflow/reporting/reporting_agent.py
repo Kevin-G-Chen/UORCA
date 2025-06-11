@@ -14,6 +14,7 @@ import sys
 import json
 import logging
 import asyncio
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from pathlib import Path
 from datetime import datetime
@@ -54,6 +55,8 @@ class ReportingAgent:
         self.temperature = temperature
         self.servers = []
         self.agent = None
+        self.server_env_vars = None  # Store env vars for server restart
+        self.last_health_check = 0  # Timestamp of last health check
 
         logger.info(f"Initialized ReportingAgent with results_dir: {self.results_dir}")
         logger.info(f"Using model: {self.model_name}")
@@ -61,18 +64,41 @@ class ReportingAgent:
     def setup_servers(self) -> List:
         """Set up the MCP servers for data extraction and analysis."""
         try:
+            # Clean up any existing servers first
+            if self.servers:
+                logger.info("Cleaning up existing servers before setup")
+                try:
+                    asyncio.run(self._cleanup_servers_sync())
+                except Exception as cleanup_error:
+                    logger.warning(f"Error cleaning up existing servers: {cleanup_error}")
+                self.servers = []
+
             # Ensure the MCP child sees the same results_dir the user selected
             env_vars = {"RESULTS_DIR": self.results_dir}
             api_key = os.getenv("OPENAI_API_KEY")
             if api_key:
                 env_vars["OPENAI_API_KEY"] = api_key
 
+            # Store env vars for potential server restart
+            self.server_env_vars = env_vars
+
             # Data extraction server
             logger.info("Setting up data extraction MCP server...")
             data_server = setup_mcp_server(
                 "data_extractor",
                 env_vars=env_vars,
+                max_retries=3,
+                retry_delay=1.5
             )
+            
+            # Verify server is responsive
+            if not self._verify_server_health(data_server, "data_extractor"):
+                logger.warning("Data extraction server failed initial health check, attempting restart...")
+                from mcp_utils import restart_server
+                data_server = restart_server("data_extractor", env_vars)
+                if not data_server or not self._verify_server_health(data_server, "data_extractor"):
+                    raise RuntimeError("Data extraction server failed health check after restart")
+            
             self.servers.append(data_server)
 
             # Analysis server
@@ -80,14 +106,32 @@ class ReportingAgent:
             analysis_server = setup_mcp_server(
                 "analysis",
                 env_vars=env_vars,
+                max_retries=3,
+                retry_delay=1.5
             )
+            
+            # Verify server is responsive
+            if not self._verify_server_health(analysis_server, "analysis"):
+                logger.warning("Analysis server failed initial health check, attempting restart...")
+                from mcp_utils import restart_server
+                analysis_server = restart_server("analysis", env_vars)
+                if not analysis_server or not self._verify_server_health(analysis_server, "analysis"):
+                    raise RuntimeError("Analysis server failed health check after restart")
+            
             self.servers.append(analysis_server)
 
             logger.info(f"Successfully set up {len(self.servers)} MCP servers")
+            self.last_health_check = time.time()
             return self.servers
 
         except Exception as e:
             logger.error(f"Error setting up MCP servers: {e}")
+            # Clean up any partially created servers
+            try:
+                asyncio.run(self._cleanup_servers_sync())
+            except Exception:
+                pass
+            self.servers = []
             raise
 
     def _get_model_instance(self) -> Model:
@@ -121,6 +165,11 @@ class ReportingAgent:
         # Set up servers if not already done
         if not self.servers:
             self.setup_servers()
+        else:
+            # Check server health and recover if needed
+            if not self.check_and_recover_servers():
+                logger.warning("Server recovery failed, attempting fresh setup")
+                self.setup_servers()
 
         # Get model instance
         model_instance = self._get_model_instance()
@@ -442,18 +491,157 @@ Provide a clear comparison with specific genes and pathways that distinguish the
                 "timestamp": datetime.now().isoformat()
             }
 
+    def _verify_server_health(self, server, server_name: str, timeout: float = 3.0) -> bool:
+        """Verify that a server is healthy and responsive."""
+        try:
+            logger.info(f"Verifying health of {server_name} server...")
+            
+            # Give server a moment to fully initialize
+            time.sleep(0.5)
+            
+            # Quick process check first
+            from mcp_utils import is_server_process_alive
+            if not is_server_process_alive(server):
+                logger.error(f"{server_name} server process terminated")
+                return False
+            
+            # Use the verify function from mcp_utils
+            from mcp_utils import verify_server_responsive
+            is_healthy = verify_server_responsive(server, timeout)
+            
+            if is_healthy:
+                logger.info(f"{server_name} server health check passed")
+            else:
+                logger.error(f"{server_name} server health check failed")
+                
+            return is_healthy
+            
+        except Exception as e:
+            logger.error(f"Error verifying {server_name} server health: {e}")
+            return False
+
+    def verify_all_servers_healthy(self, quick_check: bool = False) -> bool:
+        """Verify that all servers are healthy and responsive."""
+        if not self.servers:
+            logger.warning("No servers to verify")
+            return False
+            
+        server_names = ["data_extractor", "analysis"]
+        
+        # Skip health check if we did one recently (for quick_check mode)
+        if quick_check and hasattr(self, 'last_health_check'):
+            time_since_check = time.time() - self.last_health_check
+            if time_since_check < 30:  # Skip if checked within last 30 seconds
+                logger.debug("Skipping health check, done recently")
+                from mcp_utils import is_server_process_alive
+                return all(is_server_process_alive(server) for server in self.servers)
+        
+        healthy_count = 0
+        for i, server in enumerate(self.servers):
+            server_name = server_names[i] if i < len(server_names) else f"server_{i}"
+            if self._verify_server_health(server, server_name):
+                healthy_count += 1
+            else:
+                logger.error(f"Server {server_name} failed health check")
+                
+        all_healthy = healthy_count == len(self.servers)
+        if all_healthy:
+            logger.info("All servers passed health checks")
+            self.last_health_check = time.time()
+        else:
+            logger.warning(f"Only {healthy_count}/{len(self.servers)} servers are healthy")
+            
+        return all_healthy
+
+    def check_and_recover_servers(self) -> bool:
+        """Check server health and attempt recovery if needed."""
+        try:
+            if not self.servers:
+                logger.info("No servers to check, setting up new servers")
+                self.setup_servers()
+                return len(self.servers) > 0
+            
+            # Quick health check
+            if self.verify_all_servers_healthy(quick_check=True):
+                return True
+            
+            logger.warning("Some servers are unhealthy, attempting recovery...")
+            
+            # Try individual server restart first
+            server_names = ["data_extractor", "analysis"]
+            recovered = True
+            
+            from mcp_utils import is_server_process_alive, restart_server
+            
+            for i, server in enumerate(self.servers[:]):  # Use slice to avoid modification during iteration
+                server_name = server_names[i] if i < len(server_names) else f"server_{i}"
+                
+                if not is_server_process_alive(server):
+                    logger.warning(f"Server {server_name} is dead, restarting...")
+                    try:
+                        # Try to restart individual server
+                        new_server = restart_server(server_name, self.server_env_vars)
+                        if new_server and self._verify_server_health(new_server, server_name):
+                            self.servers[i] = new_server
+                            logger.info(f"Successfully restarted {server_name}")
+                        else:
+                            logger.error(f"Failed to restart {server_name}")
+                            recovered = False
+                    except Exception as e:
+                        logger.error(f"Error restarting {server_name}: {e}")
+                        recovered = False
+            
+            if not recovered:
+                logger.warning("Individual server restart failed, trying full restart...")
+                try:
+                    self.setup_servers()
+                    return self.verify_all_servers_healthy()
+                except Exception as e:
+                    logger.error(f"Full server restart failed: {e}")
+                    return False
+            
+            return recovered
+            
+        except Exception as e:
+            logger.error(f"Error during server recovery: {e}", exc_info=True)
+            return False
+
+    async def _cleanup_servers_sync(self):
+        """Internal method to clean up servers synchronously."""
+        cleanup_tasks = []
+        for i, server in enumerate(self.servers):
+            try:
+                logger.info(f"Cleaning up server {i+1}/{len(self.servers)}")
+                cleanup_tasks.append(server.cleanup())
+            except Exception as e:
+                logger.warning(f"Error initiating cleanup for server {i}: {e}")
+        
+        # Wait for all cleanup tasks to complete
+        if cleanup_tasks:
+            try:
+                await asyncio.gather(*cleanup_tasks, return_exceptions=True)
+            except Exception as e:
+                logger.warning(f"Error during server cleanup gather: {e}")
+
     async def cleanup(self):
         """Clean up resources and close MCP servers."""
-        for server in self.servers:
-            try:
-                # MCPServerStdio uses cleanup() to terminate the subprocess
-                await server.cleanup()
-            except Exception as e:
-                logger.warning(f"Error cleaning up server: {e}", exc_info=True)
+        cleanup_successful = True
+        
+        # Clean up servers first
+        logger.info(f"Starting cleanup of {len(self.servers)} servers")
+        
+        try:
+            await self._cleanup_servers_sync()
+            logger.info("Server cleanup completed")
+        except Exception as e:
+            cleanup_successful = False
+            logger.error(f"Error during server cleanup: {e}", exc_info=True)
 
         self.servers = []
         self.agent = None
-        logger.info("Cleaned up reporting agent resources")
+        
+        logger.info(f"ReportingAgent cleanup complete (successful: {cleanup_successful})")
+        return cleanup_successful
 
 
 # Convenience functions for common analyses

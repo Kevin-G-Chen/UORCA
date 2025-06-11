@@ -124,6 +124,7 @@ try:
         ContrastSelection,
         ThresholdSelection
     )
+    from mcp_utils import get_mcp_status_info, check_mcp_requirements
     MCP_LANDING_PAGE_AVAILABLE = True
 except ImportError as e:
     MCP_LANDING_PAGE_AVAILABLE = False
@@ -378,6 +379,121 @@ api_key_available = bool(os.getenv("OPENAI_API_KEY"))
 
 # Check for both old and new implementations
 landing_available = LANDING_PAGE_AVAILABLE or MCP_LANDING_PAGE_AVAILABLE
+
+# Show MCP server status if available
+if hasattr(st.session_state, 'mcp_manager') and st.session_state.mcp_manager:
+    manager = st.session_state.mcp_manager
+    server_count = len(getattr(manager, 'servers', []))
+    
+    if server_count > 0:
+        # Check server health
+        try:
+            if hasattr(manager, 'verify_all_servers_healthy'):
+                all_healthy = manager.verify_all_servers_healthy(quick_check=True)
+                if all_healthy:
+                    st.sidebar.success(f"🔗 MCP Servers: {server_count} Healthy")
+                else:
+                    st.sidebar.warning(f"⚠️ MCP Servers: Some Issues ({server_count} total)")
+                    if st.sidebar.button("🔄 Recover Servers"):
+                        with st.spinner("Recovering MCP servers..."):
+                            if hasattr(manager, 'check_and_recover_servers'):
+                                success = manager.check_and_recover_servers()
+                                if success:
+                                    st.sidebar.success("✅ Servers recovered!")
+                                    try:
+                                        st.rerun()
+                                    except AttributeError:
+                                        st.experimental_rerun()
+                                else:
+                                    st.sidebar.error("❌ Server recovery failed")
+            else:
+                st.sidebar.info(f"🔗 MCP Servers: {server_count} Active")
+        except Exception as e:
+            st.sidebar.error(f"🔗 MCP Servers: Status Unknown")
+    else:
+        st.sidebar.warning("🔗 MCP Servers: None Active")
+
+# Add MCP diagnostic panel
+if MCP_LANDING_PAGE_AVAILABLE:
+    with st.sidebar.expander("🔧 MCP Diagnostics", expanded=False):
+        try:
+            status = get_mcp_status_info()
+            
+            # Python version
+            if status['python_version_ok']:
+                st.success(f"✅ Python {status['python_version']}")
+            else:
+                st.error(f"❌ Python {status['python_version']} (need 3.9+)")
+            
+            # Package availability
+            if status['packages_available']:
+                st.success("✅ Required packages installed")
+            else:
+                st.error("❌ Missing packages:")
+                for pkg in status['missing_packages']:
+                    st.write(f"  - {pkg}")
+                st.code("pip install pydantic-ai openai")
+            
+            # API key
+            if status['api_key_set']:
+                st.success("✅ OpenAI API key set")
+            else:
+                st.warning("⚠️ OpenAI API key not set")
+                st.code("export OPENAI_API_KEY=your_key")
+            
+            # Server configuration
+            if status['servers_toml_exists']:
+                st.success("✅ Server configuration found")
+            else:
+                st.error("❌ servers.toml missing")
+            
+            # Server scripts
+            all_scripts_exist = all(status['server_scripts_exist'].values())
+            if all_scripts_exist:
+                st.success("✅ Server scripts found")
+            else:
+                st.error("❌ Missing server scripts:")
+                for name, exists in status['server_scripts_exist'].items():
+                    if not exists:
+                        st.write(f"  - {name}")
+            
+            # Recovery options
+            if hasattr(st.session_state, 'mcp_manager'):
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Test Servers", help="Test server connectivity"):
+                        with st.spinner("Testing..."):
+                            manager = st.session_state.mcp_manager
+                            if hasattr(manager, 'verify_all_servers_healthy'):
+                                try:
+                                    healthy = manager.verify_all_servers_healthy()
+                                    if healthy:
+                                        st.success("All servers healthy!")
+                                    else:
+                                        st.error("Some servers unhealthy")
+                                except Exception as e:
+                                    st.error(f"Test failed: {e}")
+                
+                with col2:
+                    if st.button("🆘 Force Restart", help="Restart all MCP servers"):
+                        with st.spinner("Restarting..."):
+                            manager = st.session_state.mcp_manager
+                            if hasattr(manager, 'restart_servers'):
+                                if manager.restart_servers():
+                                    st.success("Servers restarted!")
+                                    try:
+                                        st.rerun()
+                                    except AttributeError:
+                                        st.experimental_rerun()
+                                else:
+                                    st.error("Restart failed")
+            
+            # Troubleshooting link
+            st.markdown("📚 [Full Troubleshooting Guide](https://github.com/your-repo/UORCA/blob/main/main_workflow/reporting/MCP_TROUBLESHOOTING.md)")
+            
+        except Exception as e:
+            st.error(f"Diagnostic error: {e}")
+            st.info("💡 Try refreshing the page")
 
 if landing_available and api_key_available:
     st.sidebar.success("🤖 AI Landing Page: Fully Available")
@@ -906,6 +1022,7 @@ if ri and ri.cpm_data:
                         # First time - this should have been created by auto_analyze_on_load
                         # but create as fallback
                         try:
+                            update_progress(0.1, "Initializing MCP servers...")
                             temp_result = asyncio.run(auto_analyze_on_load(ri, update_progress))
                             if not temp_result or not temp_result.get('success'):
                                 st.error("Failed to initialize AI services")
@@ -913,19 +1030,70 @@ if ri and ri.cpm_data:
                         except Exception as init_error:
                             st.error(f"Error initializing AI services: {str(init_error)}")
                             initialization_success = False
+                    else:
+                        # Check existing server health and recover if needed
+                        update_progress(0.1, "Checking server health...")
+                        manager = st.session_state.mcp_manager
+                        if hasattr(manager, 'check_and_recover_servers'):
+                            try:
+                                if not manager.check_and_recover_servers():
+                                    st.warning("⚠️ Some MCP servers are unhealthy, attempting recovery...")
+                                    update_progress(0.2, "Recovering unhealthy servers...")
+                                    # Try full server restart as fallback
+                                    if hasattr(manager, 'restart_servers'):
+                                        if not manager.restart_servers():
+                                            st.error("❌ Failed to recover MCP servers")
+                                            initialization_success = False
+                                        else:
+                                            st.success("✅ MCP servers recovered successfully")
+                                    else:
+                                        initialization_success = False
+                                else:
+                                    update_progress(0.2, "Servers healthy, proceeding...")
+                            except Exception as health_error:
+                                st.error(f"Error checking server health: {str(health_error)}")
+                                initialization_success = False
 
                     # Generate landing page data using MCP-based system only if initialization succeeded
                     landing_data = None
                     if initialization_success:
-                        try:
-                            landing_data = generate_ai_landing_page(
-                                integrator=ri,
-                                biological_prompt=biological_prompt,
-                                max_genes=50
-                            )
-                        except Exception as gen_error:
-                            st.error(f"Error generating AI landing page: {str(gen_error)}")
-                            landing_data = None
+                        max_retries = 2
+                        for attempt in range(max_retries):
+                            try:
+                                update_progress(0.3 + (attempt * 0.3), f"Generating AI analysis (attempt {attempt + 1}/{max_retries})...")
+                                landing_data = generate_ai_landing_page(
+                                    integrator=ri,
+                                    biological_prompt=biological_prompt,
+                                    max_genes=50
+                                )
+                                if landing_data:
+                                    break  # Success, exit retry loop
+                                elif attempt < max_retries - 1:
+                                    st.warning(f"⚠️ Attempt {attempt + 1} failed, retrying...")
+                                    # Try to recover servers before retry
+                                    if hasattr(st.session_state, 'mcp_manager'):
+                                        manager = st.session_state.mcp_manager
+                                        if hasattr(manager, 'check_and_recover_servers'):
+                                            manager.check_and_recover_servers()
+                            except Exception as gen_error:
+                                error_msg = str(gen_error)
+                                if "server" in error_msg.lower() or "mcp" in error_msg.lower():
+                                    if attempt < max_retries - 1:
+                                        st.warning(f"⚠️ Server error on attempt {attempt + 1}, attempting recovery and retry...")
+                                        # Try server recovery
+                                        if hasattr(st.session_state, 'mcp_manager'):
+                                            manager = st.session_state.mcp_manager
+                                            if hasattr(manager, 'check_and_recover_servers'):
+                                                manager.check_and_recover_servers()
+                                        continue
+                                    else:
+                                        st.error(f"❌ Server error after {max_retries} attempts: {error_msg}")
+                                else:
+                                    st.error(f"❌ Error generating AI landing page: {error_msg}")
+                                    break
+                        
+                        if not landing_data and initialization_success:
+                            st.error("❌ Failed to generate landing page after multiple attempts")
 
                     # Clear progress indicators
                     progress_bar.empty()
@@ -939,17 +1107,53 @@ if ri and ri.cpm_data:
 
                 except Exception as e:
                     logger.error(f"Error generating landing page: {str(e)}", exc_info=True)
-                    st.error(f"❌ Error generating landing page: {str(e)}")
+                    error_msg = str(e)
+                    
+                    # Provide specific error messages and recovery suggestions
+                    if "server" in error_msg.lower() or "mcp" in error_msg.lower():
+                        st.error("❌ MCP Server Error - AI analysis services are not responding properly")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            if st.button("🔄 Try Server Recovery", type="secondary"):
+                                with st.spinner("Attempting server recovery..."):
+                                    if hasattr(st.session_state, 'mcp_manager'):
+                                        manager = st.session_state.mcp_manager
+                                        if hasattr(manager, 'restart_servers') and manager.restart_servers():
+                                            st.success("✅ Servers restarted successfully! Try generating again.")
+                                            try:
+                                                st.rerun()
+                                            except AttributeError:
+                                                st.experimental_rerun()
+                                        else:
+                                            st.error("❌ Server recovery failed")
+                        with col2:
+                            st.info("💡 If recovery fails, try refreshing the page")
+                            
+                    elif "api" in error_msg.lower() or "key" in error_msg.lower():
+                        st.error("❌ API Key Error")
+                        st.info("💡 Make sure your OpenAI API key is set: `export OPENAI_API_KEY=your_key`")
+                    else:
+                        st.error(f"❌ Unexpected error: {error_msg}")
 
                     # Show detailed error in expander for debugging
                     with st.expander("🔍 Technical Details (for debugging)", expanded=False):
                         import traceback
                         st.code(traceback.format_exc())
+                        
+                        # Add server status information
+                        if hasattr(st.session_state, 'mcp_manager'):
+                            manager = st.session_state.mcp_manager
+                            server_count = len(getattr(manager, 'servers', []))
+                            st.write(f"**Server Count:** {server_count}")
+                            
+                            if hasattr(manager, 'verify_all_servers_healthy'):
+                                try:
+                                    healthy = manager.verify_all_servers_healthy(quick_check=True)
+                                    st.write(f"**All Servers Healthy:** {healthy}")
+                                except Exception as health_error:
+                                    st.write(f"**Server Health Check Failed:** {health_error}")
 
-                    if "api" in str(e).lower() or "key" in str(e).lower():
-                        st.info("💡 Make sure your OpenAI API key is set: `export OPENAI_API_KEY=your_key`")
-                    elif "mcp" in str(e).lower():
-                        st.info("💡 MCP servers may not be available. Check installation.")
                 finally:
                     # Clear progress indicators if they exist
                     if 'progress_bar' in locals():
