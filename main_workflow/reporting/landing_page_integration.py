@@ -107,6 +107,15 @@ class LandingPageGenerator:
                 if not self.agent.servers:
                     await asyncio.get_event_loop().run_in_executor(None, self.agent.setup_servers)
 
+            # Verify servers are healthy before proceeding
+            if hasattr(self.agent, 'servers') and self.agent.servers:
+                from mcp_utils import is_server_process_alive
+                healthy_servers = [server for server in self.agent.servers if is_server_process_alive(server)]
+                if len(healthy_servers) != len(self.agent.servers):
+                    logger.warning(f"Some servers are unhealthy ({len(healthy_servers)}/{len(self.agent.servers)}), attempting restart")
+                    # Try to restart servers
+                    await asyncio.get_event_loop().run_in_executor(None, self.agent.setup_servers)
+
             # Create agent with research focus (or recreate with new prompt)
             self.agent.create_agent(biological_prompt)
 
@@ -409,6 +418,14 @@ def generate_ai_landing_page(integrator, biological_prompt: str, max_genes: int 
             # Reuse existing manager and its agent
             manager = st.session_state.mcp_manager
             
+            # Check and recover servers if needed
+            if hasattr(manager, 'check_and_recover_servers'):
+                recovery_success = manager.check_and_recover_servers()
+                if not recovery_success:
+                    logger.error("Failed to recover MCP servers")
+                    st.error("MCP servers are not available. Please refresh the page.")
+                    return None
+            
             # Create generator
             generator = LandingPageGenerator(integrator)
             
@@ -423,6 +440,17 @@ def generate_ai_landing_page(integrator, biological_prompt: str, max_genes: int 
             # Reuse existing servers instead of setting up new ones
             servers = manager.servers if hasattr(manager, 'servers') else []
             logger.info(f"Reusing {len(servers)} existing MCP servers")
+            
+            # Verify servers are healthy before using them
+            from mcp_utils import is_server_process_alive
+            healthy_servers = [server for server in servers if is_server_process_alive(server)]
+            if len(healthy_servers) != len(servers):
+                logger.warning(f"Some servers are unhealthy ({len(healthy_servers)}/{len(servers)})")
+                if len(healthy_servers) == 0:
+                    logger.error("No healthy servers available")
+                    st.error("No healthy MCP servers available. Please refresh the page.")
+                    return None
+            
             reporting_agent.servers = servers
             # Create agent configured for the specific biological prompt
             logger.info("Creating agent with biological prompt")
@@ -514,23 +542,69 @@ async def auto_analyze_on_load(integrator, progress_callback=None) -> Optional[D
             is_valid, error = manager.validate_data_directory()
             if not is_valid:
                 logger.warning(f"Invalid directory: {error}")
-                return None
+                return {
+                    "success": False,
+                    "error": f"Invalid data directory: {error}",
+                    "timestamp": datetime.now().isoformat()
+                }
             logger.info("Directory validation passed")
 
-            # Setup servers and store in session state
+            # Setup servers with retry logic
             logger.info("Setting up MCP servers...")
-            manager.setup_servers()
-            logger.info(f"Setup {len(manager.servers)} MCP servers")
+            max_setup_attempts = 3
+            setup_success = False
+            
+            for attempt in range(max_setup_attempts):
+                try:
+                    manager.setup_servers()
+                    # Verify servers are healthy
+                    if manager.verify_all_servers_healthy():
+                        setup_success = True
+                        logger.info(f"Setup {len(manager.servers)} healthy MCP servers")
+                        break
+                    else:
+                        logger.warning(f"Server health check failed on attempt {attempt + 1}")
+                        if attempt < max_setup_attempts - 1:
+                            # Clean up failed servers before retry
+                            try:
+                                asyncio.run(manager._cleanup_servers_sync())
+                            except Exception:
+                                pass
+                            manager.servers = []
+                            await asyncio.sleep(2)  # Wait before retry
+                except Exception as setup_error:
+                    logger.error(f"Server setup attempt {attempt + 1} failed: {setup_error}")
+                    if attempt < max_setup_attempts - 1:
+                        await asyncio.sleep(2)  # Wait before retry
+            
+            if not setup_success:
+                error_msg = "Failed to setup healthy MCP servers after multiple attempts"
+                logger.error(error_msg)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "timestamp": datetime.now().isoformat()
+                }
             
             st.session_state.mcp_manager = manager
             st.session_state.mcp_servers = manager.servers
             logger.info("Created and stored MCP manager in session state")
         else:
-            # Reuse existing manager
+            # Reuse existing manager but verify server health
             manager = st.session_state.mcp_manager
             logger.info(f"Reusing existing MCP manager from session state (has {len(getattr(manager, 'servers', []))} servers)")
+            
+            # Check and recover servers if needed
+            if hasattr(manager, 'check_and_recover_servers'):
+                if not manager.check_and_recover_servers():
+                    logger.error("Failed to recover unhealthy servers")
+                    return {
+                        "success": False,
+                        "error": "MCP servers are not responsive",
+                        "timestamp": datetime.now().isoformat()
+                    }
 
-        # Run analysis
+        # Run analysis with enhanced error handling
         logger.info("Starting initial analysis...")
         try:
             loop = asyncio.get_event_loop()
@@ -546,19 +620,55 @@ async def auto_analyze_on_load(integrator, progress_callback=None) -> Optional[D
             try:
                 result = asyncio.run_coroutine_threadsafe(
                     manager.run_initial_analysis(progress_callback), loop
-                ).result(timeout=60)  # 1 minute timeout
+                ).result(timeout=120)  # 2 minute timeout
+            except asyncio.TimeoutError:
+                logger.error("Auto-analysis timed out after 2 minutes")
+                return {
+                    "success": False,
+                    "error": "Analysis timed out after 2 minutes",
+                    "timestamp": datetime.now().isoformat()
+                }
             except Exception as async_error:
                 logger.error(f"Error in async auto-analysis: {async_error}", exc_info=True)
-                # Skip fallback to avoid nested event loop issues
-                logger.info("Skipping auto-analysis due to event loop conflicts")
-                result = None
+                # Try to recover servers and retry once
+                if hasattr(manager, 'check_and_recover_servers') and manager.check_and_recover_servers():
+                    logger.info("Servers recovered, retrying analysis...")
+                    try:
+                        result = asyncio.run_coroutine_threadsafe(
+                            manager.run_initial_analysis(progress_callback), loop
+                        ).result(timeout=60)  # Shorter timeout for retry
+                    except Exception as retry_error:
+                        logger.error(f"Retry analysis also failed: {retry_error}")
+                        result = {
+                            "success": False,
+                            "error": f"Analysis failed: {str(async_error)}",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                else:
+                    result = {
+                        "success": False,
+                        "error": f"Analysis failed and server recovery unsuccessful: {str(async_error)}",
+                        "timestamp": datetime.now().isoformat()
+                    }
         else:
             logger.debug("Event loop not running, using run_until_complete")
-            result = loop.run_until_complete(
-                manager.run_initial_analysis(progress_callback)
-            )
+            try:
+                result = loop.run_until_complete(
+                    asyncio.wait_for(
+                        manager.run_initial_analysis(progress_callback),
+                        timeout=120
+                    )
+                )
+            except asyncio.TimeoutError:
+                logger.error("Auto-analysis timed out after 2 minutes")
+                result = {
+                    "success": False,
+                    "error": "Analysis timed out after 2 minutes",
+                    "timestamp": datetime.now().isoformat()
+                }
 
-        logger.info(f"Analysis completed with success: {result.get('success', False) if result else False}")
+        success = result.get('success', False) if result else False
+        logger.info(f"Analysis completed with success: {success}")
         return result
 
     except Exception as e:
@@ -567,6 +677,10 @@ async def auto_analyze_on_load(integrator, progress_callback=None) -> Optional[D
         logger.error(f"Error type: {type(e).__name__}")
         logger.error(f"Error args: {e.args}")
         logger.error(f"Results dir: {integrator.results_dir}")
-        return None
+        return {
+            "success": False,
+            "error": f"Unexpected error during auto-analysis: {str(e)}",
+            "timestamp": datetime.now().isoformat()
+        }
     # Note: NO finally block that cleans up the manager
     # The servers stay alive in session state for future use
