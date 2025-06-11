@@ -9,11 +9,18 @@
 #SBATCH -o {{ logs_dir }}/run_%A_%a.out
 #SBATCH -e {{ logs_dir }}/run_%A_%a.err
 
-source ~/.bashrc
-module load R/4.1.2-gcc-blas-fullsupport
+module load apptainer
+
+TEMP_DIR=$(pwd)/tmp_apptainer_${SLURM_ARRAY_TASK_ID}
+mkdir -p ${TEMP_DIR}
+
+# Path to your .sif
+SIF=/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/container_testing/uorca_0.1.0.sif
 
 echo "Current time: $(date)"
 echo "Array task $SLURM_ARRAY_TASK_ID processing dataset"
+echo "CPUs available: $SLURM_CPUS_PER_TASK"
+echo "Using temporary directory: ${TEMP_DIR}"
 
 CSV_FILE="{{ csv_file }}"
 
@@ -23,13 +30,31 @@ accession=$(echo "$LINE" | cut -d',' -f1)
 
 echo "Running accession=$accession"
 
-export PYTHONPATH="{{ project_root }}:$PYTHONPATH"
-export R_LIBS_USER=~/R/library
+# Bind-mounts:
+#  - your repo → /workspace
+#  - the host's output directory → /UORCA_results in the container
+BIND="-B {{ project_root }}:/workspace \
+      -B {{ base_output_dir }}:/UORCA_results \
+      -B ${TEMP_DIR}:/tmp"
 
-uv run {{ project_root }}/main_workflow/master.py \
-    --accession "$accession" \
-    --output_dir {{ base_output_dir }} \
-    --resource_dir {{ resource_dir }} \
-    {% if cleanup %}--cleanup{% endif %}
+echo "[$(date)] Starting agentic workflow via Apptainer for $accession"
+
+# Run the container with additional options for temporary directories
+apptainer exec \
+  $BIND \
+  --tmpdir=${TEMP_DIR} \
+  --cleanenv \
+  $SIF \
+  bash -lc "\
+    cd /workspace && \
+    uv run ./main_workflow/master.py \
+      --accession $accession \
+      --output_dir /UORCA_results \
+      --resource_dir {{ resource_dir }} \
+      {% if cleanup %}--cleanup{% endif %}
+  "
 
 echo "Finished $accession at $(date)"
+
+# Clean up temporary directory
+rm -rf ${TEMP_DIR}
