@@ -7,6 +7,9 @@
 
 set -e
 
+# Flag to prevent double cleanup
+CLEANUP_DONE=0
+
 # Function to display usage
 show_usage() {
     echo "Usage: $0 [results_directory] [port]"
@@ -98,6 +101,12 @@ echo "Using temporary directory: ${TEMP_DIR}"
 echo "Container: $SIF"
 echo "Project root: $PROJECT_ROOT"
 echo "Results directory: $RESULTS_DIR"
+echo ""
+echo "PATH MAPPING:"
+echo "  Host path: ${RESULTS_DIR}"
+echo "  → Container path: /UORCA_results"
+echo ""
+echo "NOTE: When using the app, enter '/UORCA_results' in the results directory field."
 
 # Bind-mounts:
 #  - your repo → /workspace
@@ -113,18 +122,30 @@ if ss -tuln 2>/dev/null | grep -q ":${PORT} "; then
 fi
 
 echo ""
+echo "=========================================="
 echo "Starting UORCA Explorer..."
-echo "Container will start momentarily. Please wait for startup messages..."
+echo "Container will start momentarily."
 echo ""
-echo "To access the app:"
+echo "ACCESS INSTRUCTIONS:"
 echo "1. On your laptop, run: ssh -L 8000:127.0.0.1:${PORT} $(whoami)@$(hostname)"
 echo "2. Open http://127.0.0.1:8000 in your browser"
+echo ""
+echo "IMPORTANT NOTES:"
+echo "- The app will show a URL like 'http://0.0.0.0:8501' - IGNORE THIS"
+echo "- Use your SSH tunnel URL (http://127.0.0.1:8000) instead"
+echo "- Enter '/UORCA_results' as the results directory path in the app"
 echo ""
 echo "Press Ctrl+C to stop the application"
 echo "=========================================="
 
 # Cleanup function
 cleanup() {
+    # Prevent double execution
+    if [ "$CLEANUP_DONE" -eq 1 ]; then
+        return
+    fi
+    CLEANUP_DONE=1
+    
     echo ""
     echo "Shutting down UORCA Explorer..."
     echo "Cleaning up temporary directory..."
@@ -147,6 +168,8 @@ if ! apptainer exec \
   bash -lc "\
     cd /workspace && \
     echo 'Container started successfully. Initializing Streamlit...' && \
+    export STREAMLIT_BROWSER_GATHER_USAGE_STATS=false && \
+    export STREAMLIT_SERVER_HEADLESS=true && \
     uv run streamlit run main_workflow/reporting/uorca_explorer.py --server.port ${PORT} --server.address 0.0.0.0 --server.headless true
   "; then
     echo ""

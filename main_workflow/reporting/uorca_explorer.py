@@ -285,6 +285,15 @@ st.markdown("""
 # ---------- 1. sidebar: data & user parameters -----------------
 st.sidebar.title("🧬 UORCA Explorer")
 
+# Check if running in container and add path guidance
+if os.path.exists('/workspace') and os.path.exists('/UORCA_results'):
+    st.sidebar.info("""
+    ### 📂 Container Mode Detected
+    **Running in container:** Use `/UORCA_results` as your results directory path.
+    
+    This path maps to your host results directory.
+    """)
+
 # Get the default results directory
 default_dir = os.getenv("UORCA_DEFAULT_RESULTS_DIR")
 if not default_dir:
@@ -295,8 +304,8 @@ if not default_dir:
 # absolute path on the server
 results_dir = st.sidebar.text_input(
     "Results directory",
-    value=default_dir,
-    help="Folder containing UORCA RNAseqAnalysis results"
+    value="/UORCA_results" if os.path.exists('/UORCA_results') else default_dir,
+    help="Path to UORCA results. If running in container, use '/UORCA_results'. Otherwise, use the full path to your results directory."
 )
 
 def _validate_results_dir(path: str) -> tuple[bool, str]:
@@ -2429,24 +2438,53 @@ if ri and ri.cpm_data:
     )
 else:
     # Show help if no data is loaded
-    st.info(
-        """
-        ## Welcome to UORCA Explorer
+    # Check if we're running in container mode
+    container_mode = os.path.exists('/workspace') and os.path.exists('/UORCA_results')
+    
+    if container_mode:
+        st.info(
+            """
+            ## Welcome to UORCA Explorer
 
-        This app allows you to interactively explore RNA-seq results from UORCA analyses.
+            This app allows you to interactively explore RNA-seq results from UORCA analyses.
 
-        ### Getting Started
-        1. Enter the path to your UORCA results directory in the sidebar
-        2. The app will load your data and display interactive visualizations
-        3. Use the sidebar controls to filter genes, datasets, and contrasts
+            ### Getting Started (Container Mode)
+            1. The results directory should already be set to `/UORCA_results` in the sidebar
+            2. If not, enter `/UORCA_results` as your results directory path
+            3. The app will load your data and display interactive visualizations
+            4. Use the sidebar controls to filter genes, datasets, and contrasts
 
-        ### Troubleshooting
-        - Make sure the path contains valid UORCA analysis results
-        - Each analysis should have a directory structure with:
-          - RNAseqAnalysis/ directory with CPM.csv file
-          - metadata/ directory with contrasts.csv and edger_analysis_samples.csv files
-        """
-    )
+            ### Container Path Mapping
+            - **Inside container:** `/UORCA_results` 
+            - **Host system:** Your actual results directory path
+            - Always use `/UORCA_results` when entering paths in this app
+
+            ### Troubleshooting
+            - Make sure the path contains valid UORCA analysis results
+            - Each analysis should have a directory structure with:
+              - RNAseqAnalysis/ directory with CPM.csv file
+              - metadata/ directory with contrasts.csv and edger_analysis_samples.csv files
+            """
+        )
+    else:
+        st.info(
+            """
+            ## Welcome to UORCA Explorer
+
+            This app allows you to interactively explore RNA-seq results from UORCA analyses.
+
+            ### Getting Started
+            1. Enter the path to your UORCA results directory in the sidebar
+            2. The app will load your data and display interactive visualizations
+            3. Use the sidebar controls to filter genes, datasets, and contrasts
+
+            ### Troubleshooting
+            - Make sure the path contains valid UORCA analysis results
+            - Each analysis should have a directory structure with:
+              - RNAseqAnalysis/ directory with CPM.csv file
+              - metadata/ directory with contrasts.csv and edger_analysis_samples.csv files
+            """
+        )
 
 if __name__ == "__main__":
     # This is just here for documentation
