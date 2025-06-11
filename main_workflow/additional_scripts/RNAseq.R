@@ -1,18 +1,20 @@
-user_lib <- Sys.getenv("R_LIBS_USER", unset="~/R/library")
-if (!dir.exists(user_lib)) {
-    dir.create(user_lib, recursive = TRUE)
-}
-.libPaths(c(user_lib, .libPaths()))
+#user_lib <- Sys.getenv("R_LIBS_USER", unset="~/R/library")
+#if (!dir.exists(user_lib)) {
+#    dir.create(user_lib, recursive = TRUE)
+#}
+#.libPaths(c(user_lib, .libPaths()))
 
-
-library(pacman)
-p_load(edgeR, tximport, limma, gplots, ComplexHeatmap)
+library(edgeR)
+library(limma)
+library(tximport)
+library(gplots)
+library(ComplexHeatmap)
 
 create_plot_output_dirs <- function(output_dir) {
   # Create main analysis directory (RNAseqAnalysis)
   analysis_dir <- file.path(output_dir, "RNAseqAnalysis")
   dir.create(analysis_dir, showWarnings = FALSE, recursive = TRUE)
-  
+
   # Return the analysis directory path
   return(analysis_dir)
 }
@@ -21,11 +23,11 @@ create_plot_output_dirs <- function(output_dir) {
 create_contrast_dir <- function(output_dir, contrast_name) {
   # Clean contrast name for file system use
   clean_contrast <- gsub("[^a-zA-Z0-9]", "_", contrast_name)
-  
+
   # Create contrast-specific directory
   contrast_dir <- file.path(output_dir, "RNAseqAnalysis", clean_contrast)
   dir.create(contrast_dir, showWarnings = FALSE, recursive = TRUE)
-  
+
   return(contrast_dir)
 }
 
@@ -33,20 +35,20 @@ create_contrast_dir <- function(output_dir, contrast_name) {
 export_cpm <- function(dge, output_dir) {
   # Calculate log-CPM values
   lcpm <- cpm(dge, log = TRUE)
-  
+
   # Create a data frame with gene names as first column
   cpm_df <- as.data.frame(lcpm)
   cpm_df$Gene <- rownames(cpm_df)
-  
+
   # Reorder columns to have Gene as first column
   cpm_df <- cpm_df[, c("Gene", setdiff(names(cpm_df), "Gene"))]
-  
+
   # Save to file
   cpm_file <- file.path(output_dir, "RNAseqAnalysis", "CPM.csv")
   write.csv(cpm_df, file = cpm_file, row.names = FALSE)
-  
+
   cat("Saved normalized log-CPM values to:", cpm_file, "\n")
-  
+
   return(cpm_file)
 }
 
@@ -254,7 +256,7 @@ plot_deg_heatmap <- function(dge, fit_object, output_dir, group_data = NULL,
 
     # Determine the contrast name from the fit_object
     contrast_name <- colnames(fit_object)[coef]
-    
+
     # Create contrast-specific directory
     contrast_dir <- create_contrast_dir(output_dir, contrast_name)
 
@@ -571,7 +573,7 @@ if (!is.null(custom_contrast_matrix)) {
         top_results$Gene <- rownames(top_results)
         top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
         print(head(top_results))
-        
+
         # Save in contrast-specific directory
         contrast_name <- colnames(design)[2] + "_vs_" + colnames(design)[1]
         contrast_dir <- create_contrast_dir(output_dir, contrast_name)
@@ -592,7 +594,7 @@ if (!is.null(custom_contrast_matrix)) {
             top_results$Gene <- rownames(top_results)
             top_results <- top_results[, c("Gene", setdiff(names(top_results), "Gene"))]
             print(head(top_results))
-            
+
             # Save in contrast-specific directory
             contrast_dir <- create_contrast_dir(output_dir, coef_name)
             write.csv(top_results, file = file.path(contrast_dir, "DEG.csv"), row.names = FALSE)

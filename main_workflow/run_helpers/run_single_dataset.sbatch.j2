@@ -8,23 +8,47 @@
 #SBATCH -o {{ logs_dir }}/run_{{ accession }}.out
 #SBATCH -e {{ logs_dir }}/run_{{ accession }}.err
 
-source ~/.bashrc
-module load R/4.1.2-gcc-blas-fullsupport
+module load apptainer
+
+TEMP_DIR=$(pwd)/tmp_apptainer_{{ accession }}
+mkdir -p ${TEMP_DIR}
+
+# Path to your .sif
+SIF=/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/container_testing/uorca_0.1.0.sif
 
 echo "Current time: $(date)"
 echo "Running with parallelized Kallisto quantification"
 echo "CPUs available: $SLURM_CPUS_PER_TASK"
+echo "Using temporary directory: ${TEMP_DIR}"
 
-export PYTHONPATH="{{ project_root }}:$PYTHONPATH"
-export R_LIBS_USER=~/R/library
+# Bind-mounts:
+#  - your repo → /workspace
+#  - the host's output directory → /UORCA_results in the container
+BIND="-B {{ project_root }}:/workspace \
+      -B {{ output_dir }}:/UORCA_results \
+      -B ${TEMP_DIR}:/tmp"
 
-echo "Starting run for {{ accession }} at $(date)"
-uv run {{ project_root }}/main_workflow/master.py \
-    --accession {{ accession }} \
-    --output_dir {{ output_dir }} \
-    --resource_dir {{ resource_dir }} \
-    {% if cleanup %}--cleanup{% endif %}
-echo "Completed run for {{ accession }} at $(date)"
+echo "[$(date)] Starting agentic workflow via Apptainer for {{ accession }}"
+
+# Run the container with additional options for temporary directories
+apptainer exec \
+  $BIND \
+  --tmpdir=${TEMP_DIR} \
+  --cleanenv \
+  $SIF \
+  bash -lc "\
+    cd /workspace && \
+    uv run ./main_workflow/master.py \
+      --accession {{ accession }} \
+      --output_dir /UORCA_results \
+      --resource_dir {{ resource_dir }} \
+      {% if cleanup %}--cleanup{% endif %}
+  "
+
+echo "[$(date)] Workflow complete for {{ accession }}."
+
+# Clean up temporary directory
+rm -rf ${TEMP_DIR}
 
 # Update job status to completed
 # Note: Script files are cleaned up immediately after job submission
