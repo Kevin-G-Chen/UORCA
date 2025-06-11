@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Bioconductor that matches the R in this image
 RUN Rscript -e "install.packages('BiocManager', repos='https://cloud.r-project.org', ask=FALSE)" \
     && Rscript -e "BiocManager::install(version='3.21', ask=FALSE, update=FALSE)" \
-    && Rscript -e "BiocManager::install(c('edgeR','limma','tximport','ComplexHeatmap'), ask=FALSE, update=FALSE)"
+    && Rscript -e "BiocManager::install(c('edgeR','limma','tximport','ComplexHeatmap','gplots'), ask=FALSE, update=FALSE)"
 
 ###############################################################################
 #  2.  Python 3.11 + uv (system-site install via --system)
@@ -21,10 +21,7 @@ RUN Rscript -e "install.packages('BiocManager', repos='https://cloud.r-project.o
 ENV CARGO_HOME=/root/.cargo
 # Install uv and make it available in PATH
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    ln -s /root/.local/bin/uv /usr/local/bin/uv
-
-
-
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv
 
 # ---- dependency layer (better cache) ----
 WORKDIR /workspace
