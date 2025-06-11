@@ -45,9 +45,6 @@ RUN wget -q https://github.com/pachterlab/kallisto/releases/download/v${KALLISTO
     mv kallisto/kallisto /usr/local/bin/ && \
     rm -rf kallisto*.tar.gz kallisto
 
-# NCBI Entrez Direct (EDirect) – official one-liner
-RUN sh -c "$(curl -fsSL https://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh)" && \
-    ln -s /root/edirect*/edirect.pl /usr/local/bin/edirect
 
 ###############################################################################
 #  SRA Toolkit 3.2.1  (adds fasterq-dump, prefetch, etc.)
@@ -67,10 +64,27 @@ RUN set -eux; \
     mkdir -p /root/.ncbi && \
     printf '/LIBS/GUID = "docker-build-guid"\nconfig/default = "true"\n' > /root/.ncbi/user-settings.mkfg
 
+# NCBI Entrez Direct (EDirect) – official one-liner
+
+RUN set -eux; \
+    echo ">>> Installing EDirect …"; \
+    sh -c "$(curl -fsSL https://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh)"; \
+    # Option A – one-liner that symlinks every helper into /usr/local/bin
+    find /root/edirect -maxdepth 1 -type f -perm -u+x -exec ln -sf {} /usr/local/bin/ \; ; \
+    # Option B – instead of the line above, keep them in place and export PATH:
+    #     echo 'export PATH=$PATH:/root/edirect' > /etc/profile.d/edirect.sh ; \
+    #     ENV PATH="/root/edirect:${PATH}"                                    ; \
+    # Quick build-time check:
+    /root/edirect/esearch -version | head -1
 ###############################################################################
 #  4.  Final image metadata
 ###############################################################################
 WORKDIR /workspace
+RUN echo ">>> FINAL ENVIRONMENT:"; \
+    echo "PATH=$PATH"; \
+    which python uv edirect || true; \
+    env | sort
+
 CMD ["/bin/bash"]
 
 ###############################################################################
