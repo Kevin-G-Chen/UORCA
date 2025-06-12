@@ -192,6 +192,13 @@ def fetch_geo_summaries(ids: List[str]) -> pd.DataFrame:
                 'Date': rec.get('PDAT', '')
             }
 
+            # Determine number of samples if available
+            samples = rec.get('Samples', [])
+            if isinstance(samples, list):
+                row_data['NumSamples'] = len(samples)
+            else:
+                row_data['NumSamples'] = 0
+
             # Add PubMed information when available
             if pmids:
                 row_data['PrimaryPubMedID'] = pmids[0]
@@ -208,6 +215,8 @@ def fetch_geo_summaries(ids: List[str]) -> pd.DataFrame:
         time.sleep(0.4)
 
     result_df = pd.DataFrame(rows)
+    if 'NumSamples' not in result_df.columns:
+        result_df['NumSamples'] = 0
     logger.info(f"Successfully fetched {len(result_df)} GEO summaries")
     return result_df
 
@@ -614,6 +623,15 @@ def main():
 
     geo_df = fetch_geo_summaries(unique_geo_ids)
     logger.info(f"Fetched metadata for {len(geo_df)} GEO datasets")
+
+    # Filter out datasets with 3 or fewer samples
+    before_filter = len(geo_df)
+    geo_df = geo_df[geo_df['NumSamples'] > 3].reset_index(drop=True)
+    filtered = before_filter - len(geo_df)
+    if filtered:
+        message = f"🚮 Filtered out {filtered} dataset(s) with 3 or fewer samples"
+        print(message)
+        logger.info(message)
 
     # Store original dataframe before any filtering for later reference
     original_geo_df = geo_df.copy()
