@@ -1,0 +1,3 @@
+[servers.uorca_data]
+enabled = true
+path = "main_workflow/reporting/mcp_servers/uorca_data_server.py"
