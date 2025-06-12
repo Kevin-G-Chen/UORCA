@@ -44,13 +44,11 @@ def log(message: str):
 # Data Access Layer
 # -----------------------------------------------------------------------------
 class UORCADataAccess:
-    """
-    Provides access to UORCA analysis results data.
-    """
+    """Provides access to UORCA analysis results data."""
 
-    def __init__(self, results_dir: Optional[str] = None):
+    def __init__(self, results_dir: str):
         """Initialize with results directory."""
-        self.results_dir = results_dir or os.environ.get("UORCA_RESULTS_DIR", "/UORCA_results")
+        self.results_dir = results_dir
         self.integrator = None
         self._initialize_integrator()
 
@@ -181,11 +179,12 @@ class UORCADataAccess:
 # Global data access instance
 _data_access: Optional[UORCADataAccess] = None
 
-def get_data_access() -> UORCADataAccess:
+def get_data_access(results_dir: Optional[str] = None) -> UORCADataAccess:
     """Get or create the data access instance."""
     global _data_access
     if _data_access is None:
-        results_dir = os.environ.get("UORCA_RESULTS_DIR")
+        if results_dir is None:
+            raise ValueError("results_dir must be provided explicitly to get_data_access()")
         _data_access = UORCADataAccess(results_dir)
     return _data_access
 
@@ -194,15 +193,18 @@ def get_data_access() -> UORCADataAccess:
 # -----------------------------------------------------------------------------
 
 @mcp.tool()
-async def list_contrasts() -> str:
+async def list_contrasts(results_dir: str) -> str:
     """
     List all available contrasts across all UORCA analyses.
+
+    Args:
+        results_dir: Path to the UORCA results directory
 
     Returns:
         JSON string containing list of contrast identifiers in format "analysis_id:contrast_id"
     """
     try:
-        data_access = get_data_access()
+        data_access = get_data_access(results_dir)
         contrasts = data_access.get_contrasts()
         return json.dumps({"contrasts": contrasts}, ensure_ascii=False)
     except Exception as e:
@@ -210,18 +212,19 @@ async def list_contrasts() -> str:
         return json.dumps({"contrasts": [], "error": str(e)}, ensure_ascii=False)
 
 @mcp.tool()
-async def list_genes(limit: int = 1000) -> str:
+async def list_genes(results_dir: str, limit: int = 1000) -> str:
     """
     List genes available in the UORCA analyses.
 
     Args:
+        results_dir: Path to the UORCA results directory
         limit: Maximum number of genes to return (default: 1000)
 
     Returns:
         JSON string containing list of gene symbols
     """
     try:
-        data_access = get_data_access()
+        data_access = get_data_access(results_dir)
         genes = data_access.get_genes(limit=limit)
         return json.dumps({"genes": genes[:limit]}, ensure_ascii=False)
     except Exception as e:
@@ -229,19 +232,20 @@ async def list_genes(limit: int = 1000) -> str:
         return json.dumps({"genes": [], "error": str(e)}, ensure_ascii=False)
 
 @mcp.tool()
-async def get_lfc(contrast: str, gene: str) -> str:
+async def get_lfc(contrast: str, gene: str, results_dir: str) -> str:
     """
     Get log fold change for a specific gene in a specific contrast.
 
     Args:
         contrast: Contrast identifier (format: "analysis_id:contrast_id")
         gene: Gene symbol
+        results_dir: Path to the UORCA results directory
 
     Returns:
         JSON string with log fold change value or null if not found
     """
     try:
-        data_access = get_data_access()
+        data_access = get_data_access(results_dir)
         lfc = data_access.get_log_fold_change(contrast, gene)
 
         return json.dumps({
@@ -259,15 +263,18 @@ async def get_lfc(contrast: str, gene: str) -> str:
         }, ensure_ascii=False)
 
 @mcp.tool()
-async def get_analysis_info() -> str:
+async def get_analysis_info(results_dir: str) -> str:
     """
     Get information about available UORCA analyses.
+
+    Args:
+        results_dir: Path to the UORCA results directory
 
     Returns:
         JSON string with analysis metadata and structure
     """
     try:
-        data_access = get_data_access()
+        data_access = get_data_access(results_dir)
         info = data_access.get_analysis_info()
         return json.dumps(info, ensure_ascii=False)
     except Exception as e:
@@ -295,21 +302,20 @@ def main():
         "--debug", action="store_true", help="Enable debug logging"
     )
     parser.add_argument(
-        "--results-dir", help="Path to UORCA results directory"
+        "--results-dir", required=True,
+        help="Path to UORCA results directory"
     )
     args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    # Set results directory if provided
-    if args.results_dir:
-        os.environ["UORCA_RESULTS_DIR"] = args.results_dir
-        log(f"Using results directory: {args.results_dir}")
+    global_results_dir = args.results_dir
+    log(f"Using results directory: {global_results_dir}")
 
     # Initialize data access to validate setup
     try:
-        data_access = get_data_access()
+        data_access = get_data_access(global_results_dir)
         if data_access.integrator is None:
             log("WARNING: Failed to initialize data access - tools may not work properly")
         else:

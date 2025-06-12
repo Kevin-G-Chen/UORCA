@@ -48,7 +48,9 @@ def create_uorca_agent(results_dir: Optional[str] = None) -> Agent:
     Create and configure an AI agent for UORCA data analysis.
 
     Args:
-        results_dir: Path to UORCA results directory (optional, uses env var if not provided)
+        results_dir: Path to UORCA results directory. If not provided, the
+            function will look for the ``UORCA_RESULTS_DIR`` environment
+            variable.
 
     Returns:
         Configured Agent instance
@@ -64,12 +66,17 @@ def create_uorca_agent(results_dir: Optional[str] = None) -> Agent:
         )
 
     try:
-        # Setup MCP server with results directory
-        env_vars = {}
-        if results_dir:
-            env_vars["UORCA_RESULTS_DIR"] = results_dir
+        # Determine results directory
+        if not results_dir:
+            results_dir = os.environ.get("UORCA_RESULTS_DIR")
+        if not results_dir:
+            raise ValueError("results_dir must be provided or set in UORCA_RESULTS_DIR")
 
-        server = setup_mcp_server("uorca_data", env_vars=env_vars)
+        # Setup MCP server with explicit results directory argument
+        server = setup_mcp_server(
+            "uorca_data",
+            server_args=["--results-dir", str(results_dir)]
+        )
         logger.info(f"Successfully set up UORCA data MCP server")
 
         # Create the agent with OpenAI GPT-4o-mini
