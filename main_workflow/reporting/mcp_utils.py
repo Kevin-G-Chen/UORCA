@@ -12,7 +12,7 @@ import sys
 import toml
 from pathlib import Path
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from pydantic_ai.mcp import MCPServerStdio
 
@@ -74,13 +74,18 @@ def load_server_config(server_name: str) -> Dict[str, Any]:
 
     return server_config
 
-def setup_mcp_server(server_name: str, env_vars: Optional[Dict[str, str]] = None) -> MCPServerStdio:
+def setup_mcp_server(
+    server_name: str,
+    env_vars: Optional[Dict[str, str]] = None,
+    server_args: Optional[List[str]] = None,
+) -> MCPServerStdio:
     """
     Set up an MCP server using the stdio transport.
 
     Args:
         server_name: The name of the server in servers.toml (e.g., "uorca_data")
         env_vars: Optional dictionary of environment variables to pass to the server process
+        server_args: Additional command line arguments to pass to the server
 
     Returns:
         Configured MCPServerStdio instance
@@ -122,9 +127,13 @@ def setup_mcp_server(server_name: str, env_vars: Optional[Dict[str, str]] = None
         env_dict.update(env_vars)
 
     # Create and return the server
+    args_list = [str(server_path)]
+    if server_args:
+        args_list.extend(server_args)
+
     server = MCPServerStdio(
         sys.executable,
-        args=[str(server_path)],
+        args=args_list,
         env=env_dict
     )
 
