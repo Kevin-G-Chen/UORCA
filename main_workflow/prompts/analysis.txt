@@ -18,15 +18,14 @@ You work in tandem with a network of other agents. The common point of communica
 #### GENERAL WORKFLOW
 
 If all goes well, you should be able to perform the following tasks sequentially:
+- **Process the metadata first by invoking the metadata agent**
+    - Use the metadata tools to clean columns and determine which column(s) are valid for analysis
+    - If no valid columns remain, report that the dataset cannot be analysed
+    - If multiple columns are relevant, merge them into a single column
+    - Identify the distinct values in the final analysis column and construct contrast matrices
 - Identify the Kallisto index file
     - Note that if you are having issues with this, you can still attempt to run the Kallisto quantification step, and it will return an informative error on the specific directory where you need to look.
 - Perform the Kallisto quantification
-- Process the metadata, including:
-    - Using tools to process metadata columns
-    - Identifying which column, or columns, to analyse
-    - IF NEEDED (i.e. if there are multiple columns), merge columns into a single column
-    - Identifying the distinct values into the analysis column of interest
-    - Using these distinct values to construct contrast matrices
 - Using these contrasts to perform differential expression analysis using edgeR/limma
     - This requires a tx2gene file - if you are not sure where this is, run this step and it will return an informative error message
 
