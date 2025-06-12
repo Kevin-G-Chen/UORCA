@@ -198,6 +198,15 @@ async def process_metadata(ctx: RunContext[MetadataContext]) -> dict:
         ctx.deps.analysis_metadata_df = analysis_df
         logger.info("💾 Stored analysis-specific metadata (without IDs, unique columns) in context")
 
+        # If no columns remain after cleaning, raise an error so the workflow can halt early
+        if analysis_df.shape[1] == 0:
+            error_msg = (
+                "No valid columns remain for analysis after removing identifier and unique-value columns. "
+                "This dataset cannot be analysed."
+            )
+            logger.error("❌ %s", error_msg)
+            raise ValueError(error_msg)
+
         # Count unique values for each column in the analysis df
         column_stats = {}
         for col in analysis_df.columns:
