@@ -145,7 +145,7 @@ cleanup() {
         return
     fi
     CLEANUP_DONE=1
-    
+
     echo ""
     echo "Shutting down UORCA Explorer..."
     echo "Cleaning up temporary directory..."
