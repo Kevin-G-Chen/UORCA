@@ -41,50 +41,6 @@ class ModuleFilter(logging.Filter):
     def filter(self, record):
         return any(record.name.startswith(n) for n in self.names)
 
-import atexit
-
-def cleanup_mcp_servers():
-    """Cleanup MCP servers when Streamlit session ends."""
-    try:
-        # Check if streamlit session_state is available
-        try:
-            import streamlit as st
-            if not hasattr(st, 'session_state'):
-                return
-
-            if hasattr(st.session_state, 'mcp_manager') and st.session_state.mcp_manager:
-                manager = st.session_state.mcp_manager
-            else:
-                return
-        except (ImportError, AttributeError, RuntimeError):
-            # Streamlit might not be available at exit or session_state might not be accessible
-            return
-
-        # Cleanup the manager
-        try:
-            import asyncio
-            # Run cleanup in a new event loop since this might be called at shutdown
-            try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(manager.cleanup())
-                loop.close()
-                print("Cleaned up MCP servers on session end")  # Use print instead of logger at exit
-            except Exception as loop_error:
-                print(f"Error in cleanup event loop: {loop_error}")
-        except Exception as cleanup_error:
-            print(f"Error during manager cleanup: {cleanup_error}")
-            import traceback
-            print(f"Cleanup traceback: {traceback.format_exc()}")
-
-    except Exception as e:
-        # Final fallback - use print since logging might not be available
-        print(f"Error cleaning up MCP servers on session end: {e}")
-        import traceback
-        print(f"Final cleanup traceback: {traceback.format_exc()}")
-
-# Register cleanup function
-atexit.register(cleanup_mcp_servers)
 
 
 
@@ -115,31 +71,9 @@ from single_analysis_plots import (
     load_sample_groups,
 )
 
-# Import the new MCP-based landing page integration
-try:
-    from landing_page_integration import (
-        generate_ai_landing_page,
-        auto_analyze_on_load,
-        LandingPageData,
-        ContrastSelection,
-        ThresholdSelection
-    )
-    from mcp_utils import get_mcp_status_info, check_mcp_requirements
-    MCP_LANDING_PAGE_AVAILABLE = True
-except ImportError as e:
-    MCP_LANDING_PAGE_AVAILABLE = False
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.warning(f"MCP landing page integration not available: {e}")
-
-# AI Landing Page functionality - integrated directly
-try:
-    import openai
-    from openai import OpenAI
-    LANDING_PAGE_AVAILABLE = True
-except ImportError as e:
-    LANDING_PAGE_AVAILABLE = False
-    # Only show warning in sidebar, not main area
+# Landing page functionality removed
+MCP_LANDING_PAGE_AVAILABLE = False
+LANDING_PAGE_AVAILABLE = False
 
 # Helper function for contrast labels
 def short_label(full_label: str) -> str:
@@ -151,29 +85,6 @@ def short_label(full_label: str) -> str:
 # AI LANDING PAGE FUNCTIONALITY - MCP-BASED
 # ========================================================================
 
-# Data structures are imported from landing_page_integration if available
-# Otherwise define minimal versions for compatibility
-if not MCP_LANDING_PAGE_AVAILABLE:
-    from dataclasses import dataclass
-
-    @dataclass
-    class ContrastSelection:
-        """Container for selected contrast with justification"""
-        analysis_id: str
-        contrast_id: str
-        relevance_score: float
-        justification: str
-        deg_count: int
-
-    @dataclass
-    class ThresholdSelection:
-        """Container for automatically selected statistical thresholds"""
-        fdr_cutoff: float
-        logfc_cutoff: float
-        min_frequency: int
-        justification: str
-
-    # Removed LandingPageData and generate_ai_landing_page - AI Landing Page functionality disabled
 
 
 
@@ -334,162 +245,8 @@ with st.sidebar.status("Loading data...", expanded=True) as status:
         # Check if this is the first time loading this directory
         if 'previous_results_dir' not in st.session_state or st.session_state.previous_results_dir != results_dir:
             st.session_state.previous_results_dir = results_dir
-            # Tear down old MCP servers if any
-            if 'mcp_servers' in st.session_state:
-                for srv in st.session_state.mcp_servers:
-                    try:
-                        srv.terminate()
-                    except Exception as e:
-                        logger = logging.getLogger(__name__)
-                        logger.warning(f"Error terminating MCP server: {e}")
-                del st.session_state.mcp_servers
-            # Clear auto-analysis state
-            st.session_state.auto_analysis_complete = False
-            st.session_state.auto_analysis_result = None
 
-        # Trigger auto-analysis if not done yet and MCP is available
-        if (not st.session_state.get("auto_analysis_complete", False)
-            and MCP_LANDING_PAGE_AVAILABLE
-            and bool(os.getenv("OPENAI_API_KEY"))):
 
-            with st.spinner("🤖 Automatically analyzing your dataset…"):
-                try:
-                    def update_progress(progress, message):
-                        # Simple progress callback for auto-analysis
-                        pass
-
-                    auto_result = asyncio.run(auto_analyze_on_load(ri, progress_callback=update_progress))
-
-                    if auto_result and auto_result.get("success"):
-                        st.session_state.auto_analysis_result = auto_result
-                        st.success("✅ Initial analysis complete! Check the AI Summary tab.")
-
-                except Exception as e:
-                    logger.error(f"Auto-analysis failed: {e}", exc_info=True)
-                finally:
-                    # mark it done so we don’t retry on every rerun
-                    st.session_state.auto_analysis_complete = True
-
-# Show AI landing page availability status
-api_key_available = bool(os.getenv("OPENAI_API_KEY"))
-
-# Check for both old and new implementations
-landing_available = LANDING_PAGE_AVAILABLE or MCP_LANDING_PAGE_AVAILABLE
-
-# Show MCP server status if available
-if hasattr(st.session_state, 'mcp_manager') and st.session_state.mcp_manager:
-    manager = st.session_state.mcp_manager
-    server_count = len(getattr(manager, 'servers', []))
-
-    if server_count > 0:
-        # Check server health
-        try:
-            if hasattr(manager, 'verify_all_servers_healthy'):
-                all_healthy = manager.verify_all_servers_healthy(quick_check=True)
-                if all_healthy:
-                    st.sidebar.success(f"🔗 MCP Servers: {server_count} Healthy")
-                else:
-                    st.sidebar.warning(f"⚠️ MCP Servers: Some Issues ({server_count} total)")
-                    if st.sidebar.button("🔄 Recover Servers"):
-                        with st.spinner("Recovering MCP servers..."):
-                            if hasattr(manager, 'check_and_recover_servers'):
-                                success = manager.check_and_recover_servers()
-                                if success:
-                                    st.sidebar.success("✅ Servers recovered!")
-                                    try:
-                                        st.rerun()
-                                    except AttributeError:
-                                        st.experimental_rerun()
-                                else:
-                                    st.sidebar.error("❌ Server recovery failed")
-            else:
-                st.sidebar.info(f"🔗 MCP Servers: {server_count} Active")
-        except Exception as e:
-            st.sidebar.error(f"🔗 MCP Servers: Status Unknown")
-    else:
-        st.sidebar.warning("🔗 MCP Servers: None Active")
-
-# Add MCP diagnostic panel
-if MCP_LANDING_PAGE_AVAILABLE:
-    with st.sidebar.expander("🔧 MCP Diagnostics", expanded=False):
-        try:
-            status = get_mcp_status_info()
-
-            # Python version
-            if status['python_version_ok']:
-                st.success(f"✅ Python {status['python_version']}")
-            else:
-                st.error(f"❌ Python {status['python_version']} (need 3.9+)")
-
-            # Package availability
-            if status['packages_available']:
-                st.success("✅ Required packages installed")
-            else:
-                st.error("❌ Missing packages:")
-                for pkg in status['missing_packages']:
-                    st.write(f"  - {pkg}")
-                st.code("pip install pydantic-ai openai")
-
-            # API key
-            if status['api_key_set']:
-                st.success("✅ OpenAI API key set")
-            else:
-                st.warning("⚠️ OpenAI API key not set")
-                st.code("export OPENAI_API_KEY=your_key")
-
-            # Server configuration
-            if status['servers_toml_exists']:
-                st.success("✅ Server configuration found")
-            else:
-                st.error("❌ servers.toml missing")
-
-            # Server scripts
-            all_scripts_exist = all(status['server_scripts_exist'].values())
-            if all_scripts_exist:
-                st.success("✅ Server scripts found")
-            else:
-                st.error("❌ Missing server scripts:")
-                for name, exists in status['server_scripts_exist'].items():
-                    if not exists:
-                        st.write(f"  - {name}")
-
-            # Recovery options
-            if hasattr(st.session_state, 'mcp_manager'):
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("🔄 Test Servers", help="Test server connectivity"):
-                        with st.spinner("Testing..."):
-                            manager = st.session_state.mcp_manager
-                            if hasattr(manager, 'verify_all_servers_healthy'):
-                                try:
-                                    healthy = manager.verify_all_servers_healthy()
-                                    if healthy:
-                                        st.success("All servers healthy!")
-                                    else:
-                                        st.error("Some servers unhealthy")
-                                except Exception as e:
-                                    st.error(f"Test failed: {e}")
-
-                with col2:
-                    if st.button("🆘 Force Restart", help="Restart all MCP servers"):
-                        with st.spinner("Restarting..."):
-                            manager = st.session_state.mcp_manager
-                            if hasattr(manager, 'restart_servers'):
-                                if manager.restart_servers():
-                                    st.success("Servers restarted!")
-                                    try:
-                                        st.rerun()
-                                    except AttributeError:
-                                        st.experimental_rerun()
-                                else:
-                                    st.error("Restart failed")
-
-            # Troubleshooting link
-            st.markdown("📚 [Full Troubleshooting Guide](https://github.com/your-repo/UORCA/blob/main/main_workflow/reporting/MCP_TROUBLESHOOTING.md)")
-
-        except Exception as e:
-            st.error(f"Diagnostic error: {e}")
-            st.info("💡 Try refreshing the page")
 
 # Only show the rest of the UI if we successfully loaded data
 if ri and ri.cpm_data:
@@ -867,7 +624,7 @@ if ri and ri.cpm_data:
     # These options have been moved up in the UI
 
     # ---------- 2. main tabs ---------------------------------------
-    tab_landing, tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs(["🤖 View AI Summary", "☑️ Select Data & Contrasts", "🌡️ Explore DEG Heatmap", "📈 Plot Gene Expression", "🧑‍🔬 Analyze Experiments", "📋 View Dataset Info", "🔍 View Contrast Info"])
+    tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs(["☑️ Select Data & Contrasts", "🌡️ Explore DEG Heatmap", "📈 Plot Gene Expression", "🧑‍🔬 Analyze Experiments", "📋 View Dataset Info", "🔍 View Contrast Info"])
 
     # Initialize session state for selections if not exists
     if 'selected_datasets' not in st.session_state:
@@ -883,11 +640,6 @@ if ri and ri.cpm_data:
                 for contrast_id in contrasts.keys():
                     selected_contrasts.add((analysis_id, contrast_id))
         st.session_state['selected_contrasts'] = selected_contrasts
-
-
-
-    # Removed AI landing page tab content
-
 
     with tab_sel:
         st.header("☑️ Select Data & Contrasts")
@@ -1034,148 +786,53 @@ if ri and ri.cpm_data:
             st.info("Please select contrasts in the 'Selections' tab.")
         else:
             # Only create heatmap if we're actually on the heatmap tab and have selections
-            # Check if we have landing page data to avoid unnecessary computation
-            if not (hasattr(st.session_state, 'landing_data') and st.session_state.landing_data):
-                # Create and display the heatmap using isolated fragment
-                @st.fragment
-                def draw_heatmap(gene_selection, contrast_pairs, show_adv=False):
-                    # Skip execution if AI is currently generating
-                    if st.session_state.get('ai_generating', False):
-                        return
-                    with st.spinner("Generating heatmap..."):
-                        try:
+            @st.fragment
+            def draw_heatmap(gene_selection, contrast_pairs, show_adv=False):
+                # Skip execution if AI is currently generating
+                if st.session_state.get('ai_generating', False):
+                    return
+                with st.spinner("Generating heatmap..."):
+                    try:
+                        if 'cached_figure_creation' in globals():
+                            fig = cached_figure_creation(
+                                "create_lfc_heatmap",
+                                gene_selection,
+                                contrast_pairs,
+                                None,
+                            )
+                        else:
+                            p_thresh = effective_pvalue_thresh if use_dynamic_filtering else None
+                            lfc_thresh_val = effective_lfc_thresh if use_dynamic_filtering else None
 
+                            fig = ri.create_lfc_heatmap(
+                                genes=gene_selection,
+                                contrasts=contrast_pairs,
+                                output_file=None,
+                                p_value_threshold=p_thresh,
+                                lfc_threshold=lfc_thresh_val,
+                                hide_empty_rows_cols=hide_empty_rows_cols,
+                                font_size=heatmap_font_size,
+                                show_grid_lines=show_grid_lines,
+                                grid_opacity=grid_opacity,
+                            )
 
-                            # Create heatmap with possibly modified parameters
-                            # Use cached version if available for older Streamlit versions
-                            if 'cached_figure_creation' in globals():
-                                fig = cached_figure_creation("create_lfc_heatmap",
-                                                            gene_selection,
-                                                            contrast_pairs,
-                                                            None)
-                            else:
-                                # Apply dynamic filtering if enabled
-                                p_thresh = effective_pvalue_thresh if use_dynamic_filtering else None
-                                lfc_thresh_val = effective_lfc_thresh if use_dynamic_filtering else None
+                        if fig:
+                            info_messages = [
+                                "💡 Hover over cells in the heatmap to see contrast descriptions and gene information."
+                            ]
+                            for msg in info_messages:
+                                st.info(msg)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.error("Could not generate heatmap. Please check your selections.")
+                    except Exception as e:
+                        logger.error(f"Error generating heatmap: {str(e)}", exc_info=True)
+                        st.error(f"Error generating heatmap: {str(e)}")
+                        with st.expander("🔍 Heatmap Error Details", expanded=False):
+                            import traceback
+                            st.code(traceback.format_exc())
 
-                                fig = ri.create_lfc_heatmap(
-                                    genes=gene_selection,
-                                    contrasts=contrast_pairs,
-                                    output_file=None,
-                                    p_value_threshold=p_thresh,
-                                    lfc_threshold=lfc_thresh_val,
-                                    hide_empty_rows_cols=hide_empty_rows_cols,
-                                    font_size=heatmap_font_size,
-                                    show_grid_lines=show_grid_lines,
-                                    grid_opacity=grid_opacity
-                                )
-
-                            # Display settings are now handled in the create_lfc_heatmap function
-
-
-
-                            if fig:
-                                # Add notes about functionality
-                                info_messages = ["💡 Hover over cells in the heatmap to see contrast descriptions and gene information."]
-                                # if use_dynamic_filtering:
-                                #    if show_advanced and 'use_separate_heatmap_filters' in locals() and use_separate_heatmap_filters:
-                                #        info_messages.append(f"🎯 Only genes meeting heatmap-specific thresholds (p<{effective_pvalue_thresh:.3f}, #|LFC|>{effective_lfc_thresh:.1f}) are colored.")
-                                #    else:
-                                #        info_messages.append(f"🎯 Only genes meeting Auto-selected DEGs thresholds (p<{effective_pvalue_thresh:.3f}, |LFC|>{effective_lfc_thresh:.1f}) are colored.")
-                                #if hide_empty_rows_cols:
-                                #    info_messages.append("🧹 Genes/contrasts with no significant values have been removed.")
-
-                                for msg in info_messages:
-                                    st.info(msg)
-
-                                # Display the plot
-                                st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                st.error("Could not generate heatmap. Please check your selections.")
-                        except Exception as e:
-                            logger.error(f"Error generating heatmap: {str(e)}", exc_info=True)
-                            st.error(f"Error generating heatmap: {str(e)}")
-
-                            # Show detailed error for debugging
-                            with st.expander("🔍 Heatmap Error Details", expanded=False):
-                                import traceback
-                                st.code(traceback.format_exc())
-
-                # Call the fragment with just the input parameters
-                draw_heatmap(gene_sel, selected_contrasts, show_advanced)
-            else:
-                # If landing page data exists, show a message and link to apply selections
-                st.info("💡 You have AI-generated selections available. Use the 'Apply These Selections to Other Tabs' button in the AI Summary tab to update this heatmap, or make manual selections below.")
-
-                # Still allow manual override
-                @st.fragment
-                def draw_heatmap_manual(gene_selection, contrast_pairs, show_adv=False):
-                    with st.spinner("Generating heatmap..."):
-                        try:
-                            # Create heatmap with possibly modified parameters
-                            # Use cached version if available for older Streamlit versions
-                            if 'cached_figure_creation' in globals():
-                                fig = cached_figure_creation(
-                                    "create_lfc_heatmap",
-                                    gene_selection,
-                                    contrast_pairs,
-                                    None,
-                                )
-                            else:
-                                # Apply dynamic filtering if enabled
-                                p_thresh = (
-                                    effective_pvalue_thresh if use_dynamic_filtering else None
-                                )
-                                lfc_thresh_val = (
-                                    effective_lfc_thresh if use_dynamic_filtering else None
-                                )
-
-                                fig = ri.create_lfc_heatmap(
-                                    genes=gene_selection,
-                                    contrasts=contrast_pairs,
-                                    output_file=None,
-                                    p_value_threshold=p_thresh,
-                                    lfc_threshold=lfc_thresh_val,
-                                    hide_empty_rows_cols=hide_empty_rows_cols,
-                                    font_size=heatmap_font_size,
-                                    show_grid_lines=show_grid_lines,
-                                    grid_opacity=grid_opacity,
-                                )
-
-                            # Display settings are now handled in the create_lfc_heatmap function
-                            if fig:
-                                # Add notes about functionality
-                                info_messages = [
-                                    "💡 Hover over cells in the heatmap to see contrast descriptions and gene information."
-                                ]
-
-                                for msg in info_messages:
-                                    st.info(msg)
-                                st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                st.error(
-                                    "Could not generate heatmap. Please check your selections."
-                                )
-                        except Exception as e:
-                            logger.error(f"Error generating manual heatmap: {str(e)}", exc_info=True)
-                            st.error(f"Error generating heatmap: {str(e)}")
-
-                            # Show detailed error for debugging
-                            with st.expander("🔍 Manual Heatmap Error Details", expanded=False):
-                                import traceback
-                                st.code(traceback.format_exc())
-
-
-                # Allow manual generation if user wants to override AI selections
-                if st.button("🔄 Generate Manual Heatmap", help="Generate heatmap with current manual selections, ignoring AI selections"):
-                    # Temporarily clear AI data to force manual generation
-                    temp_landing_data = st.session_state.get('landing_data')
-                    if 'landing_data' in st.session_state:
-                        del st.session_state.landing_data
-                    draw_heatmap_manual(gene_sel, selected_contrasts, show_advanced)
-                    # Restore AI data
-                    if temp_landing_data:
-                        st.session_state.landing_data = temp_landing_data
+            draw_heatmap(gene_sel, selected_contrasts, show_advanced)
 
     with tab2:
         st.header("📈 Plot Gene Expression")
