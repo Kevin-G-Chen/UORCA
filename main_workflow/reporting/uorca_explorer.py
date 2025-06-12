@@ -71,9 +71,16 @@ from single_analysis_plots import (
     load_sample_groups,
 )
 
-# Landing page functionality removed
-MCP_LANDING_PAGE_AVAILABLE = False
-LANDING_PAGE_AVAILABLE = False
+# AI Landing page functionality - MCP-based
+try:
+    from ai_landing_page import render_ai_landing_page, show_ai_landing_page_info
+    from ai_agent_factory import get_uorca_agent
+    MCP_LANDING_PAGE_AVAILABLE = True
+    LANDING_PAGE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"AI landing page not available: {e}")
+    MCP_LANDING_PAGE_AVAILABLE = False
+    LANDING_PAGE_AVAILABLE = False
 
 # Helper function for contrast labels
 def short_label(full_label: str) -> str:
@@ -85,36 +92,40 @@ def short_label(full_label: str) -> str:
 # AI LANDING PAGE FUNCTIONALITY - MCP-BASED
 # ========================================================================
 
+def ai_landing_page_tab(results_dir: str):
+    """
+    Render the AI landing page tab.
 
+    Args:
+        results_dir: Path to the UORCA results directory
+    """
+    if not MCP_LANDING_PAGE_AVAILABLE:
+        st.error("AI Assistant not available")
+        st.info("The AI assistant requires additional dependencies. Please ensure all requirements are installed.")
+        show_ai_landing_page_info()
+        return
 
+    # Check for OpenAI API key
+    if not os.getenv("OPENAI_API_KEY"):
+        st.error("🔑 OpenAI API Key Required")
+        st.markdown("""
+        To use the AI assistant, you need to set your OpenAI API key as an environment variable.
 
+        **Options:**
+        1. Set `OPENAI_API_KEY` in your environment
+        2. Add it to your `.env` file in the project root
+        3. Use: `export OPENAI_API_KEY=your_key_here`
+        """)
+        st.info("Once you've set your API key, refresh the page to use the AI assistant.")
+        return
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# The old AI functions have been removed - they are now provided by the MCP-based system
+    # Render the AI landing page
+    try:
+        render_ai_landing_page(results_dir)
+    except Exception as e:
+        st.error(f"Failed to load AI assistant: {e}")
+        st.info("Please check your configuration and try again.")
+        logger.error(f"AI landing page error: {e}")
 
 # Check if fragment is available (Streamlit >=1.33.0)
 # If not, fallback to experimental_fragment
@@ -624,7 +635,7 @@ if ri and ri.cpm_data:
     # These options have been moved up in the UI
 
     # ---------- 2. main tabs ---------------------------------------
-    tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs(["☑️ Select Data & Contrasts", "🌡️ Explore DEG Heatmap", "📈 Plot Gene Expression", "🧑‍🔬 Analyze Experiments", "📋 View Dataset Info", "🔍 View Contrast Info"])
+    tab_sel, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["☑️ Select Data & Contrasts", "🌡️ Explore DEG Heatmap", "📈 Plot Gene Expression", "🧑‍🔬 Analyze Experiments", "📋 View Dataset Info", "🔍 View Contrast Info", "🤖 AI Assistant"])
 
     # Initialize session state for selections if not exists
     if 'selected_datasets' not in st.session_state:
@@ -1531,6 +1542,12 @@ if ri and ri.cpm_data:
 
         # Call the isolated fragment
         contrasts_tab()
+
+    with tab6:
+        st.header("🤖 AI Assistant")
+        st.markdown("**🤖 Interactive AI assistant for exploring your UORCA analysis results.** Ask questions, get insights, and explore your data using natural language.")
+
+        ai_landing_page_tab(results_dir)
 
     # ---------- 3. additional features -------------------------------
     st.sidebar.divider()
