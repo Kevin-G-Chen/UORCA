@@ -3,6 +3,10 @@ UORCA/repository_navigation.md
 
 This document provides an overview of the repository structure of the UORCA project to assist AI agents in efficiently navigating the repository for their tasks.
 
+## Overall notes
+
+The repository uses `uv` for package management. This means that you will typically conduct tests and run scripts using `uv run <script_name>` or `uv run <command>`, rather than directly executing Python files. This is important to remember when navigating the repository and running code.
+
 ---
 
 ## High-Level Structure
