@@ -76,11 +76,21 @@ async def get_dataset_summary(dataset_id: str, results_dir: str) -> str:
         # Get basic dataset info
         analysis_info = ri.analysis_info.get(dataset_id, {})
 
-        # Get dataset_info.txt content if available
-        dataset_info = {}
-        if hasattr(ri, "dataset_info") and dataset_id in ri.dataset_info:
-            dataset_info = ri.dataset_info[dataset_id]
+        # Get dataset metadata
+        dataset_info = ri.dataset_info.get(dataset_id, {}) if hasattr(ri, "dataset_info") else {}
 
+        summary = {
+            "dataset_id": dataset_id,
+            "accession": analysis_info.get("accession", "Unknown"),
+            "organism": analysis_info.get("organism", "Unknown"),
+            "number_of_samples": analysis_info.get("number_of_samples", 0),
+            "number_of_contrasts": analysis_info.get("number_of_contrasts", 0),
+            "title": dataset_info.get("title", ""),
+            "summary": dataset_info.get("summary", ""),
+            "design": dataset_info.get("design", ""),
+        }
+
+        return json.dumps(summary, ensure_ascii=False)
 
     except Exception as e:
         return json.dumps({
