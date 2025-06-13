@@ -1272,7 +1272,7 @@ if ri and ri.cpm_data:
                     "Dataset ID": analysis_id  # Keep dataset ID but place it last
                 }
 
-                # Add dataset_info.txt content split into three columns if available
+                # Add dataset metadata from analysis_info.json if available
                 if hasattr(ri, "dataset_info") and analysis_id in getattr(ri, "dataset_info", {}):
                     # Remove any "Title:" prefix from the title field
                     title = ri.dataset_info[analysis_id].get("title", "")

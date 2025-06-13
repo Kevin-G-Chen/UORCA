@@ -100,6 +100,52 @@ class ResultsIntegrator:
 
         logger.info(f"Initialized ResultsIntegrator with results_dir: {self.results_dir}")
 
+    def _first_existing_file(self, paths: List[str]) -> Optional[str]:
+        """Return the first path that exists from a list of possible locations."""
+        for p in paths:
+            if os.path.isfile(p):
+                return p
+        return None
+
+    def _count_unique_samples(self, analysis_folder: str) -> int:
+        """Count unique samples for an analysis using edger_analysis_samples.csv."""
+        sample_file = self._first_existing_file([
+            os.path.join(analysis_folder, "metadata", "edger_analysis_samples.csv"),
+            os.path.join(analysis_folder, "edger_analysis_samples.csv"),
+            os.path.join(self.results_dir, "edger_analysis_samples.csv"),
+            os.path.join(os.path.dirname(self.results_dir), "edger_analysis_samples.csv"),
+        ])
+        if not sample_file:
+            return 0
+        try:
+            tmp = pd.read_csv(sample_file, nrows=0)
+            first_col = tmp.columns[0]
+            has_index = first_col == "" or first_col.startswith("Unnamed")
+            df = pd.read_csv(sample_file, index_col=0 if has_index else None)
+            if "GSM" in df.columns:
+                return df["GSM"].nunique()
+            if "geo_accession" in df.columns:
+                return df["geo_accession"].nunique()
+        except Exception as e:
+            logger.warning(f"Error counting samples from {sample_file}: {e}")
+        return 0
+
+    def _parse_dataset_information(self, text: str) -> Dict[str, str]:
+        """Extract title, summary and design sections from dataset_information string."""
+        info = {"title": "", "summary": "", "design": ""}
+        if not text:
+            return info
+        title_match = re.search(r"Title:\s*(.*?)(?=\n\s*\n|\n*Summary:|\n*Overall Design:|$)", text, re.DOTALL | re.IGNORECASE)
+        summary_match = re.search(r"Summary:\s*(.*?)(?=\n\s*\n|\n*Overall Design:|$)", text, re.DOTALL | re.IGNORECASE)
+        design_match = re.search(r"Overall Design:\s*(.*)", text, re.DOTALL | re.IGNORECASE)
+        if title_match:
+            info["title"] = title_match.group(1).strip()
+        if summary_match:
+            info["summary"] = summary_match.group(1).strip()
+        if design_match:
+            info["design"] = design_match.group(1).strip()
+        return info
+
     def find_analysis_folders(self) -> List[str]:
         """Find all analysis folders in the results directory."""
         # Look for directories that contain RNAseqAnalysis folders
@@ -157,6 +203,9 @@ class ResultsIntegrator:
                     with open(info_file, 'r') as f:
                         info = json.load(f)
 
+                    # Derive additional fields for convenience
+                    info['number_of_contrasts'] = len(info.get('contrasts', []))
+                    info['number_of_samples'] = self._count_unique_samples(folder)
                     analysis_info[analysis_id] = info
                     logger.info(f"Loaded analysis info for {analysis_id}")
                 except Exception as e:
@@ -1222,6 +1271,11 @@ class ResultsIntegrator:
 
         for analysis_folder in analysis_folders:
             analysis_id = os.path.basename(analysis_folder)
+            # Prefer dataset_information field from analysis_info.json if available
+            if analysis_id in self.analysis_info and 'dataset_information' in self.analysis_info[analysis_id]:
+                info_text = self.analysis_info[analysis_id].get('dataset_information', '')
+                self.dataset_info[analysis_id] = self._parse_dataset_information(info_text)
+                continue
             # Look for dataset_info.txt in various possible locations (though it's now stored in analysis_info.json)
             for info_path in [
                 os.path.join(analysis_folder, "metadata", "dataset_info.txt"),
