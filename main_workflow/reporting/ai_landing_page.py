@@ -4,7 +4,6 @@
 import asyncio
 import logging
 from pathlib import Path
-
 import streamlit as st
 
 from ai_agent_factory import get_example_agent, validate_agent_setup
@@ -34,7 +33,7 @@ def run_example(agent, results_dir: str) -> None:
     """Run the query to get information about the first dataset."""
     async def _query():
         async with agent.run_mcp_servers():
-            result = await agent.run(f"Tell me about the first dataset in {results_dir}")
+            result = await agent.run(f"Describe the analyses that were performed for the first dataset in {results_dir}")
             return result.output if hasattr(result, "output") else result
 
     with st.spinner("Getting dataset information..."):
