@@ -71,10 +71,9 @@ from single_analysis_plots import (
     load_sample_groups,
 )
 
-# AI Landing page functionality - MCP-based
+# AI Landing page functionality - MCP-based (example server)
 try:
-    from ai_landing_page import render_ai_landing_page, show_ai_landing_page_info
-    from ai_agent_factory import get_uorca_agent
+    from ai_landing_page import render_ai_landing_page
     MCP_LANDING_PAGE_AVAILABLE = True
     LANDING_PAGE_AVAILABLE = True
 except ImportError as e:
@@ -92,40 +91,20 @@ def short_label(full_label: str) -> str:
 # AI LANDING PAGE FUNCTIONALITY - MCP-BASED
 # ========================================================================
 
-def ai_landing_page_tab(results_dir: str):
-    """
-    Render the AI landing page tab.
-
-    Args:
-        results_dir: Path to the UORCA results directory
-    """
+def ai_landing_page_tab(results_dir: str) -> None:
+    """Render the simple MCP example tab."""
     if not MCP_LANDING_PAGE_AVAILABLE:
         st.error("AI Assistant not available")
-        st.info("The AI assistant requires additional dependencies. Please ensure all requirements are installed.")
-        show_ai_landing_page_info()
         return
 
-    # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
-        st.error("🔑 OpenAI API Key Required")
-        st.markdown("""
-        To use the AI assistant, you need to set your OpenAI API key as an environment variable.
-
-        **Options:**
-        1. Set `OPENAI_API_KEY` in your environment
-        2. Add it to your `.env` file in the project root
-        3. Use: `export OPENAI_API_KEY=your_key_here`
-        """)
-        st.info("Once you've set your API key, refresh the page to use the AI assistant.")
+        st.error("OPENAI_API_KEY environment variable not set")
         return
 
-    # Render the AI landing page
     try:
         render_ai_landing_page(results_dir)
     except Exception as e:
         st.error(f"Failed to load AI assistant: {e}")
-        st.info("Please check your configuration and try again.")
-        logger.error(f"AI landing page error: {e}")
 
 # Check if fragment is available (Streamlit >=1.33.0)
 # If not, fallback to experimental_fragment
