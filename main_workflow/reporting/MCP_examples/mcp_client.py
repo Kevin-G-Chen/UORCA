@@ -13,6 +13,7 @@ console = Console()
 
 async def main():
     console.rule("[bold]MCP agentic test")
+    results_dir = "/data/tki_agpdev/kevin/phd/aim1/UORCA_results/2025-06-10_TCellFull"
     # 1️⃣  spin up the memory server as a subprocess --------------------------
     env = os.environ
     server = MCPServerStdio(
@@ -27,13 +28,14 @@ async def main():
         model_settings={"temperature": 0.1},
         mcp_servers=[server],
         system_prompt=(
-            "Use the tools to find the size of the current working directory"
+            "You are an assistant that helps analyze RNA-seq datasets from UORCA. "
+            "You can describe datasets, list available datasets"
         ),
     )
 
     # 4️⃣  run a single turn --------------------------------------------------
     async with agent.run_mcp_servers():
-        result = await agent.run("What is the size of my current directory?")
+        result = await agent.run(f"Tell me about the first dataset in {results_dir}")
     console.print(result.output)
 
 if __name__ == "__main__":
