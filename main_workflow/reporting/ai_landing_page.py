@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 def render_ai_landing_page(results_dir: str) -> None:
     """Render a minimal interface that runs the MCP example."""
-    st.title("🤖 MCP Example")
+    st.title("🤖 Dataset Explorer")
     st.markdown(
-        "This tab demonstrates running an MCP server from a Streamlit app."
+        "This tab demonstrates running an MCP server to explore dataset information."
     )
 
     try:
@@ -25,23 +25,22 @@ def render_ai_landing_page(results_dir: str) -> None:
         st.error(f"Failed to initialise agent: {e}")
         return
 
-    if st.button("Run MCP Example"):
-        run_example(agent)
+    # Single button to run the query like in mcp_client.py
+    if st.button("Run Dataset Explorer"):
+        run_example(agent, results_dir)
 
 
-def run_example(agent) -> None:
-    """Run the example query against the MCP server."""
-
+def run_example(agent, results_dir: str) -> None:
+    """Run the query to get information about the first dataset."""
     async def _query():
         async with agent.run_mcp_servers():
-            result = await agent.run("What is the size of my current directory?")
+            result = await agent.run(f"Tell me about the first dataset in {results_dir}")
             return result.output if hasattr(result, "output") else result
 
-    with st.spinner("Running example query..."):
+    with st.spinner("Getting dataset information..."):
         try:
             output = asyncio.run(_query())
             st.write(output)
         except Exception as exc:
-            logger.error("Example query failed: %s", exc)
+            logger.error("Dataset query failed: %s", exc)
             st.error(f"Query failed: {exc}")
-

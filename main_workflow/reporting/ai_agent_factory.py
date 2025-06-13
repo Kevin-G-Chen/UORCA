@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # System prompt used for the simple MCP example
 EXAMPLE_SYSTEM_PROMPT = (
-    "Use the tools to find the size of the current working directory"
+    "You are an assistant that helps to describe datasets. Only use tools that will help you describe datasets."
 )
 
 @st.cache_resource
@@ -80,4 +80,3 @@ def get_example_agent() -> Agent:
     except Exception as e:
         st.error(f"Failed to initialize MCP agent: {e}")
         st.stop()
-
