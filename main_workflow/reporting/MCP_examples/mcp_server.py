@@ -1,19 +1,15 @@
 from mcp.server.fastmcp import FastMCP
 
 from pydantic_ai import Agent
+import shutil, os, json
 
-server = FastMCP('PydanticAI Server')
-server_agent = Agent(
-    'openai:o4-mini', system_prompt='always reply in rhyme'
-)
-
+server = FastMCP("Utility-Tools")
 
 @server.tool()
-async def poet(theme: str) -> str:
-    """Poem generator"""
-    r = await server_agent.run(f'write a poem about {theme}')
-    return r.output
+async def disk_usage(path: str) -> str:
+    """Return `du -sh` for a folder."""
+    out = shutil.disk_usage(path)
+    return json.dumps({"total": out.total, "used": out.used, "free": out.free})
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     server.run()
