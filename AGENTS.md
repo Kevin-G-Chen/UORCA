@@ -76,9 +76,8 @@ Scripts to help submit and manage SLURM batch jobs:
   - **reporting/uorca_explorer.py**: Streamlit app for interactive exploration of UORCA RNA-seq results.
 
   - **reporting/MCP_examples/**: Contains example MCP server and client demonstrating how to work with MCP.
-    **Note:**
-    Currently, the MCP server implementation in `mcp_servers/uorca_data_server.py` does **not** work in the Streamlit app.
-    The current working examples are only those in `reporting/MCP_examples/`, but these are not integrated into the app yet.
+  - **reporting/example_output_files/** Contains example files from the output of the main workflow. Refer to these files to understand the sturcture of the output, and therefore how to approach interpreting these files for the purpose of the reporting app (e.g. JSON outputs)
+
 
 ### 5. **Prompts**
 
@@ -125,7 +124,6 @@ Scripts to help submit and manage SLURM batch jobs:
 - For **RNA-seq quantification and differential expression analysis**, utilize `agents/analysis.py` along with the R script in `additional_scripts/RNAseq.R`.
 
 - To **generate integrated reports or explore results**, use the scripts and APIs under `main_workflow/reporting/`.
-  **Important:** The MCP-based data access currently functions only via the examples in `reporting/MCP_examples/` - though note these examples are typically run via `uv run mcp_client.py`, and is only functional like this (i.e. is not functional within the streamlit app). The Streamlit app at `reporting/uorca_explorer.py` is functional but does **not** yet utilize the full MCP server implementation - the current implementation you see does not work properly.
 
 - For managing **batch runs and resource-aware scheduling**, look in `run_helpers/`.
 
