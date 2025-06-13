@@ -1,23 +1,40 @@
-import asyncio
-import os
-from dotenv import load_dotenv
+import asyncio, json, os
 
+from pydantic_ai.mcp import MCPServerStdio
+from dotenv import load_dotenv
+from pathlib import Path
+from pydantic_ai import Agent
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from rich.console import Console
 
 load_dotenv()
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+console = Console()
 
-async def client():
-    server_params = StdioServerParameters(
-        command='uv', args=['run', 'mcp_server.py', 'server'], env=os.environ
+async def main():
+    console.rule("[bold]MCP agentic test")
+    # 1️⃣  spin up the memory server as a subprocess --------------------------
+    env = os.environ
+    server = MCPServerStdio(
+        command="uv",
+        args=["run", "mcp_server.py", "server"],
+        env=env,
     )
-    async with stdio_client(server_params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            result = await session.call_tool('poet', {'theme': 'socks'})
-            print(result.content[0].text)
 
+    # 3️⃣  create the agent, attach the MCP connection -----------------------
+    agent = Agent(
+        model="openai:gpt-4o-mini",
+        model_settings={"temperature": 0.1},
+        mcp_servers=[server],
+        system_prompt=(
+            "Use the tools to find the size of the current working directory"
+        ),
+    )
 
-if __name__ == '__main__':
-    asyncio.run(client())
+    # 4️⃣  run a single turn --------------------------------------------------
+    async with agent.run_mcp_servers():
+        result = await agent.run("What is the size of my current directory?")
+    console.print(result.output)
+
+if __name__ == "__main__":
+    asyncio.run(main())
