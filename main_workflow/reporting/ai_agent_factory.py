@@ -1,142 +1,83 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-AI Agent Factory for UORCA Explorer
-----------------------------------
-Creates and configures AI agents for interacting with UORCA RNA-seq analysis results.
+AI Agent Factory for MCP Example
+--------------------------------
+Utility functions for creating AI agents that connect to the simple
+`MCP_examples` server bundled with the repository.  This is meant only for
+testing the integration of MCP servers within a Streamlit application.
 """
 
 import os
 import logging
 from typing import Optional
+from pathlib import Path
 import streamlit as st
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
-
-# Import MCP utilities
-from mcp_utils import setup_mcp_server
+from pydantic_ai.mcp import MCPServerStdio
 
 logger = logging.getLogger(__name__)
 
-# System prompt for UORCA data analysis
-UORCA_SYSTEM_PROMPT = """
-You are an expert bioinformatics assistant specializing in RNA-seq data analysis.
-You have access to UORCA (Upstream Open Reading frame Comparative Analysis) results through specialized tools.
-
-Your tools allow you to:
-- list_contrasts(): Get all available experimental contrasts
-- list_genes(): Get available gene symbols
-- get_lfc(contrast, gene): Get log fold change for a specific gene in a contrast
-- get_analysis_info(): Get metadata about the analyses
-
-Key guidelines:
-1. Always provide clear, scientifically accurate responses
-2. When discussing fold changes, explain the biological significance
-3. For log fold changes: positive values = upregulated, negative = downregulated
-4. If a gene/contrast combination isn't found, suggest similar alternatives when possible
-5. Keep responses concise but informative
-6. When listing multiple items, present them in an organized, readable format
-
-Context: UORCA focuses on upstream open reading frames (uORFs) which are regulatory elements
-that can affect translation efficiency and gene expression.
-"""
+# System prompt used for the simple MCP example
+EXAMPLE_SYSTEM_PROMPT = (
+    "Use the tools to find the size of the current working directory"
+)
 
 @st.cache_resource
-def create_uorca_agent(results_dir: Optional[str] = None) -> Agent:
-    """
-    Create and configure an AI agent for UORCA data analysis.
+def create_example_agent() -> Agent:
+    """Create an agent connected to the example MCP server."""
 
-    Args:
-        results_dir: Path to UORCA results directory. If not provided, the
-            function will look for the ``UORCA_RESULTS_DIR`` environment
-            variable.
-
-    Returns:
-        Configured Agent instance
-
-    Raises:
-        ValueError: If OpenAI API key is not available
-        RuntimeError: If MCP server setup fails
-    """
-    # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
         raise ValueError(
             "OpenAI API key not found. Please set the OPENAI_API_KEY environment variable."
         )
 
     try:
-        # Determine results directory
-        if not results_dir:
-            results_dir = os.environ.get("UORCA_RESULTS_DIR")
-        if not results_dir:
-            raise ValueError("results_dir must be provided or set in UORCA_RESULTS_DIR")
+        server_script = Path(__file__).parent / "MCP_examples" / "mcp_server.py"
 
-        # Setup MCP server with explicit results directory argument
-        server = setup_mcp_server(
-            "uorca_data",
-            server_args=["--results-dir", str(results_dir)]
+        server = MCPServerStdio(
+            command="uv",
+            args=["run", str(server_script)],
+            env=os.environ.copy(),
         )
-        logger.info(f"Successfully set up UORCA data MCP server")
 
-        # Create the agent with OpenAI GPT-4o-mini
         agent = Agent(
             model="openai:gpt-4o-mini",
-            model_settings={
-                "temperature": 0.1,  # Low temperature for consistent, factual responses
-                "max_tokens": 1000,  # Reasonable limit for responses
-            },
+            model_settings={"temperature": 0.1},
             mcp_servers=[server],
-            system_prompt=UORCA_SYSTEM_PROMPT,
+            system_prompt=EXAMPLE_SYSTEM_PROMPT,
         )
 
-        logger.info("Successfully created UORCA AI agent")
         return agent
-
     except Exception as e:
-        logger.error(f"Failed to create UORCA agent: {e}")
+        logger.error(f"Failed to create example MCP agent: {e}")
         raise RuntimeError(f"Agent creation failed: {e}")
 
 def validate_agent_setup(agent: Agent) -> bool:
-    """
-    Validate that the agent is properly configured and can access data.
+    """Run a simple query to ensure the agent and server work."""
+    async def _run_test():
+        async with agent.run_mcp_servers():
+            result = await agent.run("What is the size of my current directory?")
+            return result.output if hasattr(result, "output") else result
 
-    Args:
-        agent: The agent to validate
-
-    Returns:
-        True if agent is working, False otherwise
-    """
     try:
-        # Simple test query to check if tools are accessible
         import asyncio
-        result = asyncio.run(agent.run("How many contrasts are available? Just give me the number."))
-        logger.info(f"Agent validation successful: {result}")
+
+        output = asyncio.run(_run_test())
+        logger.info(f"Agent validation successful: {output}")
         return True
     except Exception as e:
         logger.error(f"Agent validation failed: {e}")
         return False
 
 # Convenience function for Streamlit apps
-def get_uorca_agent(results_dir: Optional[str] = None) -> Agent:
-    """
-    Get a cached UORCA agent instance.
+def get_example_agent() -> Agent:
+    """Return a cached example agent instance for Streamlit."""
 
-    This is a convenience wrapper around create_uorca_agent that provides
-    better error handling for Streamlit applications.
-
-    Args:
-        results_dir: Path to UORCA results directory
-
-    Returns:
-        Configured Agent instance
-    """
     try:
-        return create_uorca_agent(results_dir)
+        return create_example_agent()
     except Exception as e:
-        st.error(f"Failed to initialize AI agent: {e}")
-        st.info("Please ensure:")
-        st.info("• OpenAI API key is set in environment variables")
-        st.info("• UORCA results directory contains valid analysis data")
-        st.info("• All required dependencies are installed")
+        st.error(f"Failed to initialize MCP agent: {e}")
         st.stop()
+
