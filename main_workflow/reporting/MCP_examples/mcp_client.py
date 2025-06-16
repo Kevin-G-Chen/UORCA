@@ -35,7 +35,7 @@ async def main():
 
     # 4️⃣  run a single turn --------------------------------------------------
     async with agent.run_mcp_servers():
-        result = await agent.run(f"Describe the analyses that were performed for the first dataset in {results_dir}")
+        result = await agent.run(f"Tell me about the first dataset in {results_dir}")
     console.print(result.output)
 
 if __name__ == "__main__":

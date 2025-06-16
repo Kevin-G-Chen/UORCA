@@ -10,6 +10,14 @@ from ResultsIntegration import ResultsIntegrator
 
 server = FastMCP("Utility-Tools")
 
+# Keep the existing disk_usage tool
+@server.tool()
+async def disk_usage(path: str) -> str:
+    """Return `du -sh` for a folder."""
+    out = shutil.disk_usage(path)
+    return json.dumps({"total": out.total, "used": out.used, "free": out.free})
+
+# Add a tool to list datasets
 @server.tool()
 async def list_datasets(results_dir: str) -> str:
     """
@@ -83,60 +91,6 @@ async def get_dataset_summary(dataset_id: str, results_dir: str) -> str:
         }
 
         return json.dumps(summary, ensure_ascii=False)
-
-    except Exception as e:
-        return json.dumps({
-            "error": str(e),
-            "dataset_id": dataset_id
-        }, ensure_ascii=False)
-
-@server.tool()
-async def get_dataset_contrasts(dataset_id: str, results_dir: str) -> str:
-    """
-    Get information about contrasts (analyses) performed for a specific dataset.
-
-    Args:
-        dataset_id: ID of the dataset to get contrasts for
-        results_dir: Path to the UORCA results directory
-
-    Returns:
-        JSON string containing contrast information for the dataset
-    """
-    try:
-        # Initialize ResultsIntegrator
-        ri = ResultsIntegrator(results_dir)
-        ri.load_data()
-
-        # Check if the dataset exists
-        if dataset_id not in ri.analysis_info:
-            return json.dumps({
-                "error": f"Dataset {dataset_id} not found",
-                "available_datasets": list(ri.analysis_info.keys())
-            })
-
-        # Get contrasts for this dataset
-        contrasts = []
-        if dataset_id in ri.deg_data:
-            for contrast_id in ri.deg_data[dataset_id].keys():
-                description = ri._get_contrast_description(dataset_id, contrast_id)
-
-                # Get DEG counts if possible
-                deg_count = 0
-                if 'adj.P.Val' in ri.deg_data[dataset_id][contrast_id].columns and 'logFC' in ri.deg_data[dataset_id][contrast_id].columns:
-                    deg_count = ((ri.deg_data[dataset_id][contrast_id]['adj.P.Val'] < 0.05) &
-                                (abs(ri.deg_data[dataset_id][contrast_id]['logFC']) > 1.0)).sum()
-
-                contrasts.append({
-                    "contrast_id": contrast_id,
-                    "description": description,
-                    "deg_count": int(deg_count)
-                })
-
-        return json.dumps({
-            "dataset_id": dataset_id,
-            "contrasts_count": len(contrasts),
-            "contrasts": contrasts
-        }, ensure_ascii=False)
 
     except Exception as e:
         return json.dumps({
