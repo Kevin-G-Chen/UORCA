@@ -89,6 +89,14 @@ except ImportError as e:
     logger.warning(f"Contrast relevance not available: {e}")
     CONTRAST_RELEVANCE_AVAILABLE = False
 
+# AI agent functionality
+try:
+    from ai_agent_factory import get_example_agent
+    AI_AGENT_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"AI agent not available: {e}")
+    AI_AGENT_AVAILABLE = False
+
 # Helper function for contrast labels
 def short_label(full_label: str) -> str:
     """Create short labels for contrast multiselect display"""
@@ -1643,6 +1651,50 @@ if ri and ri.cpm_data:
                                 file_name=f"contrast_relevance_scores.csv",
                                 mime="text/csv"
                             )
+
+                            # AI Agent Integration - Ask agent to recommend focus contrasts
+                            st.markdown("---")
+                            st.subheader("🤖 AI Recommendations")
+
+                            if AI_AGENT_AVAILABLE and os.getenv("OPENAI_API_KEY"):
+                                with st.spinner("Asking AI agent to recommend which contrasts to focus on..."):
+                                    try:
+                                        agent = get_example_agent()
+
+                                        async def ask_agent_for_recommendations():
+                                            async with agent.run_mcp_servers():
+                                                prompt = f"""
+Based on the research question: "{research_query.strip()}"
+
+I have assessed {len(results_df)} contrasts for relevance. Here are the top-scoring contrasts:
+
+{results_df.head(10)[['Accession', 'contrast_id', 'RelevanceScore', 'Description']].to_string(index=False)}
+
+Please analyze these results and recommend:
+1. Which 3-5 contrasts should we prioritize for deeper analysis?
+2. What makes these contrasts particularly valuable for addressing the research question?
+3. Are there any patterns in the high-scoring contrasts that suggest biological insights?
+
+Provide a clear, actionable recommendation in prose format.
+"""
+                                                result = await agent.run(prompt)
+                                                return result.output if hasattr(result, 'output') else str(result)
+
+                                        ai_recommendations = asyncio.run(ask_agent_for_recommendations())
+
+                                        st.markdown("**AI Agent Recommendations:**")
+                                        st.markdown(ai_recommendations)
+
+                                    except Exception as e:
+                                        st.error(f"Error getting AI recommendations: {str(e)}")
+                                        with st.expander("🔍 AI Error Details", expanded=False):
+                                            import traceback
+                                            st.code(traceback.format_exc())
+                            else:
+                                if not AI_AGENT_AVAILABLE:
+                                    st.info("💡 AI agent not available for generating recommendations.")
+                                elif not os.getenv("OPENAI_API_KEY"):
+                                    st.info("💡 Set OPENAI_API_KEY environment variable to enable AI recommendations.")
 
                         else:
                             st.warning("No contrasts found for assessment.")
