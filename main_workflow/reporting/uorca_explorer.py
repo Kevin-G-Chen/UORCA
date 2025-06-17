@@ -1563,9 +1563,9 @@ if ri and ri.cpm_data:
                             results_df = run_contrast_relevance(
                                 ri,
                                 query=research_query.strip(),
-                                repeats=2,
-                                batch_size=5,
-                                parallel_jobs=1
+                                repeats=3,
+                                batch_size=50,
+                                parallel_jobs=4
                             )
 
                             if not results_df.empty:
