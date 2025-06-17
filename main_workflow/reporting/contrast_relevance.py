@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "dataset_identification"))
 def call_openai_json(prompt: str, schema: Dict[str, Any], name: str) -> dict:
     """Call OpenAI API with JSON schema enforcement."""
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4.1-mini",
         messages=[
             {"role": "user", "content": prompt}
         ],
@@ -143,9 +143,9 @@ async def repeated_contrast_relevance(
 def run_contrast_relevance(
     ri,  # ResultsIntegrator instance
     query: str,
-    repeats: int = 2,
-    batch_size: int = 5,
-    parallel_jobs: int = 1
+    repeats: int = 3,
+    batch_size: int = 50,
+    parallel_jobs: int = 4
 ) -> pd.DataFrame:
     """
     Run contrast relevance assessment using LLM calls.
