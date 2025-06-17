@@ -81,6 +81,14 @@ except ImportError as e:
     MCP_LANDING_PAGE_AVAILABLE = False
     LANDING_PAGE_AVAILABLE = False
 
+# Contrast relevance functionality
+try:
+    from contrast_relevance import run_contrast_relevance
+    CONTRAST_RELEVANCE_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Contrast relevance not available: {e}")
+    CONTRAST_RELEVANCE_AVAILABLE = False
+
 # Helper function for contrast labels
 def short_label(full_label: str) -> str:
     """Create short labels for contrast multiselect display"""
@@ -1527,6 +1535,122 @@ if ri and ri.cpm_data:
         st.markdown("**🤖 Interactive AI assistant for exploring your UORCA analysis results.** Ask questions, get insights, and explore your data using natural language.")
 
         ai_landing_page_tab(results_dir)
+
+        # Contrast Relevance Assessment
+        st.markdown("---")
+        st.subheader("🔢 Contrast Relevance Assessment")
+        st.markdown("**Assess how relevant each contrast is to your research question.** Enter your research question below and click the button to score all contrasts using AI.")
+
+        # Research query input
+        research_query = st.text_input(
+            "Research Question",
+            placeholder="e.g., What contrasts are most relevant to T cell activation and differentiation?",
+            help="Describe your research question or area of interest. The AI will score each contrast based on how relevant it is to this query."
+        )
+
+        # Assessment controls
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            if st.button("🔢 Assess Contrast Relevance", disabled=not research_query.strip()):
+                if not CONTRAST_RELEVANCE_AVAILABLE:
+                    st.error("Contrast relevance assessment is not available. Please check your environment setup.")
+                elif not os.getenv("OPENAI_API_KEY"):
+                    st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+                else:
+                    with st.spinner("Calling AI to score contrast relevance... This may take a few minutes."):
+                        try:
+                            # Run contrast relevance assessment
+                            results_df = run_contrast_relevance(
+                                ri,
+                                query=research_query.strip(),
+                                repeats=2,
+                                batch_size=5,
+                                parallel_jobs=1
+                            )
+
+                            if not results_df.empty:
+                                # Sort by relevance score
+                                results_df = results_df.sort_values('RelevanceScore', ascending=False)
+
+                                # Add contrast descriptions for display
+                                results_df['Description'] = results_df.apply(
+                                    lambda row: ri._get_contrast_description(row['analysis_id'], row['contrast_id']),
+                                    axis=1
+                                )
+
+                                # Add accession info
+                                results_df['Accession'] = results_df['analysis_id'].map(
+                                    lambda aid: ri.analysis_info.get(aid, {}).get('accession', aid)
+                                )
+
+                                st.success(f"✅ Successfully assessed {len(results_df)} contrasts!")
+
+                                # Display results table
+                                st.subheader("Contrast Relevance Scores")
+
+                                # Configure column display
+                                display_columns = ['Accession', 'contrast_id', 'RelevanceScore', 'Description']
+                                if 'Run1Justification' in results_df.columns:
+                                    display_columns.append('Run1Justification')
+
+                                st.dataframe(
+                                    results_df[display_columns],
+                                    use_container_width=True,
+                                    column_config={
+                                        "RelevanceScore": st.column_config.NumberColumn(
+                                            "Relevance Score",
+                                            format="%.2f",
+                                            help="AI-assessed relevance score (0-1 scale)"
+                                        ),
+                                        "contrast_id": st.column_config.TextColumn(
+                                            "Contrast",
+                                            help="Contrast identifier"
+                                        ),
+                                        "Description": st.column_config.TextColumn(
+                                            "Description",
+                                            help="Contrast description"
+                                        ),
+                                        "Run1Justification": st.column_config.TextColumn(
+                                            "AI Justification",
+                                            help="AI explanation for the relevance score"
+                                        ),
+                                        "Accession": st.column_config.TextColumn(
+                                            "Dataset",
+                                            help="Dataset accession"
+                                        )
+                                    }
+                                )
+
+                                # Show summary statistics
+                                col1, col2, col3 = st.columns(3)
+                                with col1:
+                                    st.metric("Highly Relevant (≥0.7)", len(results_df[results_df['RelevanceScore'] >= 0.7]))
+                                with col2:
+                                    st.metric("Moderately Relevant (0.4-0.7)", len(results_df[(results_df['RelevanceScore'] >= 0.4) & (results_df['RelevanceScore'] < 0.7)]))
+                                with col3:
+                                    st.metric("Low Relevance (<0.4)", len(results_df[results_df['RelevanceScore'] < 0.4]))
+
+                                # Provide download option
+                                csv = results_df.to_csv(index=False)
+                                st.download_button(
+                                    label="📥 Download Relevance Scores as CSV",
+                                    data=csv,
+                                    file_name=f"contrast_relevance_scores.csv",
+                                    mime="text/csv"
+                                )
+
+                            else:
+                                st.warning("No contrasts found for assessment.")
+
+                        except Exception as e:
+                            st.error(f"Error during contrast relevance assessment: {str(e)}")
+                            with st.expander("🔍 Error Details", expanded=False):
+                                import traceback
+                                st.code(traceback.format_exc())
+
+        with col2:
+            if not research_query.strip():
+                st.info("💡 Enter a research question above to enable contrast relevance assessment.")
 
     # ---------- 3. additional features -------------------------------
     st.sidebar.divider()
