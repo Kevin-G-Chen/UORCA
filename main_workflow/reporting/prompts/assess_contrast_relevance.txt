@@ -9,7 +9,7 @@ For each contrast provided, assess how relevant it is to the research question o
 - 1.0 = Perfect relevance (directly and comprehensively addresses the research question)
 
 CONTEXT:
-Each contrast represents a differential expression comparison between two experimental conditions in an RNA-seq study. The contrast description explains what biological conditions are being compared.
+Each contrast represents a differential expression comparison between two experimental conditions in an RNA-seq study. The contrast description explains what biological conditions are being compared. Additional dataset information (title, summary, and overall design) is provided for context.
 
 SCORING CRITERIA:
 Consider the following when scoring relevance:

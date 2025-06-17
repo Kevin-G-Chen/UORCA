@@ -171,6 +171,11 @@ def run_contrast_relevance(
     # Build a list of all contrasts from ri.deg_data
     contrast_list = []
     for analysis_id, contrasts in ri.deg_data.items():
+        dataset_meta = getattr(ri, "dataset_info", {}).get(analysis_id, {})
+        title = dataset_meta.get("title", "")
+        summary = dataset_meta.get("summary", "")
+        design = dataset_meta.get("design", "")
+
         for contrast_id in contrasts.keys():
             # Get contrast description for context
             description = ri._get_contrast_description(analysis_id, contrast_id)
@@ -185,7 +190,10 @@ def run_contrast_relevance(
                 'contrast_id': contrast_id,
                 'accession': accession,
                 'organism': organism,
-                'description': description
+                'description': description,
+                'title': title,
+                'summary': summary,
+                'design': design
             })
 
     if not contrast_list:
