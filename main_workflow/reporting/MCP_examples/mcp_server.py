@@ -4,10 +4,9 @@ import shutil, os, json
 from pathlib import Path
 import sys
 
-# Add access to ResultsIntegrator and contrast relevance
+# Add access to ResultsIntegrator
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from ResultsIntegration import ResultsIntegrator
-from contrast_relevance import run_contrast_relevance
 
 server = FastMCP("Utility-Tools")
 
@@ -97,68 +96,6 @@ async def get_dataset_summary(dataset_id: str, results_dir: str) -> str:
         return json.dumps({
             "error": str(e),
             "dataset_id": dataset_id
-        }, ensure_ascii=False)
-
-# Add contrast relevance assessment tool
-@server.tool()
-async def assess_contrast_relevance(results_dir: str, query: str) -> str:
-    """
-    Assess the relevance of all contrasts to a research question using AI.
-
-    Args:
-        results_dir: Path to the UORCA results directory
-        query: Research question to assess contrast relevance against
-
-    Returns:
-        JSON string containing contrast relevance scores and justifications
-    """
-    try:
-        # Initialize ResultsIntegrator
-        ri = ResultsIntegrator(results_dir)
-        ri.load_data()
-
-        # Run contrast relevance assessment
-        results_df = run_contrast_relevance(
-            ri,
-            query=query,
-            repeats=2,
-            batch_size=5,
-            parallel_jobs=1
-        )
-
-        if results_df.empty:
-            return json.dumps({
-                "error": "No contrasts found for assessment",
-                "contrasts": []
-            }, ensure_ascii=False)
-
-        # Add contrast descriptions for context
-        results_df['description'] = results_df.apply(
-            lambda row: ri._get_contrast_description(row['analysis_id'], row['contrast_id']),
-            axis=1
-        )
-
-        # Add dataset info for context
-        results_df['accession'] = results_df['analysis_id'].map(
-            lambda aid: ri.analysis_info.get(aid, {}).get('accession', aid)
-        )
-        results_df['organism'] = results_df['analysis_id'].map(
-            lambda aid: ri.analysis_info.get(aid, {}).get('organism', 'Unknown')
-        )
-
-        # Convert to JSON with all relevant information
-        contrast_data = results_df.to_dict('records')
-
-        return json.dumps({
-            "query": query,
-            "total_contrasts": len(contrast_data),
-            "contrasts": contrast_data
-        }, ensure_ascii=False)
-
-    except Exception as e:
-        return json.dumps({
-            "error": str(e),
-            "query": query
         }, ensure_ascii=False)
 
 if __name__ == "__main__":

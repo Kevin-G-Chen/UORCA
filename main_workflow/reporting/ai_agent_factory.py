@@ -21,9 +21,7 @@ logger = logging.getLogger(__name__)
 
 # System prompt used for the simple MCP example
 EXAMPLE_SYSTEM_PROMPT = (
-    "You are an expert bioinformatics assistant that helps analyze RNA-seq datasets and differential expression contrasts. "
-    "You can describe datasets, assess contrast relevance to research questions, and recommend which contrasts to focus on for analysis. "
-    "Use the available tools to provide comprehensive insights about the data and guide research decisions."
+    "You are an assistant that helps to describe datasets. Only use tools that will help you describe datasets."
 )
 
 @st.cache_resource
