@@ -89,6 +89,14 @@ except ImportError as e:
     logger.warning(f"Contrast relevance not available: {e}")
     CONTRAST_RELEVANCE_AVAILABLE = False
 
+# AI key findings functionality
+try:
+    from ai_key_findings import run_streamlit_key_findings_analysis, validate_contrast_relevance_data
+    AI_KEY_FINDINGS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"AI key findings not available: {e}")
+    AI_KEY_FINDINGS_AVAILABLE = False
+
 # Helper function for contrast labels
 def short_label(full_label: str) -> str:
     """Create short labels for contrast multiselect display"""
@@ -1588,7 +1596,16 @@ if ri and ri.cpm_data:
                                 lambda aid: ri.analysis_info.get(aid, {}).get('accession', aid)
                             )
 
+                            # Add organism info
+                            results_df['organism'] = results_df['analysis_id'].map(
+                                lambda aid: ri.analysis_info.get(aid, {}).get('organism', 'Unknown')
+                            )
+
                             st.success(f"✅ Successfully assessed {len(results_df)} contrasts!")
+
+                            # Store results in session state for key findings analysis
+                            st.session_state['contrast_relevance_results'] = results_df
+                            st.session_state['research_query'] = research_query.strip()
 
                             # Display results table
                             st.subheader("Contrast Relevance Scores")
@@ -1652,6 +1669,33 @@ if ri and ri.cpm_data:
                         with st.expander("🔍 Error Details", expanded=False):
                             import traceback
                             st.code(traceback.format_exc())
+
+        # AI Key Findings Analysis
+        st.markdown("---")
+        if (
+            'contrast_relevance_results' in st.session_state
+            and 'research_query' in st.session_state
+            and AI_KEY_FINDINGS_AVAILABLE
+        ):
+            # Validate the stored data
+            results_df = st.session_state['contrast_relevance_results']
+            research_query = st.session_state['research_query']
+
+            is_valid, error_msg = validate_contrast_relevance_data(results_df)
+
+            if is_valid:
+                # Run the key findings analysis interface
+                run_streamlit_key_findings_analysis(
+                    results_dir=results_dir,
+                    contrast_relevance_df=results_df,
+                    research_query=research_query
+                )
+            else:
+                st.error(f"❌ Invalid contrast relevance data: {error_msg}")
+        elif not AI_KEY_FINDINGS_AVAILABLE:
+            st.info("💡 Key findings analysis is not available. Please check your environment setup.")
+        else:
+            st.info("💡 Run contrast relevance assessment above to enable key findings analysis.")
 
 
     # ---------- 3. additional features -------------------------------
