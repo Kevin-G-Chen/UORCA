@@ -40,6 +40,7 @@ def create_example_agent() -> Agent:
             command="uv",
             args=["run", str(server_script)],
             env=os.environ.copy(),
+            timeout = 30
         )
 
         agent = Agent(
