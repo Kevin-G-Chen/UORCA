@@ -1,0 +1,49 @@
+"""
+UORCA Explorer Streamlit Tabs Package.
+
+This package contains modular Streamlit tab implementations for the UORCA Explorer
+application. Each tab is implemented as a separate module for better maintainability
+and development workflow.
+"""
+
+# Import main render functions from each tab module
+from .data_selection_tab import render_data_selection_tab
+from .heatmap_tab import render_heatmap_tab
+from .expression_plots_tab import render_expression_plots_tab
+from .analysis_plots_tab import render_analysis_plots_tab
+from .datasets_info_tab import render_datasets_info_tab
+from .contrasts_info_tab import render_contrasts_info_tab
+from .ai_assistant_tab import render_ai_assistant_tab
+from .sidebar_controls import render_sidebar_controls
+
+# Import helper functions that might be useful externally
+from .helpers import (
+    get_integrator,
+    cached_identify_important_genes,
+    initialize_session_state,
+    add_custom_css,
+    setup_fragment_decorator
+)
+
+__all__ = [
+    # Tab render functions
+    'render_data_selection_tab',
+    'render_heatmap_tab',
+    'render_expression_plots_tab',
+    'render_analysis_plots_tab',
+    'render_datasets_info_tab',
+    'render_contrasts_info_tab',
+    'render_ai_assistant_tab',
+    'render_sidebar_controls',
+
+    # Helper functions
+    'get_integrator',
+    'cached_identify_important_genes',
+    'initialize_session_state',
+    'add_custom_css',
+    'setup_fragment_decorator'
+]
+
+__version__ = "1.0.0"
+__author__ = "UORCA Development Team"
+__description__ = "Modular Streamlit tabs for UORCA RNA-seq analysis exploration"

@@ -1,0 +1,242 @@
+"""
+Helper utilities for UORCA Explorer Streamlit tabs.
+
+This module contains shared functions, classes, and utilities used across
+multiple Streamlit tabs in the UORCA Explorer application.
+"""
+
+import os
+import logging
+import streamlit as st
+import plotly.graph_objects as go
+from pathlib import Path
+from typing import Tuple, Optional, Dict, Any, Set, List
+
+# Import the main integrator
+from ...ResultsIntegration import ResultsIntegrator
+
+logger = logging.getLogger(__name__)
+
+
+class ModuleFilter(logging.Filter):
+    """Filter for logging modules."""
+
+    def __init__(self, names):
+        super().__init__()
+        self.names = names
+
+    def filter(self, record):
+        return any(record.name.startswith(n) for n in self.names)
+
+
+def short_label(full_label: str) -> str:
+    """Create short labels for contrast multiselect display."""
+    # keeps 'KO_vs_WT' out of 'GSE12345:KO_vs_WT – long sentence …'
+    return full_label.split(":", 1)[-1].split(" –")[0].split(" - ")[0][:25]
+
+
+def setup_fragment_decorator():
+    """Set up the fragment decorator with fallbacks for older Streamlit versions."""
+    # Check if fragment is available (Streamlit >=1.33.0)
+    # If not, fallback to experimental_fragment
+    try:
+        from streamlit import fragment
+        st.fragment = fragment
+    except ImportError:
+        try:
+            from streamlit import experimental_fragment
+            st.fragment = experimental_fragment
+        except ImportError:
+            # Fallback for very old Streamlit versions
+            def fragment(func):
+                """Fallback decorator when st.fragment is not available."""
+                def wrapper(*args, **kwargs):
+                    return func(*args, **kwargs)
+                return wrapper
+            st.fragment = fragment
+
+
+def _validate_results_dir(path: str) -> Tuple[bool, str]:
+    """Simple validation for the user supplied results directory."""
+    if not os.path.isdir(path):
+        return False, "Directory does not exist"
+    for root, dirs, files in os.walk(path):
+        if "RNAseqAnalysis" in dirs or "DEG.csv" in files:
+            return True, ""
+    return False, "No RNAseqAnalysis data found"
+
+
+@st.cache_resource
+def get_integrator(path: str) -> Tuple[Optional[ResultsIntegrator], Optional[str]]:
+    """Load and cache the ResultsIntegrator for the given path."""
+    try:
+        ri = ResultsIntegrator(results_dir=path)
+        ri.load_data()
+        return ri, None
+    except Exception as e:
+        return None, str(e)
+
+
+@st.cache_data(show_spinner=False)
+def cached_identify_important_genes(
+    results_dir: str,
+    top_frequent: int,
+    top_unique: int,
+    max_contrasts_for_unique: int,
+    min_unique_per_contrast: int,
+    p_value_threshold: float,
+    lfc_threshold: float
+) -> List[str]:
+    """
+    Cache the identify_important_genes computation to avoid recomputation on every rerun.
+
+    This function is cached based on the input parameters, so it will only recompute
+    when the parameters change.
+    """
+    ri, error = get_integrator(results_dir)
+    if error or not ri:
+        return []
+
+    try:
+        top_genes = ri.identify_important_genes(
+            top_frequent=top_frequent,
+            top_unique=top_unique,
+            max_contrasts_for_unique=max_contrasts_for_unique,
+            min_unique_per_contrast=min_unique_per_contrast,
+            p_value_threshold=p_value_threshold,
+            lfc_threshold=lfc_threshold
+        )
+        return sorted(top_genes)
+    except Exception as e:
+        logger.error(f"Error identifying important genes: {e}")
+        return []
+
+
+# Add a cache for figure objects to improve performance in older versions
+@st.cache_data(hash_funcs={go.Figure: lambda _: None})
+def cached_figure_creation(func_name: str, *args, **kwargs):
+    """Cache figure objects to avoid recreating them."""
+    ri = args[0] if args else None  # Assume first arg is the integrator
+    if not ri:
+        return None
+
+    if func_name == "create_lfc_heatmap":
+        return ri.create_lfc_heatmap(*args[1:], **kwargs)
+    elif func_name == "create_expression_plots":
+        return ri.create_expression_plots(*args[1:], **kwargs)
+    return None
+
+
+def get_all_genes_from_integrator(ri: ResultsIntegrator) -> List[str]:
+    """Extract all unique genes from all datasets in the integrator."""
+    all_genes = set()
+    for cpm_df in ri.cpm_data.values():
+        if 'Gene' in cpm_df.columns:
+            all_genes.update(cpm_df['Gene'].tolist())
+    return sorted(all_genes)
+
+
+def initialize_session_state(ri: ResultsIntegrator):
+    """Initialize session state variables for dataset and contrast selections."""
+    # Initialize session state for selections if not exists
+    if 'selected_datasets' not in st.session_state:
+        # Default to first 5 datasets
+        all_dataset_ids = list(ri.cpm_data.keys())
+        st.session_state['selected_datasets'] = set(all_dataset_ids[:5])
+
+    if 'selected_contrasts' not in st.session_state:
+        # Default to all contrasts for selected datasets
+        selected_contrasts = set()
+        for analysis_id, contrasts in ri.deg_data.items():
+            if analysis_id in st.session_state['selected_datasets']:
+                for contrast_id in contrasts.keys():
+                    selected_contrasts.add((analysis_id, contrast_id))
+        st.session_state['selected_contrasts'] = selected_contrasts
+
+    # Initialize page number
+    if 'page_num' not in st.session_state:
+        st.session_state.page_num = 1
+
+
+def calculate_pagination_info(gene_sel: List[str], genes_per_page: int = 30) -> Tuple[int, int, int, List[str]]:
+    """
+    Calculate pagination information for gene lists.
+
+    Returns:
+        total_pages, current_page, genes_per_page, current_genes
+    """
+    if not gene_sel:
+        return 1, 1, genes_per_page, []
+
+    total_pages = (len(gene_sel) + genes_per_page - 1) // genes_per_page
+    current_page = st.session_state.get('page_num', 1)
+
+    # Calculate gene slice for the current page
+    start_idx = (current_page - 1) * genes_per_page
+    end_idx = min(start_idx + genes_per_page, len(gene_sel))
+    current_genes = gene_sel[start_idx:end_idx]
+
+    return total_pages, current_page, genes_per_page, current_genes
+
+
+def safe_rerun():
+    """Safely call streamlit rerun with fallbacks for older versions."""
+    try:
+        st.rerun()
+    except AttributeError:
+        try:
+            st.experimental_rerun()
+        except AttributeError:
+            # For very old versions, do nothing
+            pass
+
+
+def check_ai_generating():
+    """Check if AI is currently generating to skip expensive operations."""
+    return st.session_state.get('ai_generating', False)
+
+
+def add_custom_css():
+    """Add custom CSS styles for the Streamlit app."""
+    st.markdown("""
+    <style>
+      /* Fix for text wrapping in dataframes */
+      .stDataFrame tbody tr td {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        max-width: 300px;
+      }
+      .stDataFrame th {
+        white-space: normal !important;
+        word-wrap: break-word !important;
+        max-width: 300px;
+      }
+      /* Ensure Description column has more space */
+      .stDataFrame td:nth-child(3) {
+        min-width: 250px;
+        max-width: 500px;
+      }
+      /* Compact multiselect tags */
+      span[data-baseweb="tag"] {
+        font-size: 11px !important;
+        padding: 0.25rem 0.5rem !important;
+        height: 1.2rem !important;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def load_environment():
+    """Load environment variables from .env file if available."""
+    try:
+        from dotenv import load_dotenv
+        # Try loading from current directory first, then parent directories
+        load_dotenv()
+        # Also try loading from project root
+        project_root = Path(__file__).parent.parent.parent.parent
+        env_file = project_root / ".env"
+        if env_file.exists():
+            load_dotenv(env_file)
+    except ImportError:
+        # dotenv not available, continue without it
+        pass
