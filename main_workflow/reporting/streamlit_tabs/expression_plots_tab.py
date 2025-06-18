@@ -14,7 +14,10 @@ from .helpers import (
     setup_fragment_decorator,
     cached_figure_creation,
     calculate_pagination_info,
-    safe_rerun
+    safe_rerun,
+    log_streamlit_tab,
+    log_streamlit_function,
+    log_streamlit_event
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -24,6 +27,7 @@ setup_fragment_decorator()
 logger = logging.getLogger(__name__)
 
 
+@log_streamlit_tab("Expression Plots")
 def render_expression_plots_tab(
     ri: ResultsIntegrator,
     gene_sel: List[str],
@@ -46,12 +50,15 @@ def render_expression_plots_tab(
     display_settings = _render_display_settings()
 
     if not gene_sel:
+        log_streamlit_event("No genes selected for expression plots")
         st.info("Please select genes from the sidebar.")
     elif not selected_datasets:
+        log_streamlit_event("No datasets selected for expression plots")
         st.info("Please select datasets in the 'Selections' tab.")
     else:
         # Calculate pagination information
         total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(gene_sel)
+        log_streamlit_event(f"Expression plots pagination: page {current_page}/{total_pages}, showing {len(current_genes)} genes")
 
         # Add pagination controls at the top if needed
         if total_pages > 1:
@@ -69,6 +76,7 @@ def render_expression_plots_tab(
         )
 
 
+@log_streamlit_function
 def _render_display_settings() -> Dict[str, Any]:
     """Render display settings controls in the sidebar and return the settings."""
     with st.sidebar.expander("🎨 Display Settings", expanded=False):
@@ -85,6 +93,7 @@ def _render_display_settings() -> Dict[str, Any]:
     }
 
 
+@log_streamlit_function
 def _render_top_pagination_controls(current_page: int, total_pages: int):
     """Render pagination controls at the top of the plots for convenience."""
     cols = st.columns([2, 1, 1, 1, 2])
@@ -106,6 +115,7 @@ def _render_top_pagination_controls(current_page: int, total_pages: int):
 
 
 @st.fragment
+@log_streamlit_function
 def _draw_expression_plots(
     ri: ResultsIntegrator,
     gene_selection: List[str],
@@ -151,8 +161,8 @@ def _draw_expression_plots(
                     "create_expression_plots",
                     ri,
                     current_genes,
-                    dataset_selection,
                     "violin",
+                    dataset_selection,
                     None,
                     hide_labels,
                     page_num,
@@ -181,8 +191,10 @@ def _draw_expression_plots(
                 )
 
             if fig2:
+                log_streamlit_event("Expression plots generated successfully")
                 st.plotly_chart(fig2, use_container_width=True)
             else:
+                log_streamlit_event("Failed to generate expression plots")
                 st.error("Could not generate expression plots. Please check your selections.")
 
         except Exception as e:
@@ -191,6 +203,7 @@ def _draw_expression_plots(
             _display_expression_plot_error_details(e)
 
 
+@log_streamlit_function
 def _display_expression_plot_error_details(error: Exception):
     """Display detailed error information in an expandable section."""
     with st.expander("🔍 Expression Plot Error Details", expanded=False):

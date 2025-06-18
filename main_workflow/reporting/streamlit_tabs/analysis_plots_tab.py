@@ -11,7 +11,13 @@ import streamlit as st
 import traceback
 from typing import List, Dict, Any, Optional
 
-from .helpers import check_ai_generating, setup_fragment_decorator
+from .helpers import (
+    check_ai_generating,
+    setup_fragment_decorator,
+    log_streamlit_tab,
+    log_streamlit_function,
+    log_streamlit_event
+)
 from ResultsIntegration import ResultsIntegrator
 
 # Import single analysis plotting functions
@@ -34,6 +40,7 @@ setup_fragment_decorator()
 logger = logging.getLogger(__name__)
 
 
+@log_streamlit_tab("Analysis Plots")
 def render_analysis_plots_tab(ri: ResultsIntegrator, results_dir: str):
     """
     Render the analysis plots tab.
@@ -52,6 +59,7 @@ def render_analysis_plots_tab(ri: ResultsIntegrator, results_dir: str):
     _render_analysis_plots_interface(ri, results_dir)
 
 
+@log_streamlit_function
 def _render_display_settings():
     """Render display settings controls in the sidebar."""
     with st.sidebar.expander("🎨 Display Settings", expanded=False):
@@ -60,6 +68,7 @@ def _render_display_settings():
 
 
 @st.fragment
+@log_streamlit_function
 def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
     """Render the main analysis plots interface using fragment isolation."""
     # Skip execution if AI is currently generating
@@ -70,6 +79,7 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
     selected_dataset = st.selectbox("Select a dataset to view analysis plots:", dataset_options)
 
     if not selected_dataset:
+        log_streamlit_event("No dataset selected for analysis plots")
         st.info("Please select a dataset to view RNA-seq analysis plots.")
         return
 
@@ -81,6 +91,7 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
 
     # Check if the path exists
     if not os.path.exists(base_path):
+        log_streamlit_event(f"RNAseqAnalysis folder not found for {selected_dataset}")
         st.error(f"Could not find RNAseqAnalysis folder for {selected_dataset}")
         return
 
@@ -91,6 +102,7 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
     _render_de_plots(ri, selected_dataset, base_path, groups)
 
 
+@log_streamlit_function
 def _load_sample_groups(ri: ResultsIntegrator, selected_dataset: str) -> Optional[Dict]:
     """Load sample groups for the selected dataset."""
     groups = None
@@ -109,6 +121,7 @@ def _load_sample_groups(ri: ResultsIntegrator, selected_dataset: str) -> Optiona
     return groups
 
 
+@log_streamlit_function
 def _render_qc_plots(ri: ResultsIntegrator, selected_dataset: str, base_path: str, groups: Optional[Dict]):
     """Render quality control plots section."""
     st.subheader("Quality Control and Normalization")
@@ -157,6 +170,7 @@ def _render_qc_plots(ri: ResultsIntegrator, selected_dataset: str, base_path: st
         _render_variance_modeling_tab(qc_plot_files)
 
 
+@log_streamlit_function
 def _render_quality_overview_tab(ri: ResultsIntegrator, selected_dataset: str, qc_plot_files: Dict, groups: Optional[Dict]):
     """Render the quality overview tab with PCA plot."""
     pca_fig = None
@@ -179,6 +193,7 @@ def _render_quality_overview_tab(ri: ResultsIntegrator, selected_dataset: str, q
         st.info("MDS plot not available for this dataset.")
 
 
+@log_streamlit_function
 def _render_filtering_tab(qc_plot_files: Dict):
     """Render the expression filtering tab."""
     if os.path.exists(qc_plot_files["Filtering Density"]["file"]):
@@ -189,6 +204,7 @@ def _render_filtering_tab(qc_plot_files: Dict):
         st.info("Filtering density plot not available for this dataset.")
 
 
+@log_streamlit_function
 def _render_normalization_tab(qc_plot_files: Dict):
     """Render the normalization tab."""
     if os.path.exists(qc_plot_files["Normalization Boxplots"]["file"]):
@@ -199,6 +215,7 @@ def _render_normalization_tab(qc_plot_files: Dict):
         st.info("Normalization boxplots not available for this dataset.")
 
 
+@log_streamlit_function
 def _render_variance_modeling_tab(qc_plot_files: Dict):
     """Render the variance modeling tab."""
     col1, col2 = st.columns(2)
@@ -218,6 +235,7 @@ def _render_variance_modeling_tab(qc_plot_files: Dict):
                 st.markdown(qc_plot_files["SA Plot"]["description"])
 
 
+@log_streamlit_function
 def _render_de_plots(ri: ResultsIntegrator, selected_dataset: str, base_path: str, groups: Optional[Dict]):
     """Render differential expression plots section."""
     st.markdown("---")
@@ -228,6 +246,7 @@ def _render_de_plots(ri: ResultsIntegrator, selected_dataset: str, base_path: st
                     if os.path.isdir(os.path.join(base_path, d)) and d != "logs"]
 
     if not contrast_dirs:
+        log_streamlit_event(f"No contrast directories found for {selected_dataset}")
         st.info("No contrast-specific plots found for this dataset.")
         return
 
@@ -247,6 +266,7 @@ def _render_de_plots(ri: ResultsIntegrator, selected_dataset: str, base_path: st
         _render_deg_table(selected_dataset, selected_contrast, contrast_path)
 
 
+@log_streamlit_function
 def _render_contrast_selection(ri: ResultsIntegrator, contrast_dirs: List[str]) -> Optional[str]:
     """Render contrast selection interface and return selected contrast."""
     # Find contrast descriptions if available
@@ -274,6 +294,7 @@ def _render_contrast_selection(ri: ResultsIntegrator, contrast_dirs: List[str]) 
     return contrast_display_to_id.get(selected_contrast_display)
 
 
+@log_streamlit_function
 def _display_contrast_description(ri: ResultsIntegrator, selected_contrast: str):
     """Display the full contrast description if available."""
     if (hasattr(ri, "contrast_info") and
@@ -282,6 +303,7 @@ def _display_contrast_description(ri: ResultsIntegrator, selected_contrast: str)
         st.markdown(f"**Description:** {ri.contrast_info[selected_contrast]['description']}")
 
 
+@log_streamlit_function
 def _render_de_plot_tabs(ri: ResultsIntegrator, selected_dataset: str, selected_contrast: str,
                         contrast_path: str, groups: Optional[Dict]):
     """Render differential expression plot tabs."""
@@ -317,6 +339,7 @@ def _render_de_plot_tabs(ri: ResultsIntegrator, selected_dataset: str, selected_
         _render_heatmap_plot_tab(ri, selected_dataset, selected_contrast, contrast_path, contrast_plot_files, groups)
 
 
+@log_streamlit_function
 def _render_volcano_plot_tab(ri: ResultsIntegrator, selected_dataset: str, selected_contrast: str,
                            contrast_plot_files: Dict):
     """Render volcano plot tab."""
@@ -342,6 +365,7 @@ def _render_volcano_plot_tab(ri: ResultsIntegrator, selected_dataset: str, selec
         st.info("Volcano plot not available for this contrast.")
 
 
+@log_streamlit_function
 def _render_ma_plot_tab(ri: ResultsIntegrator, selected_dataset: str, selected_contrast: str,
                        contrast_plot_files: Dict):
     """Render MA plot tab."""
@@ -367,6 +391,7 @@ def _render_ma_plot_tab(ri: ResultsIntegrator, selected_dataset: str, selected_c
         st.info("MA plot not available for this contrast.")
 
 
+@log_streamlit_function
 def _render_heatmap_plot_tab(ri: ResultsIntegrator, selected_dataset: str, selected_contrast: str,
                            contrast_path: str, contrast_plot_files: Dict, groups: Optional[Dict]):
     """Render heatmap plot tab."""
@@ -396,6 +421,7 @@ def _render_heatmap_plot_tab(ri: ResultsIntegrator, selected_dataset: str, selec
         st.info("Heatmap not available for this contrast.")
 
 
+@log_streamlit_function
 def _render_deg_table(selected_dataset: str, selected_contrast: str, contrast_path: str):
     """Render the DEG table section."""
     deg_file = os.path.join(contrast_path, "DEG.csv")

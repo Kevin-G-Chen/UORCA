@@ -18,7 +18,10 @@ from .helpers import (
     cached_identify_important_genes,
     get_all_genes_from_integrator,
     safe_rerun,
-    load_environment
+    load_environment,
+    log_streamlit_function,
+    log_streamlit_event,
+    log_streamlit_user_action
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -28,6 +31,7 @@ logger = logging.getLogger(__name__)
 load_environment()
 
 
+@log_streamlit_function
 def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str, Any]:
     """
     Render all sidebar controls and return the selected parameters.
@@ -84,6 +88,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
     }
 
 
+@log_streamlit_function
 def _render_container_info():
     """Render container mode information if detected."""
     if os.path.exists('/workspace') and os.path.exists('/UORCA_results'):
@@ -95,6 +100,7 @@ def _render_container_info():
         """)
 
 
+@log_streamlit_function
 def _render_results_directory_input(current_results_dir: str):
     """Render the results directory input field."""
     # Get the default results directory
@@ -113,6 +119,7 @@ def _render_results_directory_input(current_results_dir: str):
     )
 
 
+@log_streamlit_function
 def _render_parameter_controls(show_advanced: bool) -> Dict[str, Any]:
     """Render parameter control widgets and return selected values."""
     st.sidebar.subheader("Advanced Options")
@@ -143,6 +150,7 @@ def _render_parameter_controls(show_advanced: bool) -> Dict[str, Any]:
     return params
 
 
+@log_streamlit_function
 def _render_advanced_parameters() -> Dict[str, Any]:
     """Render advanced parameter controls."""
     params = {}
@@ -302,6 +310,7 @@ def _render_advanced_parameters() -> Dict[str, Any]:
     return params
 
 
+@log_streamlit_function
 def _render_separate_heatmap_filters() -> Dict[str, Any]:
     """Render separate heatmap filter controls."""
     st.sidebar.markdown("**Heatmap-specific filters:**")
@@ -349,6 +358,7 @@ def _render_separate_heatmap_filters() -> Dict[str, Any]:
     return params
 
 
+@log_streamlit_function
 def _render_simple_parameters() -> Dict[str, Any]:
     """Render simple parameter controls."""
     params = {}
@@ -474,6 +484,7 @@ def _render_simple_parameters() -> Dict[str, Any]:
     return params
 
 
+@log_streamlit_function
 def _render_gene_selection(
     ri: ResultsIntegrator,
     results_dir: str,
@@ -490,11 +501,14 @@ def _render_gene_selection(
     )
 
     if gene_select_method == "Custom":
+        log_streamlit_user_action("Selected custom gene input method")
         return _render_custom_gene_selection(all_genes)
     else:
+        log_streamlit_user_action("Selected auto gene selection method")
         return _render_auto_gene_selection(ri, results_dir, params, show_advanced)
 
 
+@log_streamlit_function
 def _render_custom_gene_selection(all_genes: List[str]) -> List[str]:
     """Render custom gene selection interface."""
     st.sidebar.write("Enter genes (one per line):")
@@ -520,9 +534,11 @@ def _render_custom_gene_selection(all_genes: List[str]) -> List[str]:
             )
 
         if gene_sel:
+            log_streamlit_user_action(f"Custom gene selection: {len(gene_sel)} valid genes")
             st.sidebar.success(f"✅ {len(gene_sel)} genes selected")
             st.sidebar.caption(f"🧬 {len(gene_sel)} genes selected")
         else:
+            log_streamlit_event("Custom gene selection: no valid genes found")
             st.sidebar.error("❌ No valid genes found")
 
         return gene_sel
@@ -530,6 +546,7 @@ def _render_custom_gene_selection(all_genes: List[str]) -> List[str]:
         return []
 
 
+@log_streamlit_function
 def _render_auto_gene_selection(
     ri: ResultsIntegrator,
     results_dir: str,
@@ -555,6 +572,7 @@ def _render_auto_gene_selection(
     return _render_gene_multiselect(limited_genes, len(top_genes))
 
 
+@log_streamlit_function
 def _limit_and_rank_genes(ri: ResultsIntegrator, top_genes: List[str]) -> List[str]:
     """Limit genes to 200 maximum, selecting by highest LFC if needed."""
     if len(top_genes) <= 200:
@@ -583,12 +601,14 @@ def _limit_and_rank_genes(ri: ResultsIntegrator, top_genes: List[str]) -> List[s
     return limited_genes
 
 
+@log_streamlit_function
 def _render_gene_multiselect(limited_genes: List[str], total_genes: int) -> List[str]:
     """Render the gene multiselect widget with select all button."""
     col1, col2 = st.sidebar.columns([3, 1])
     with col2:
         st.markdown("")  # Add some spacing
         if st.button("Select All", key="select_all_genes_important") and limited_genes:
+            log_streamlit_user_action(f"Selected all {len(limited_genes)} auto-selected genes")
             st.session_state['gene_sel_important'] = limited_genes
             safe_rerun()
 
@@ -613,6 +633,7 @@ def _render_gene_multiselect(limited_genes: List[str], total_genes: int) -> List
     return gene_sel
 
 
+@log_streamlit_function
 def _render_visualization_options() -> Dict[str, Any]:
     """Render visualization options and return selected values."""
     st.sidebar.subheader("Plot Options")
@@ -622,6 +643,7 @@ def _render_visualization_options() -> Dict[str, Any]:
     }
 
 
+@log_streamlit_function
 def _render_pagination_controls(gene_sel: List[str]) -> Dict[str, Any]:
     """Render pagination controls if needed."""
     genes_per_page = 30
@@ -638,6 +660,7 @@ def _render_pagination_controls(gene_sel: List[str]) -> Dict[str, Any]:
         with col1:
             prev_disabled = st.session_state.get('page_num', 1) <= 1
             if st.button("◀", disabled=prev_disabled, key="prev_page"):
+                log_streamlit_user_action("Navigated to previous page")
                 st.session_state.page_num = max(1, st.session_state.get('page_num', 1) - 1)
                 safe_rerun()
 
@@ -659,6 +682,7 @@ def _render_pagination_controls(gene_sel: List[str]) -> Dict[str, Any]:
         with col3:
             next_disabled = st.session_state.get('page_num', 1) >= total_pages
             if st.button("▶", disabled=next_disabled, key="next_page"):
+                log_streamlit_user_action("Navigated to next page")
                 st.session_state.page_num = min(total_pages, st.session_state.get('page_num', 1) + 1)
                 safe_rerun()
 
@@ -675,6 +699,7 @@ def _render_pagination_controls(gene_sel: List[str]) -> Dict[str, Any]:
     }
 
 
+@log_streamlit_function
 def _render_export_options(
     ri: ResultsIntegrator,
     params: Dict[str, Any],
@@ -687,12 +712,14 @@ def _render_export_options(
     export_format = st.sidebar.selectbox("Export format:", ["HTML", "CSV"])
 
     if st.sidebar.button("Export Current View"):
+        log_streamlit_user_action(f"Started export in {export_format} format")
         if export_format == "HTML":
             _export_html(ri, params, gene_sel, viz_options)
         else:
             _export_csv(ri, gene_sel)
 
 
+@log_streamlit_function
 def _export_html(
     ri: ResultsIntegrator,
     params: Dict[str, Any],
@@ -736,6 +763,7 @@ def _export_html(
         st.sidebar.error(f"Error exporting HTML: {str(e)}")
 
 
+@log_streamlit_function
 def _export_csv(ri: ResultsIntegrator, gene_sel: List[str]):
     """Export current view as CSV."""
     try:
@@ -785,6 +813,7 @@ def _export_csv(ri: ResultsIntegrator, gene_sel: List[str]):
         st.sidebar.error(f"Error exporting CSV: {str(e)}")
 
 
+@log_streamlit_function
 def _render_help_section():
     """Render the help section at the bottom of the sidebar."""
     st.sidebar.divider()

@@ -8,13 +8,21 @@ import pandas as pd
 import streamlit as st
 from typing import List, Dict, Any, Set, Tuple
 
-from .helpers import check_ai_generating, setup_fragment_decorator, safe_rerun
+from .helpers import (
+    check_ai_generating,
+    setup_fragment_decorator,
+    safe_rerun,
+    log_streamlit_tab,
+    log_streamlit_function,
+    log_streamlit_event
+)
 from ResultsIntegration import ResultsIntegrator
 
 # Set up fragment decorator
 setup_fragment_decorator()
 
 
+@log_streamlit_tab("Contrasts Info")
 def render_contrasts_info_tab(ri: ResultsIntegrator, pvalue_thresh: float, lfc_thresh: float):
     """
     Render the contrasts info tab.
@@ -32,6 +40,7 @@ def render_contrasts_info_tab(ri: ResultsIntegrator, pvalue_thresh: float, lfc_t
 
 
 @st.fragment
+@log_streamlit_function
 def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc_thresh: float):
     """Render the main contrasts interface using fragment isolation."""
     # Skip execution if AI is currently generating
@@ -42,6 +51,7 @@ def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc
     contrast_info = _create_contrast_info_dataframe(ri, pvalue_thresh, lfc_thresh)
 
     if not contrast_info:
+        log_streamlit_event("No contrast information available")
         st.info("No contrast information available.")
         return
 
@@ -55,12 +65,15 @@ def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc
 
     # Display the filtered contrast information
     if not filtered_df.empty:
+        log_streamlit_event(f"Displaying {len(filtered_df)} contrasts")
         _render_contrast_table(filtered_df)
         _render_selection_controls(filtered_df)
     else:
+        log_streamlit_event("No contrasts match current filters")
         st.info("No contrasts match the current filters.")
 
 
+@log_streamlit_function
 def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float, lfc_thresh: float) -> List[Dict[str, Any]]:
     """Create a list of contrast information dictionaries."""
     contrast_info = []
@@ -106,6 +119,7 @@ def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float,
     return contrast_info
 
 
+@log_streamlit_function
 def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
     """Render filtering controls and return filtered DataFrame."""
     st.subheader("Filter Contrasts")
@@ -145,6 +159,7 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
     return filtered_df
 
 
+@log_streamlit_function
 def _render_contrast_table(filtered_df: pd.DataFrame):
     """Render the interactive contrast table with selection checkboxes."""
     # Sort by DEG count by default
@@ -183,9 +198,11 @@ def _render_contrast_table(filtered_df: pd.DataFrame):
                 contrast = row.get('Original ID', row['Contrast'])
                 selected_from_info.add((dataset, contrast))
         st.session_state['selected_contrasts'] = selected_from_info
+        log_streamlit_event(f"User selected {len(selected_from_info)} contrasts from info tab")
 
 
-def _render_selection_controls(display_df: pd.DataFrame):
+@log_streamlit_function
+def _render_selection_controls(filtered_df: pd.DataFrame):
     """Render controls for selecting all visible contrasts."""
     # Add quick selection button
     if st.button("Select all visible contrasts", key="select_all_visible_contrasts"):
@@ -197,5 +214,6 @@ def _render_selection_controls(display_df: pd.DataFrame):
         st.session_state['selected_contrasts'] = visible_contrasts
         # Reset page number when changing contrasts
         st.session_state.page_num = 1
+        log_streamlit_event(f"User selected all {len(visible_contrasts)} visible contrasts")
         st.success(f"Selected {len(visible_contrasts)} contrasts for analysis!")
         st.info("Switch to the Heat-map tab to view updated visualizations.")

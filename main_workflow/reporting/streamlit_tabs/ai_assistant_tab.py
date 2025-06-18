@@ -11,7 +11,14 @@ import logging
 import streamlit as st
 from typing import Dict, Any, List, Optional
 
-from .helpers import check_ai_generating, setup_fragment_decorator
+from .helpers import (
+    check_ai_generating,
+    setup_fragment_decorator,
+    log_streamlit_tab,
+    log_streamlit_function,
+    log_streamlit_agent,
+    log_streamlit_event
+)
 from ResultsIntegration import ResultsIntegrator
 
 # Set up fragment decorator
@@ -42,6 +49,7 @@ except ImportError as e:
     CONTRAST_RELEVANCE_AVAILABLE = False
 
 
+@log_streamlit_tab("AI Assistant")
 def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
     """
     Render the AI assistant tab.
@@ -55,6 +63,7 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
 
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
+        log_streamlit_event("OpenAI API key not found for AI assistant")
         st.error("OPENAI_API_KEY environment variable not set")
         st.info("Please set your OpenAI API key to use AI features.")
         return
@@ -71,6 +80,7 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
     _render_ai_gene_analysis_section(ri, results_dir)
 
 
+@log_streamlit_function
 def _render_ai_landing_page(results_dir: str):
     """Render the AI landing page section."""
     if not MCP_LANDING_PAGE_AVAILABLE:
@@ -83,6 +93,7 @@ def _render_ai_landing_page(results_dir: str):
         st.error(f"Failed to load AI assistant: {e}")
 
 
+@log_streamlit_function
 def _render_contrast_relevance_section(ri: ResultsIntegrator):
     """Render the contrast relevance assessment section."""
     st.subheader("🔢 Contrast Relevance Assessment")
@@ -104,9 +115,11 @@ def _render_contrast_relevance_section(ri: ResultsIntegrator):
             st.info("💡 Enter a research question above to enable contrast relevance assessment.")
 
     if run_button:
+        log_streamlit_event(f"User started contrast relevance assessment: '{research_query.strip()}'")
         _run_contrast_relevance_assessment(ri, research_query.strip())
 
 
+@log_streamlit_agent
 def _run_contrast_relevance_assessment(ri: ResultsIntegrator, research_query: str):
     """Run the contrast relevance assessment."""
     if not CONTRAST_RELEVANCE_AVAILABLE:
@@ -140,6 +153,7 @@ def _run_contrast_relevance_assessment(ri: ResultsIntegrator, research_query: st
                 st.code(traceback.format_exc())
 
 
+@log_streamlit_function
 def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query: str):
     """Display the contrast relevance assessment results."""
     # Sort by relevance score
@@ -161,6 +175,7 @@ def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query
         lambda aid: ri.analysis_info.get(aid, {}).get('organism', 'Unknown')
     )
 
+    log_streamlit_event(f"Contrast relevance assessment completed: {len(results_df)} contrasts scored")
     st.success(f"✅ Successfully assessed {len(results_df)} contrasts!")
 
     # Store results for AI gene analysis
@@ -211,6 +226,7 @@ def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query
     _provide_relevance_download(results_df)
 
 
+@log_streamlit_function
 def _display_relevance_summary(results_df):
     """Display summary statistics for relevance scores."""
     col1, col2, col3 = st.columns(3)
@@ -222,6 +238,7 @@ def _display_relevance_summary(results_df):
         st.metric("Low Relevance (<0.4)", len(results_df[results_df['RelevanceScore'] < 0.4]))
 
 
+@log_streamlit_function
 def _provide_relevance_download(results_df):
     """Provide download option for relevance results."""
     csv = results_df.to_csv(index=False)
@@ -233,6 +250,7 @@ def _provide_relevance_download(results_df):
     )
 
 
+@log_streamlit_function
 def _render_ai_gene_analysis_section(ri: ResultsIntegrator, results_dir: str):
     """Render the AI gene analysis section."""
     if (
@@ -244,6 +262,7 @@ def _render_ai_gene_analysis_section(ri: ResultsIntegrator, results_dir: str):
         st.markdown("**AI-powered analysis of differential expression patterns across selected contrasts.** The AI will choose appropriate thresholds and identify key genes.")
 
         if st.button("🚀 Analyze Key Genes", type="primary"):
+            log_streamlit_event("User started AI gene analysis")
             _run_ai_gene_analysis(ri, results_dir)
 
     elif not UORCA_AGENT_AVAILABLE:
@@ -252,6 +271,7 @@ def _render_ai_gene_analysis_section(ri: ResultsIntegrator, results_dir: str):
         st.info("💡 Run contrast relevance assessment above to enable AI gene analysis.")
 
 
+@log_streamlit_agent
 def _run_ai_gene_analysis(ri: ResultsIntegrator, results_dir: str):
     """Run the AI gene analysis."""
     if not os.getenv("OPENAI_API_KEY"):
@@ -293,6 +313,7 @@ Please perform the analysis using your four tools, choose all thresholds reasona
                 st.code(traceback.format_exc())
 
 
+@log_streamlit_agent
 def _execute_ai_analysis(agent, prompt: str) -> str:
     """Execute the AI analysis asynchronously."""
     loop = asyncio.new_event_loop()
@@ -310,8 +331,10 @@ def _execute_ai_analysis(agent, prompt: str) -> str:
         loop.close()
 
 
+@log_streamlit_function
 def _display_ai_analysis_results(result_text: str, research_question: str, selected_contrasts: List[Dict]):
     """Display the AI gene analysis results."""
+    log_streamlit_event("AI gene analysis completed successfully")
     st.success("✅ Analysis completed successfully!")
 
     st.subheader("📑 AI Gene Analysis Results")
