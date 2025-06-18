@@ -77,23 +77,15 @@ def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc
 def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float, lfc_thresh: float) -> List[Dict[str, Any]]:
     """Create a list of contrast information dictionaries."""
     contrast_info = []
-    for aid, contrasts in ri.deg_data.items():
-        for contrast_id in contrasts.keys():
-            # Get original contrast name and description
-            original_name = contrast_id
-            description = "No description available"
-
-            # Try to get information from contrast_info
-            if hasattr(ri, "contrast_info") and contrast_id in ri.contrast_info:
-                description = ri.contrast_info[contrast_id].get('description', "No description available")
-                # Use original name if available
-                if 'name' in ri.contrast_info[contrast_id]:
-                    original_name = ri.contrast_info[contrast_id]['name']
+    for aid, info in ri.analysis_info.items():
+        for c in info.get("contrasts", []):
+            contrast_id = c["name"]
+            description = c.get("description", "")
 
             # Count DEGs for this contrast
             deg_count = 0
-            if aid in ri.deg_data and contrast_id in ri.deg_data[aid]:
-                df = ri.deg_data[aid][contrast_id]
+            df = ri.deg_data.get(aid, {}).get(contrast_id, pd.DataFrame())
+            if not df.empty:
                 # Use exact column names from DEG.csv file - prefer adjusted p-value
                 p_value_col = None
                 if 'adj.P.Val' in df.columns:
@@ -109,11 +101,11 @@ def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float,
 
             contrast_info.append({
                 "Dataset": aid,
-                "Accession": ri.analysis_info.get(aid, {}).get("accession", "Unknown"),
-                "Contrast": original_name,
+                "Accession": info.get("accession", "Unknown"),
+                "Contrast": contrast_id,
                 "Original ID": contrast_id,
                 "Description": description,
-                "DEGs": deg_count
+                "DEGs": int(deg_count)
             })
 
     return contrast_info

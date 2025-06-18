@@ -48,9 +48,6 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
     """
     st.sidebar.title("🧬 UORCA Explorer")
 
-    # Container mode detection and info
-    _render_container_info()
-
     # Results directory input
     _render_results_directory_input(results_dir)
 
@@ -91,16 +88,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
     }
 
 
-@log_streamlit_function
-def _render_container_info():
-    """Render container mode information if detected."""
-    if os.path.exists('/workspace') and os.path.exists('/UORCA_results'):
-        st.sidebar.info("""
-        ### 📂 Container Mode Detected
-        **Running in container:** Use `/UORCA_results` as your results directory path.
 
-        This path maps to your host results directory.
-        """)
 
 
 @log_streamlit_function
@@ -131,10 +119,10 @@ def _render_parameter_controls(show_advanced: bool) -> Dict[str, Any]:
     params = {
         'pvalue_thresh': 0.05,
         'lfc_thresh': 1.0,
-        'min_unique': 1,
-        'max_contrasts_unique': 2,
+        'min_unique': 0,
+        'max_contrasts_unique': 0,
         'top_frequent_genes': 20,
-        'top_unique_genes': 10,
+        'top_unique_genes': 0,
         'hide_x_labels': True,
         'use_separate_heatmap_filters': False,
         'heatmap_pvalue_thresh': 0.05,
@@ -142,7 +130,7 @@ def _render_parameter_controls(show_advanced: bool) -> Dict[str, Any]:
         'use_dynamic_filtering': True,
         'effective_pvalue_thresh': 0.05,
         'effective_lfc_thresh': 1.0,
-        'hide_empty_rows_cols': False
+        'hide_empty_rows_cols': True
     }
 
     if show_advanced:
@@ -198,9 +186,8 @@ def _render_advanced_parameters() -> Dict[str, Any]:
 
     # Auto-selection parameters
     st.sidebar.subheader("Auto-selection Parameters")
-    st.sidebar.markdown("**Auto-selection uses two strategies:**")
-    st.sidebar.markdown("1. **Frequent DEGs**: Genes significant across multiple contrasts")
-    st.sidebar.markdown("2. **Contrast-specific DEGs**: High fold-change genes unique to few contrasts")
+    st.sidebar.markdown("**Auto-selection strategy:**")
+    st.sidebar.markdown("**Frequent DEGs**: Genes significant across multiple contrasts")
 
     # Frequent DEGs
     col1, col2 = st.sidebar.columns([3, 1])
@@ -221,62 +208,7 @@ def _render_advanced_parameters() -> Dict[str, Any]:
         except ValueError:
             pass
 
-    # Contrast-specific DEGs
-    col1, col2 = st.sidebar.columns([3, 1])
-    with col1:
-        params['top_unique_genes'] = st.slider(
-            "Contrast-specific DEGs per contrast", 1, 20, 10,
-            help="Number of high fold-change genes to select from each contrast that appear in few other contrasts"
-        )
-    with col2:
-        unique_text = st.text_input(
-            "Unique genes count",
-            value=str(params['top_unique_genes']),
-            key="unique_text",
-            label_visibility="collapsed"
-        )
-        try:
-            params['top_unique_genes'] = int(unique_text)
-        except ValueError:
-            pass
 
-    # Max contrasts for unique
-    col1, col2 = st.sidebar.columns([3, 1])
-    with col1:
-        params['max_contrasts_unique'] = st.slider(
-            "Max contrasts for 'contrast-specific'", 1, 10, 2,
-            help="A gene is considered 'contrast-specific' if it appears as significant in this many contrasts or fewer"
-        )
-    with col2:
-        max_text = st.text_input(
-            "Max contrasts",
-            value=str(params['max_contrasts_unique']),
-            key="max_text",
-            label_visibility="collapsed"
-        )
-        try:
-            params['max_contrasts_unique'] = int(max_text)
-        except ValueError:
-            pass
-
-    # Min unique per contrast
-    col1, col2 = st.sidebar.columns([3, 1])
-    with col1:
-        params['min_unique'] = st.slider(
-            "Min contrast-specific DEGs per contrast", 0, 10, 1,
-            help="Minimum number of contrast-specific genes that must be selected from each contrast (quality control)"
-        )
-    with col2:
-        min_text = st.text_input(
-            "Min unique",
-            value=str(params['min_unique']),
-            key="min_text",
-            label_visibility="collapsed"
-        )
-        try:
-            params['min_unique'] = int(min_text)
-        except ValueError:
-            pass
 
     # Visualization options
     st.sidebar.subheader("Visualization Options")
@@ -302,13 +234,7 @@ def _render_advanced_parameters() -> Dict[str, Any]:
         params['effective_lfc_thresh'] = params['lfc_thresh']
         st.sidebar.info("🎯 Heatmap uses same significance filters as Auto-selected DEGs")
 
-    params['hide_empty_rows_cols'] = st.sidebar.checkbox(
-        "Hide genes/contrasts with no significant values", value=False,
-        help="Remove rows/columns where no values meet significance criteria"
-    )
-
-    if params['hide_empty_rows_cols']:
-        st.sidebar.info("🧹 Genes/contrasts with no significant values will be completely removed from the heatmap")
+    params['hide_empty_rows_cols'] = True
 
     return params
 
@@ -408,20 +334,13 @@ def _render_simple_parameters() -> Dict[str, Any]:
     params['use_dynamic_filtering'] = True
     params['effective_pvalue_thresh'] = params['pvalue_thresh']
     params['effective_lfc_thresh'] = params['lfc_thresh']
-    params['hide_empty_rows_cols'] = st.sidebar.checkbox(
-        "Hide genes/contrasts with no significant values", value=False,
-        help="Remove rows/columns where no values meet significance criteria"
-    )
-
-    if params['hide_empty_rows_cols']:
-        st.sidebar.info("🧹 Genes/contrasts with no significant values will be completely removed from the heatmap")
+    params['hide_empty_rows_cols'] = True
 
     st.sidebar.info("🎯 Heatmap uses same significance filters as Auto-selected DEGs")
 
     # Auto-selection parameters (simplified)
-    st.sidebar.markdown("**Auto-selection uses two strategies:**")
-    st.sidebar.markdown("1. **Frequent DEGs**: Genes significant across multiple contrasts")
-    st.sidebar.markdown("2. **Contrast-specific DEGs**: High fold-change genes unique to few contrasts")
+    st.sidebar.markdown("**Auto-selection strategy:**")
+    st.sidebar.markdown("**Frequent DEGs**: Genes significant across multiple contrasts")
 
     # Frequent DEGs
     col1, col2 = st.sidebar.columns([3, 1])
@@ -442,46 +361,10 @@ def _render_simple_parameters() -> Dict[str, Any]:
         except ValueError:
             pass
 
-    # Contrast-specific DEGs
-    col1, col2 = st.sidebar.columns([3, 1])
-    with col1:
-        params['top_unique_genes'] = st.slider(
-            "Contrast-specific DEGs per contrast", 1, 20, 10,
-            help="Number of high fold-change genes to select from each contrast that appear in few other contrasts"
-        )
-    with col2:
-        unique_text = st.text_input(
-            "Unique genes count",
-            value=str(params['top_unique_genes']),
-            key="unique_text_simple",
-            label_visibility="collapsed"
-        )
-        try:
-            params['top_unique_genes'] = int(unique_text)
-        except ValueError:
-            pass
-
-    # Max contrasts for unique
-    col1, col2 = st.sidebar.columns([3, 1])
-    with col1:
-        params['max_contrasts_unique'] = st.slider(
-            "Max contrasts for 'contrast-specific'", 1, 10, 2,
-            help="A gene is considered 'contrast-specific' if it appears as significant in this many contrasts or fewer"
-        )
-    with col2:
-        max_text = st.text_input(
-            "Max contrasts",
-            value=str(params['max_contrasts_unique']),
-            key="max_text_simple",
-            label_visibility="collapsed"
-        )
-        try:
-            params['max_contrasts_unique'] = int(max_text)
-        except ValueError:
-            pass
-
-    # Set defaults for simple mode
-    params['min_unique'] = 1
+    # Set defaults for simple mode (removed contrast-specific controls)
+    params['top_unique_genes'] = 0
+    params['max_contrasts_unique'] = 0
+    params['min_unique'] = 0
     params['hide_x_labels'] = True
 
     return params

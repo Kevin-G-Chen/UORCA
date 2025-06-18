@@ -27,12 +27,6 @@ setup_fragment_decorator()
 logger = logging.getLogger(__name__)
 
 # Check for AI functionality availability
-try:
-    from ai_landing_page import render_ai_landing_page
-    MCP_LANDING_PAGE_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"AI landing page not available: {e}")
-    MCP_LANDING_PAGE_AVAILABLE = False
 
 try:
     from ai_agent_factory import create_uorca_agent

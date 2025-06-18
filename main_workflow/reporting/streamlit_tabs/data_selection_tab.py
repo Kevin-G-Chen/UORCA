@@ -104,29 +104,25 @@ def _render_contrast_selection(ri: ResultsIntegrator, pvalue_thresh: float, lfc_
 
     if st.session_state['selected_datasets']:
         contrast_rows = []
-        for analysis_id, contrasts in ri.deg_data.items():
-            if analysis_id in st.session_state['selected_datasets']:
-                for contrast_id in contrasts.keys():
-                    # Get description
-                    description = ri._get_contrast_description(analysis_id, contrast_id)
-                    if description.startswith("Contrast: "):
-                        description = description[10:]  # Remove "Contrast: " prefix
+        for analysis_id in st.session_state['selected_datasets']:
+            for c in ri.analysis_info.get(analysis_id, {}).get("contrasts", []):
+                contrast_id = c["name"]
+                description = c.get("description", "")
 
-                    # Count DEGs
-                    deg_count = 0
-                    if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
-                        df = ri.deg_data[analysis_id][contrast_id]
-                        if 'adj.P.Val' in df.columns and 'logFC' in df.columns:
-                            deg_count = ((df['adj.P.Val'] < pvalue_thresh) & (abs(df['logFC']) > lfc_thresh)).sum()
+                # Count DEGs
+                deg_count = 0
+                df = ri.deg_data.get(analysis_id, {}).get(contrast_id, pd.DataFrame())
+                if not df.empty and 'adj.P.Val' in df.columns and 'logFC' in df.columns:
+                    deg_count = ((df['adj.P.Val'] < pvalue_thresh) & (abs(df['logFC']) > lfc_thresh)).sum()
 
-                    contrast_rows.append({
-                        "✔": (analysis_id, contrast_id) in st.session_state.get('selected_contrasts', set()),
-                        "Dataset": analysis_id,
-                        "Accession": ri.analysis_info.get(analysis_id, {}).get("accession", "Unknown"),
-                        "Contrast": contrast_id,
-                        "Description": description[:150] + ("..." if len(description) > 150 else ""),
-                        "DEGs": deg_count
-                    })
+                contrast_rows.append({
+                    "✔": (analysis_id, contrast_id) in st.session_state.get('selected_contrasts', set()),
+                    "Dataset": analysis_id,
+                    "Accession": ri.analysis_info.get(analysis_id, {}).get("accession", "Unknown"),
+                    "Contrast": contrast_id,
+                    "Description": description[:150] + ("..." if len(description) > 150 else ""),
+                    "DEGs": int(deg_count)
+                })
 
         if contrast_rows:
             ctr_df = pd.DataFrame(contrast_rows)
