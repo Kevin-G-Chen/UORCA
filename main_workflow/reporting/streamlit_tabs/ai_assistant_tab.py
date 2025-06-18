@@ -11,7 +11,6 @@ import logging
 import streamlit as st
 from typing import Dict, Any, List, Optional
 
-from shared.workflow_logging import log_tool
 
 from .helpers import (
     check_ai_generating,
@@ -272,10 +271,7 @@ def _provide_relevance_download(results_df):
     )
 
 
-
-
-
-@log_tool
+@log_streamlit_function
 @log_streamlit_agent
 def _execute_ai_analysis(agent, prompt: str) -> str:
     """Execute the AI analysis asynchronously."""

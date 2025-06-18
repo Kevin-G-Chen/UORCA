@@ -13,7 +13,8 @@ from typing import Optional
 from pathlib import Path
 import streamlit as st
 
-from shared.workflow_logging import log_tool
+from streamlit_tabs.helpers import log_streamlit_function
+
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServerStdio
@@ -45,7 +46,7 @@ Return your analysis in two parts:
 Focus on identifying both shared signatures across multiple contrasts and context-specific gene expression patterns that could provide biological insights.
 """
 
-@log_tool
+@log_streamlit_function
 @st.cache_resource
 def create_uorca_agent() -> Agent:
     """Create an agent connected to the UORCA MCP server."""
@@ -77,7 +78,7 @@ def create_uorca_agent() -> Agent:
         logger.error(f"Failed to create UORCA MCP agent: {e}")
         raise RuntimeError(f"Agent creation failed: {e}")
 
-@log_tool
+@log_streamlit_function
 def validate_agent_setup(agent: Agent) -> bool:
     """Run a simple query to ensure the agent and server work."""
     async def _run_test():
