@@ -10,6 +10,8 @@ from pathlib import Path
 from openai import OpenAI
 from dotenv import load_dotenv
 
+from shared.workflow_logging import log_agent_tool
+
 # Load environment variables
 load_dotenv()
 
@@ -67,6 +69,7 @@ class ContrastAssessments(BaseModel):
 
 CONTRAST_ASSESS_SCHEMA = ContrastAssessments.model_json_schema()
 
+@log_agent_tool
 async def assess_contrast_subbatch(
     sub_df: pd.DataFrame,
     query: str,
@@ -89,6 +92,7 @@ async def assess_contrast_subbatch(
         data = await asyncio.to_thread(call_openai_json, prompt, schema, name)
         return [ContrastAssessment.model_validate(a) for a in data['assessments']]
 
+@log_agent_tool
 async def repeated_contrast_relevance(
     df: pd.DataFrame,
     query: str,
@@ -140,6 +144,7 @@ async def repeated_contrast_relevance(
 
     return pd.DataFrame(records)
 
+@log_agent_tool
 def run_contrast_relevance(
     ri,  # ResultsIntegrator instance
     query: str,

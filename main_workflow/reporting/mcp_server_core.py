@@ -3,6 +3,7 @@ import json
 import pandas as pd
 from mcp.server.fastmcp import FastMCP
 from ResultsIntegration import ResultsIntegrator
+from shared.workflow_logging import log_tool
 
 server = FastMCP("UORCA-Tools")
 
@@ -49,6 +50,7 @@ except Exception as e:
 
 # 1) Top recurring DEGs
 @server.tool()
+@log_tool
 async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) -> str:
     """
     Find the most commonly differentially expressed genes across contrasts.
@@ -67,6 +69,7 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
 
 # 2) Per-gene + contrast stats
 @server.tool()
+@log_tool
 async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
     """
     Get statistics for a specific gene across contrasts.
@@ -85,6 +88,7 @@ async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
 
 # 3) Filter by set A vs set B
 @server.tool()
+@log_tool
 async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: float, p_thresh: float) -> str:
     """
     Find genes that are significant in contrast set A but not in set B.
@@ -124,6 +128,7 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
 
 # 4) Contrast mini-summary
 @server.tool()
+@log_tool
 async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: float, max_genes: int = 10) -> str:
     """
     Summarize a specific contrast with top DEGs and statistics.
