@@ -170,7 +170,7 @@ if ! apptainer exec \
     echo 'Container started successfully. Initializing Streamlit...' && \
     export STREAMLIT_BROWSER_GATHER_USAGE_STATS=false && \
     export STREAMLIT_SERVER_HEADLESS=true && \
-    uv run streamlit run main_workflow/reporting/uorca_explorer.py --server.port ${PORT} --server.address 0.0.0.0 --server.headless true
+    uv run streamlit run main_workflow/reporting/uorca_explorer_modular.py --server.port ${PORT} --server.address 0.0.0.0 --server.headless true
   "; then
     echo ""
     echo "Error: Failed to start UORCA Explorer."
