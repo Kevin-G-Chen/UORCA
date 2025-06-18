@@ -12,11 +12,11 @@ import traceback
 from typing import List, Dict, Any, Optional
 
 from .helpers import check_ai_generating, setup_fragment_decorator
-from ..ResultsIntegration import ResultsIntegrator
+from ResultsIntegration import ResultsIntegrator
 
 # Import single analysis plotting functions
 try:
-    from ..single_analysis_plots import (
+    from single_analysis_plots import (
         create_pca_plot,
         create_volcano_plot,
         create_ma_plot,

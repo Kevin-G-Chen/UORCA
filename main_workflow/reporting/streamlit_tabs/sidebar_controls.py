@@ -20,7 +20,7 @@ from .helpers import (
     safe_rerun,
     load_environment
 )
-from ..ResultsIntegration import ResultsIntegrator
+from ResultsIntegration import ResultsIntegrator
 
 logger = logging.getLogger(__name__)
 

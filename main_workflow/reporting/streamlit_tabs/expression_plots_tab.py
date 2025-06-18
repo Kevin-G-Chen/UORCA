@@ -16,7 +16,7 @@ from .helpers import (
     calculate_pagination_info,
     safe_rerun
 )
-from ..ResultsIntegration import ResultsIntegrator
+from ResultsIntegration import ResultsIntegrator
 
 # Set up fragment decorator
 setup_fragment_decorator()
