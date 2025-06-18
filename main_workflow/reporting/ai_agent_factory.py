@@ -59,11 +59,11 @@ def create_uorca_agent() -> Agent:
             command="uv",
             args=["run", str(server_script), "server"],
             env=os.environ.copy(),
-            timeout=30
+            timeout=60
         )
 
         agent = Agent(
-            model="openai:gpt-4o-mini",
+            model="openai:o4-mini",
             model_settings={"temperature": 0.1},
             mcp_servers=[server],
             system_prompt=UORCA_SYSTEM_PROMPT,
