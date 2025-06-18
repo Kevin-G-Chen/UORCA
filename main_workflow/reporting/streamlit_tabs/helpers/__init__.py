@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, Set, List
 
 # Import the main integrator
-from ...ResultsIntegration import ResultsIntegrator
+from ResultsIntegration import ResultsIntegrator
 
 logger = logging.getLogger(__name__)
 

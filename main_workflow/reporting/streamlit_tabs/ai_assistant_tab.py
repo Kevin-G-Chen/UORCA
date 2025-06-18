@@ -12,7 +12,7 @@ import streamlit as st
 from typing import Dict, Any, List, Optional
 
 from .helpers import check_ai_generating, setup_fragment_decorator
-from ..ResultsIntegration import ResultsIntegrator
+from ResultsIntegration import ResultsIntegrator
 
 # Set up fragment decorator
 setup_fragment_decorator()
@@ -21,21 +21,21 @@ logger = logging.getLogger(__name__)
 
 # Check for AI functionality availability
 try:
-    from ..ai_landing_page import render_ai_landing_page
+    from ai_landing_page import render_ai_landing_page
     MCP_LANDING_PAGE_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"AI landing page not available: {e}")
     MCP_LANDING_PAGE_AVAILABLE = False
 
 try:
-    from ..ai_agent_factory import create_uorca_agent
+    from ai_agent_factory import create_uorca_agent
     UORCA_AGENT_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"UORCA agent not available: {e}")
     UORCA_AGENT_AVAILABLE = False
 
 try:
-    from ..contrast_relevance import run_contrast_relevance
+    from contrast_relevance import run_contrast_relevance
     CONTRAST_RELEVANCE_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Contrast relevance not available: {e}")
