@@ -114,16 +114,19 @@ def cached_identify_important_genes(
 
 # Add a cache for figure objects to improve performance in older versions
 @st.cache_data(hash_funcs={go.Figure: lambda _: None})
-def cached_figure_creation(func_name: str, *args, **kwargs):
+def cached_figure_creation(
+    func_name: str,
+    _ri: ResultsIntegrator,
+    *args,
+    **kwargs) -> Optional[go.Figure]:
     """Cache figure objects to avoid recreating them."""
-    ri = args[0] if args else None  # Assume first arg is the integrator
-    if not ri:
+    if not _ri:
         return None
 
     if func_name == "create_lfc_heatmap":
-        return ri.create_lfc_heatmap(*args[1:], **kwargs)
+        return _ri.create_lfc_heatmap(*args, **kwargs)
     elif func_name == "create_expression_plots":
-        return ri.create_expression_plots(*args[1:], **kwargs)
+        return _ri.create_expression_plots(*args, **kwargs)
     return None
 
 
