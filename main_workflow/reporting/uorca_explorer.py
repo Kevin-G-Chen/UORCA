@@ -81,6 +81,14 @@ except ImportError as e:
     MCP_LANDING_PAGE_AVAILABLE = False
     LANDING_PAGE_AVAILABLE = False
 
+# UORCA MCP Agent functionality
+try:
+    from ai_agent_factory import create_uorca_agent
+    UORCA_AGENT_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"UORCA agent not available: {e}")
+    UORCA_AGENT_AVAILABLE = False
+
 # Contrast relevance functionality
 try:
     from contrast_relevance import run_contrast_relevance
@@ -89,13 +97,7 @@ except ImportError as e:
     logger.warning(f"Contrast relevance not available: {e}")
     CONTRAST_RELEVANCE_AVAILABLE = False
 
-# AI key findings functionality
-try:
-    from ai_key_findings import run_streamlit_key_findings_analysis, validate_contrast_relevance_data
-    AI_KEY_FINDINGS_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"AI key findings not available: {e}")
-    AI_KEY_FINDINGS_AVAILABLE = False
+
 
 # Helper function for contrast labels
 def short_label(full_label: str) -> str:
@@ -1603,8 +1605,9 @@ if ri and ri.cpm_data:
 
                             st.success(f"✅ Successfully assessed {len(results_df)} contrasts!")
 
-                            # Store results in session state for key findings analysis
-                            st.session_state['contrast_relevance_results'] = results_df
+                            # Store only the list of contrasts for the AI agent
+                            st.session_state['selected_contrasts_for_ai'] = \
+                                results_df[['analysis_id','contrast_id']].to_dict('records')
                             st.session_state['research_query'] = research_query.strip()
 
                             # Display results table
@@ -1670,32 +1673,92 @@ if ri and ri.cpm_data:
                             import traceback
                             st.code(traceback.format_exc())
 
-        # AI Key Findings Analysis
+        # AI Gene Analysis
         st.markdown("---")
         if (
-            'contrast_relevance_results' in st.session_state
+            'selected_contrasts_for_ai' in st.session_state
             and 'research_query' in st.session_state
-            and AI_KEY_FINDINGS_AVAILABLE
+            and UORCA_AGENT_AVAILABLE
         ):
-            # Validate the stored data
-            results_df = st.session_state['contrast_relevance_results']
-            research_query = st.session_state['research_query']
+            st.subheader("🧬 AI Gene Analysis")
+            st.markdown("**AI-powered analysis of differential expression patterns across selected contrasts.** The AI will choose appropriate thresholds and identify key genes.")
 
-            is_valid, error_msg = validate_contrast_relevance_data(results_df)
+            if st.button("🚀 Analyze Key Genes", type="primary"):
+                if not os.getenv("OPENAI_API_KEY"):
+                    st.error("❌ OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+                else:
+                    with st.spinner("🤖 AI is analyzing differential expression patterns... This may take several minutes."):
+                        try:
+                            # Set the RESULTS_DIR environment variable for the MCP server
+                            os.environ['RESULTS_DIR'] = results_dir
 
-            if is_valid:
-                # Run the key findings analysis interface
-                run_streamlit_key_findings_analysis(
-                    results_dir=results_dir,
-                    contrast_relevance_df=results_df,
-                    research_query=research_query
-                )
-            else:
-                st.error(f"❌ Invalid contrast relevance data: {error_msg}")
-        elif not AI_KEY_FINDINGS_AVAILABLE:
-            st.info("💡 Key findings analysis is not available. Please check your environment setup.")
+                            research_question = st.session_state['research_query']
+                            selected_contrasts = st.session_state['selected_contrasts_for_ai']
+
+                            agent = create_uorca_agent()
+                            prompt = f"""
+Research question: "{research_question}"
+
+Available contrasts:
+{json.dumps(selected_contrasts, indent=2)}
+
+Please perform the analysis using your four tools, choose all thresholds reasonably, and return:
+1) A structured summary showing the key genes identified for each contrast or gene set
+2) A brief 2-3 sentence biological interpretation explaining your rationale and what patterns you discovered.
+"""
+
+                            # Run the agent analysis
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+
+                            async def run_analysis():
+                                async with agent.run_mcp_servers():
+                                    result = await agent.run(prompt)
+                                    return result.output if hasattr(result, 'output') else str(result)
+
+                            result_text = loop.run_until_complete(run_analysis())
+                            loop.close()
+
+                            st.success("✅ Analysis completed successfully!")
+
+                            st.subheader("📑 AI Gene Analysis Results")
+                            st.markdown(result_text)
+
+                            # Add download option
+                            analysis_report = f"""
+# AI Gene Analysis Report
+
+**Research Question:** {research_question}
+
+**Contrasts Analyzed:** {len(selected_contrasts)}
+
+## Analysis Results
+
+{result_text}
+
+---
+*Generated by UORCA Explorer AI Assistant*
+"""
+
+                            st.download_button(
+                                label="📄 Download Analysis Report",
+                                data=analysis_report,
+                                file_name="uorca_ai_gene_analysis.md",
+                                mime="text/markdown"
+                            )
+
+                        except Exception as e:
+                            logger.error(f"Error in AI gene analysis: {str(e)}", exc_info=True)
+                            st.error(f"❌ Analysis failed: {str(e)}")
+
+                            with st.expander("🔍 Error Details", expanded=False):
+                                import traceback
+                                st.code(traceback.format_exc())
+
+        elif not UORCA_AGENT_AVAILABLE:
+            st.info("💡 AI gene analysis is not available. Please check your environment setup.")
         else:
-            st.info("💡 Run contrast relevance assessment above to enable key findings analysis.")
+            st.info("💡 Run contrast relevance assessment above to enable AI gene analysis.")
 
 
     # ---------- 3. additional features -------------------------------
