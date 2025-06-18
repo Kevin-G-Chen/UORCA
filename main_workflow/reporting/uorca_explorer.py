@@ -30,7 +30,11 @@ from streamlit_tabs.helpers import (
     initialize_session_state,
     add_custom_css,
     load_environment,
-    setup_fragment_decorator
+    setup_fragment_decorator,
+    setup_streamlit_logging,
+    log_streamlit_function,
+    log_streamlit_event,
+    log_streamlit_data_load
 )
 
 # Import tab modules
@@ -67,8 +71,16 @@ st.set_page_config(
 add_custom_css()
 
 
+@log_streamlit_function
 def main():
     """Main application function."""
+    # Initialize Streamlit-specific logging
+    try:
+        log_file = setup_streamlit_logging()
+        log_streamlit_event(f"Streamlit logging initialized: {log_file}")
+    except Exception as e:
+        st.error(f"Failed to initialize logging: {e}")
+
     # Get the default results directory
     default_dir = os.getenv("UORCA_DEFAULT_RESULTS_DIR")
     if not default_dir:
@@ -103,6 +115,7 @@ def main():
     render_main_interface(ri, results_dir, sidebar_params)
 
 
+@log_streamlit_function
 def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator, str, str]:
     """
     Load and validate the results data.
@@ -121,29 +134,37 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
 
     with st.sidebar.status("Loading data...", expanded=True) as status:
         if not valid_dir:
+            log_streamlit_event(f"Directory validation failed: {validation_error}")
             status.update(label=f"Error: {validation_error}", state="error")
             return None, results_dir, validation_error
 
+        log_streamlit_event(f"Loading data from: {results_dir}")
         ri, error = get_integrator(results_dir)
 
         if error:
             error_msg = f"Error loading data: {error}"
+            log_streamlit_event(f"Data loading failed: {error}")
             status.update(label=error_msg, state="error")
             return None, results_dir, error_msg
         elif not ri or not ri.cpm_data:
             error_msg = "No data found. Please check the directory path."
+            log_streamlit_event("No CPM data found in results")
             status.update(label=error_msg, state="error")
             return None, results_dir, error_msg
         else:
+            log_streamlit_data_load("CPM datasets", len(ri.cpm_data))
+            log_streamlit_data_load("DEG datasets", len(ri.deg_data))
             status.update(label=f"✅ Loaded {len(ri.cpm_data)} datasets", state="complete")
 
             # Check if this is the first time loading this directory
             if 'previous_results_dir' not in st.session_state or st.session_state.previous_results_dir != results_dir:
                 st.session_state.previous_results_dir = results_dir
+                log_streamlit_event(f"New results directory loaded: {results_dir}")
 
     return ri, results_dir, None
 
 
+@log_streamlit_function
 def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_params: Dict[str, Any]):
     """Render the main tabbed interface."""
     # Create main tabs
@@ -161,6 +182,8 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
     selected_contrasts = list(st.session_state.get('selected_contrasts', set()))
     selected_datasets = list(st.session_state.get('selected_datasets', set()))
     gene_sel = sidebar_params['gene_sel']
+
+    log_streamlit_event(f"Rendering interface: {len(selected_datasets)} datasets, {len(selected_contrasts)} contrasts, {len(gene_sel)} genes")
 
     # Tab 1: Data Selection
     with tab_sel:
@@ -218,22 +241,26 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
         )
 
 
+@log_streamlit_function
 def render_error_state(error_message: str):
     """Render error state when data loading fails."""
     st.error(f"Failed to load data: {error_message}")
     render_help_info()
 
 
+@log_streamlit_function
 def render_no_data_state():
     """Render state when no data is found."""
     st.info("No data loaded. Please check your results directory path.")
     render_help_info()
 
 
+@log_streamlit_function
 def render_help_info():
     """Render help information when no data is loaded."""
     # Check if we're running in container mode
     container_mode = os.path.exists('/workspace') and os.path.exists('/UORCA_results')
+    log_streamlit_event(f"Container mode detected: {container_mode}")
 
     if container_mode:
         st.info(

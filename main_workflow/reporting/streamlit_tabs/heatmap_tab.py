@@ -9,7 +9,14 @@ import streamlit as st
 import traceback
 from typing import List, Tuple, Optional
 
-from .helpers import check_ai_generating, setup_fragment_decorator, cached_figure_creation
+from .helpers import (
+    check_ai_generating,
+    setup_fragment_decorator,
+    cached_figure_creation,
+    log_streamlit_tab,
+    log_streamlit_function,
+    log_streamlit_event
+)
 from ResultsIntegration import ResultsIntegrator
 
 # Set up fragment decorator
@@ -18,6 +25,7 @@ setup_fragment_decorator()
 logger = logging.getLogger(__name__)
 
 
+@log_streamlit_tab("Heatmap")
 def render_heatmap_tab(
     ri: ResultsIntegrator,
     gene_sel: List[str],
@@ -46,10 +54,13 @@ def render_heatmap_tab(
     display_settings = _render_display_settings()
 
     if not gene_sel:
+        log_streamlit_event("No genes selected for heatmap")
         st.info("Please select genes from the sidebar.")
     elif not selected_contrasts:
+        log_streamlit_event("No contrasts selected for heatmap")
         st.info("Please select contrasts in the 'Selections' tab.")
     else:
+        log_streamlit_event(f"Heatmap: {len(gene_sel)} genes, {len(selected_contrasts)} contrasts")
         # Create and display the heatmap
         _draw_heatmap(
             ri,
@@ -63,6 +74,7 @@ def render_heatmap_tab(
         )
 
 
+@log_streamlit_function
 def _render_display_settings() -> dict:
     """Render display settings controls in the sidebar and return the settings."""
     with st.sidebar.expander("🎨 Display Settings", expanded=False):
@@ -78,6 +90,7 @@ def _render_display_settings() -> dict:
 
 
 @st.fragment
+@log_streamlit_function
 def _draw_heatmap(
     ri: ResultsIntegrator,
     gene_selection: List[str],
@@ -138,9 +151,11 @@ def _draw_heatmap(
                 )
 
             if fig:
+                log_streamlit_event("Heatmap generated successfully")
                 _display_heatmap_info()
                 st.plotly_chart(fig, use_container_width=True)
             else:
+                log_streamlit_event("Failed to generate heatmap")
                 st.error("Could not generate heatmap. Please check your selections.")
 
         except Exception as e:
@@ -149,6 +164,7 @@ def _draw_heatmap(
             _display_heatmap_error_details(e)
 
 
+@log_streamlit_function
 def _display_heatmap_info():
     """Display informational messages about the heatmap."""
     info_messages = [
@@ -158,6 +174,7 @@ def _display_heatmap_info():
         st.info(msg)
 
 
+@log_streamlit_function
 def _display_heatmap_error_details(error: Exception):
     """Display detailed error information in an expandable section."""
     with st.expander("🔍 Heatmap Error Details", expanded=False):

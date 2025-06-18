@@ -15,6 +15,17 @@ from typing import Tuple, Optional, Dict, Any, Set, List
 # Import the main integrator
 from ResultsIntegration import ResultsIntegrator
 
+# Import streamlit logging utilities
+from .streamlit_logging import (
+    setup_streamlit_logging,
+    log_streamlit_function,
+    log_streamlit_agent,
+    log_streamlit_tab,
+    log_streamlit_event,
+    log_streamlit_data_load,
+    log_streamlit_user_action
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,6 +78,7 @@ def _validate_results_dir(path: str) -> Tuple[bool, str]:
 
 
 @st.cache_resource
+@log_streamlit_function
 def get_integrator(path: str) -> Tuple[Optional[ResultsIntegrator], Optional[str]]:
     """Load and cache the ResultsIntegrator for the given path."""
     try:
@@ -78,6 +90,7 @@ def get_integrator(path: str) -> Tuple[Optional[ResultsIntegrator], Optional[str
 
 
 @st.cache_data(show_spinner=False)
+@log_streamlit_function
 def cached_identify_important_genes(
     results_dir: str,
     top_frequent: int,
@@ -114,6 +127,7 @@ def cached_identify_important_genes(
 
 # Add a cache for figure objects to improve performance in older versions
 @st.cache_data(hash_funcs={go.Figure: lambda _: None})
+@log_streamlit_function
 def cached_figure_creation(
     func_name: str,
     _ri: ResultsIntegrator,
@@ -126,10 +140,29 @@ def cached_figure_creation(
     if func_name == "create_lfc_heatmap":
         return _ri.create_lfc_heatmap(*args, **kwargs)
     elif func_name == "create_expression_plots":
-        return _ri.create_expression_plots(*args, **kwargs)
+        # Map positional arguments to correct parameters for create_expression_plots
+        if len(args) >= 12:
+            genes, plot_type, analyses, output_file, hide_x_labels, page_number, facet_font_size, lock_y_axis, show_raw_points, legend_position, show_grid_lines, grid_opacity = args[:12]
+            return _ri.create_expression_plots(
+                genes=genes,
+                plot_type=plot_type,
+                analyses=analyses,
+                output_file=output_file,
+                hide_x_labels=hide_x_labels,
+                page_number=page_number,
+                facet_font_size=facet_font_size,
+                lock_y_axis=lock_y_axis,
+                show_raw_points=show_raw_points,
+                legend_position=legend_position,
+                show_grid_lines=show_grid_lines,
+                grid_opacity=grid_opacity
+            )
+        else:
+            return _ri.create_expression_plots(*args, **kwargs)
     return None
 
 
+@log_streamlit_function
 def get_all_genes_from_integrator(ri: ResultsIntegrator) -> List[str]:
     """Extract all unique genes from all datasets in the integrator."""
     all_genes = set()
@@ -139,6 +172,7 @@ def get_all_genes_from_integrator(ri: ResultsIntegrator) -> List[str]:
     return sorted(all_genes)
 
 
+@log_streamlit_function
 def initialize_session_state(ri: ResultsIntegrator):
     """Initialize session state variables for dataset and contrast selections."""
     # Initialize session state for selections if not exists
@@ -161,6 +195,7 @@ def initialize_session_state(ri: ResultsIntegrator):
         st.session_state.page_num = 1
 
 
+@log_streamlit_function
 def calculate_pagination_info(gene_sel: List[str], genes_per_page: int = 30) -> Tuple[int, int, int, List[str]]:
     """
     Calculate pagination information for gene lists.
@@ -199,6 +234,7 @@ def check_ai_generating():
     return st.session_state.get('ai_generating', False)
 
 
+@log_streamlit_function
 def add_custom_css():
     """Add custom CSS styles for the Streamlit app."""
     st.markdown("""
@@ -229,6 +265,7 @@ def add_custom_css():
     """, unsafe_allow_html=True)
 
 
+@log_streamlit_function
 def load_environment():
     """Load environment variables from .env file if available."""
     try:
@@ -243,3 +280,34 @@ def load_environment():
     except ImportError:
         # dotenv not available, continue without it
         pass
+
+
+# Export all functions for easy importing
+__all__ = [
+    # Main helper functions
+    'get_integrator',
+    'cached_identify_important_genes',
+    'initialize_session_state',
+    'add_custom_css',
+    'setup_fragment_decorator',
+    'get_all_genes_from_integrator',
+    'calculate_pagination_info',
+    'safe_rerun',
+    'check_ai_generating',
+    'cached_figure_creation',
+    'short_label',
+    'load_environment',
+
+    # Streamlit logging functions
+    'setup_streamlit_logging',
+    'log_streamlit_function',
+    'log_streamlit_agent',
+    'log_streamlit_tab',
+    'log_streamlit_event',
+    'log_streamlit_data_load',
+    'log_streamlit_user_action',
+
+    # Private utilities
+    '_validate_results_dir',
+    'ModuleFilter'
+]

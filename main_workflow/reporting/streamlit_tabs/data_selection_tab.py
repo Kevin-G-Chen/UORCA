@@ -8,13 +8,21 @@ import pandas as pd
 import streamlit as st
 from typing import Dict, Any, Set, Tuple
 
-from .helpers import check_ai_generating, setup_fragment_decorator
+from .helpers import (
+    check_ai_generating,
+    setup_fragment_decorator,
+    log_streamlit_tab,
+    log_streamlit_function,
+    log_streamlit_event,
+    log_streamlit_user_action
+)
 from ResultsIntegration import ResultsIntegrator
 
 # Set up fragment decorator
 setup_fragment_decorator()
 
 
+@log_streamlit_tab("Data Selection")
 def render_data_selection_tab(ri: ResultsIntegrator, pvalue_thresh: float, lfc_thresh: float):
     """
     Render the data selection tab.
@@ -40,6 +48,7 @@ def render_data_selection_tab(ri: ResultsIntegrator, pvalue_thresh: float, lfc_t
 
 
 @st.fragment
+@log_streamlit_function
 def _render_dataset_selection(ri: ResultsIntegrator):
     """Render the dataset selection interface."""
     # Skip execution if AI is currently generating
@@ -80,10 +89,13 @@ def _render_dataset_selection(ri: ResultsIntegrator):
         if not edited_ds.empty:
             selected_datasets = set(edited_ds.loc[edited_ds["✔"], "Dataset ID"].tolist())
             st.session_state['selected_datasets'] = selected_datasets
+            log_streamlit_event(f"User selected {len(selected_datasets)} datasets")
+            log_streamlit_user_action("Dataset selection", f"Selected {len(selected_datasets)} datasets")
             st.caption(f"📊 {len(selected_datasets)} datasets selected")
 
 
 @st.fragment
+@log_streamlit_function
 def _render_contrast_selection(ri: ResultsIntegrator, pvalue_thresh: float, lfc_thresh: float):
     """Render the contrast selection interface."""
     # Skip execution if AI is currently generating
@@ -139,6 +151,8 @@ def _render_contrast_selection(ri: ResultsIntegrator, pvalue_thresh: float, lfc_
                     if row["✔"]:
                         selected_contrasts.add((row["Dataset"], row["Contrast"]))
                 st.session_state['selected_contrasts'] = selected_contrasts
+                log_streamlit_event(f"User selected {len(selected_contrasts)} contrasts")
+                log_streamlit_user_action("Contrast selection", f"Selected {len(selected_contrasts)} contrasts")
                 st.caption(f"🔍 {len(selected_contrasts)} contrasts selected")
         else:
             st.info("No contrasts available for selected datasets.")
@@ -146,6 +160,7 @@ def _render_contrast_selection(ri: ResultsIntegrator, pvalue_thresh: float, lfc_
         st.info("Please select at least one dataset to see available contrasts.")
 
 
+@log_streamlit_function
 def _render_selection_summary():
     """Render the selection summary section."""
     # Selection summary

@@ -8,13 +8,21 @@ import pandas as pd
 import streamlit as st
 from typing import List, Dict, Any, Set
 
-from .helpers import check_ai_generating, setup_fragment_decorator, safe_rerun
+from .helpers import (
+    check_ai_generating,
+    setup_fragment_decorator,
+    safe_rerun,
+    log_streamlit_tab,
+    log_streamlit_function,
+    log_streamlit_event
+)
 from ResultsIntegration import ResultsIntegrator
 
 # Set up fragment decorator
 setup_fragment_decorator()
 
 
+@log_streamlit_tab("Datasets Info")
 def render_datasets_info_tab(ri: ResultsIntegrator):
     """
     Render the datasets info tab.
@@ -30,6 +38,7 @@ def render_datasets_info_tab(ri: ResultsIntegrator):
 
 
 @st.fragment
+@log_streamlit_function
 def _render_datasets_interface(ri: ResultsIntegrator):
     """Render the main datasets interface using fragment isolation."""
     # Skip execution if AI is currently generating
@@ -40,6 +49,7 @@ def _render_datasets_interface(ri: ResultsIntegrator):
     dataset_info = _create_dataset_info_dataframe(ri)
 
     if not dataset_info:
+        log_streamlit_event("No dataset information available")
         st.info("No dataset information available.")
         return
 
@@ -50,13 +60,16 @@ def _render_datasets_interface(ri: ResultsIntegrator):
 
     # Display the filtered dataset information
     if not filtered_df.empty:
+        log_streamlit_event(f"Displaying {len(filtered_df)} datasets")
         _render_dataset_table(filtered_df)
         _render_dataset_details(filtered_df)
         _render_selection_controls(filtered_df)
     else:
+        log_streamlit_event("No datasets match current filters")
         st.info("No datasets match the current filters.")
 
 
+@log_streamlit_function
 def _create_dataset_info_dataframe(ri: ResultsIntegrator) -> List[Dict[str, Any]]:
     """Create a list of dataset information dictionaries."""
     dataset_info = []
@@ -86,6 +99,7 @@ def _create_dataset_info_dataframe(ri: ResultsIntegrator) -> List[Dict[str, Any]
     return dataset_info
 
 
+@log_streamlit_function
 def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
     """Render filtering controls and return filtered DataFrame."""
     st.subheader("Filter Datasets")
@@ -116,6 +130,7 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
     return filtered_df
 
 
+@log_streamlit_function
 def _render_dataset_table(filtered_df: pd.DataFrame):
     """Render the interactive dataset table with selection checkboxes."""
     # Add checkbox column for selection
@@ -143,8 +158,10 @@ def _render_dataset_table(filtered_df: pd.DataFrame):
     if not edited_df.empty:
         selected_from_info = set(edited_df.loc[edited_df["✔"], "Dataset ID"].tolist())
         st.session_state['selected_datasets'] = selected_from_info
+        log_streamlit_event(f"User selected {len(selected_from_info)} datasets from info tab")
 
 
+@log_streamlit_function
 def _render_dataset_details(filtered_df: pd.DataFrame):
     """Render detailed information for each dataset."""
     # Show dataset details if available (always show by default)
@@ -167,6 +184,7 @@ def _render_dataset_details(filtered_df: pd.DataFrame):
                     st.markdown(str(row["Design"]))
 
 
+@log_streamlit_function
 def _render_selection_controls(display_df: pd.DataFrame):
     """Render controls for selecting all visible datasets."""
     # Add quick selection button
@@ -175,5 +193,6 @@ def _render_selection_controls(display_df: pd.DataFrame):
         st.session_state['selected_datasets'] = visible_datasets
         # Reset page number when changing datasets
         st.session_state.page_num = 1
+        log_streamlit_event(f"User selected all {len(visible_datasets)} visible datasets")
         st.success(f"Selected {len(visible_datasets)} datasets for analysis!")
         st.info("Switch to the Heat-map or Expression tab to view updated visualizations.")
