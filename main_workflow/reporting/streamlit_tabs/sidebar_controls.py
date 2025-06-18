@@ -10,6 +10,7 @@ import logging
 import streamlit as st
 import tempfile
 import shutil
+import pandas as pd
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
@@ -17,6 +18,8 @@ from typing import List, Dict, Any, Tuple, Optional
 from .helpers import (
     cached_identify_important_genes,
     get_all_genes_from_integrator,
+    get_integrator,
+    cached_get_all_genes_from_integrator,
     safe_rerun,
     load_environment,
     log_streamlit_function,
@@ -51,8 +54,8 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
     # Results directory input
     _render_results_directory_input(results_dir)
 
-    # Get all genes for selection
-    all_genes = get_all_genes_from_integrator(ri)
+    # Get all genes for selection (cached)
+    all_genes = cached_get_all_genes_from_integrator(results_dir)
 
     # Advanced options toggle
     show_advanced = st.sidebar.checkbox("Show advanced options", value=False)
@@ -572,22 +575,53 @@ def _render_auto_gene_selection(
     return _render_gene_multiselect(limited_genes, len(top_genes))
 
 
+@st.cache_data(show_spinner=False)
+@log_streamlit_function
+def _get_max_lfc_per_gene(results_dir: str, top_genes_tuple: tuple) -> Dict[str, float]:
+    """Cached vectorized computation of max absolute LFC per gene."""
+    # Convert tuple back to set for faster lookup
+    top_genes_set = set(top_genes_tuple)
+
+    # Load the integrator to get DEG data
+    ri, _ = get_integrator(results_dir)
+    if not ri:
+        return {}
+
+    # Collect all DEG tables into one DataFrame
+    pieces = []
+    for contrasts in ri.deg_data.values():
+        for df in contrasts.values():
+            if {'Gene', 'logFC'}.issubset(df.columns):
+                pieces.append(df[['Gene', 'logFC']])
+
+    if not pieces:
+        return {}
+
+    # Concatenate all DEG data
+    big_df = pd.concat(pieces, ignore_index=True)
+
+    # Filter to only genes in top_genes for efficiency
+    big_df = big_df[big_df['Gene'].isin(top_genes_set)]
+
+    if big_df.empty:
+        return {}
+
+    # Compute max absolute logFC per gene using vectorized operations
+    max_lfc = big_df.assign(absFC=big_df['logFC'].abs()) \
+                   .groupby('Gene')['absFC'] \
+                   .max()
+
+    return max_lfc.to_dict()
+
 @log_streamlit_function
 def _limit_and_rank_genes(ri: ResultsIntegrator, top_genes: List[str]) -> List[str]:
     """Limit genes to 200 maximum, selecting by highest LFC if needed."""
     if len(top_genes) <= 200:
         return top_genes
 
-    # Get LFC data for ranking
-    gene_lfc_map = {}
-    for analysis_id, contrasts in ri.deg_data.items():
-        for contrast_id, df in contrasts.items():
-            if 'Gene' in df.columns and 'logFC' in df.columns:
-                for _, row in df.iterrows():
-                    gene = row['Gene']
-                    if gene in top_genes:
-                        current_max = gene_lfc_map.get(gene, 0)
-                        gene_lfc_map[gene] = max(current_max, abs(row['logFC']))
+    # Get cached max LFC data using vectorized operations
+    # Convert to tuple for caching (lists aren't hashable)
+    gene_lfc_map = _get_max_lfc_per_gene(ri.results_dir, tuple(top_genes))
 
     # Sort by highest LFC and take top 200
     sorted_genes = sorted(top_genes, key=lambda g: gene_lfc_map.get(g, 0), reverse=True)

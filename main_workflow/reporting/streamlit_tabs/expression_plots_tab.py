@@ -155,40 +155,23 @@ def _draw_expression_plots(
             end_idx = min(start_idx + genes_per_page, len(gene_selection))
             current_genes = gene_selection[start_idx:end_idx]
 
-            # Try to use cached figure creation if available
-            if 'cached_figure_creation' in globals():
-                fig2 = cached_figure_creation(
-                    "create_expression_plots",
-                    ri,
-                    current_genes,
-                    "violin",
-                    dataset_selection,
-                    None,
-                    hide_labels,
-                    page_num,
-                    facet_font_size,
-                    lock_y_axis,
-                    show_raw_points,
-                    legend_position,
-                    True,  # show_grid_lines
-                    0.3    # grid_opacity
-                )
-            else:
-                # Use direct creation
-                fig2 = ri.create_expression_plots(
-                    genes=current_genes,
-                    analyses=dataset_selection,
-                    plot_type="violin",
-                    output_file=None,
-                    hide_x_labels=hide_labels,
-                    page_number=page_num,
-                    facet_font_size=facet_font_size,
-                    lock_y_axis=lock_y_axis,
-                    show_raw_points=show_raw_points,
-                    legend_position=legend_position,
-                    show_grid_lines=True,
-                    grid_opacity=0.3
-                )
+            # Use cached figure creation for better performance
+            fig2 = cached_figure_creation(
+                "create_expression_plots",
+                ri.results_dir,
+                current_genes,
+                "violin",
+                dataset_selection,
+                None,  # output_file
+                hide_labels,
+                page_num,
+                facet_font_size,
+                lock_y_axis,
+                show_raw_points,
+                legend_position,
+                True,  # show_grid_lines
+                0.3    # grid_opacity
+            )
 
             if fig2:
                 log_streamlit_event("Expression plots generated successfully")

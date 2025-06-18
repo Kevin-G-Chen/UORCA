@@ -68,69 +68,53 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
         st.info("Please set your OpenAI API key to use AI features.")
         return
 
-    # Render AI landing page
-    _render_ai_landing_page(results_dir)
-
-    # Render contrast relevance assessment
-    st.markdown("---")
-    _render_contrast_relevance_section(ri)
-
-    # Render AI gene analysis
-    st.markdown("---")
-    _render_ai_gene_analysis_section(ri, results_dir)
+    # Render streamlined AI analysis workflow
+    _render_streamlined_ai_workflow(ri, results_dir)
 
 
 @log_streamlit_function
-def _render_ai_landing_page(results_dir: str):
-    """Render the AI landing page section."""
-    if not MCP_LANDING_PAGE_AVAILABLE:
-        st.error("AI Assistant not available")
-        return
-
-    try:
-        render_ai_landing_page(results_dir)
-    except Exception as e:
-        st.error(f"Failed to load AI assistant: {e}")
-
-
-@log_streamlit_function
-def _render_contrast_relevance_section(ri: ResultsIntegrator):
-    """Render the contrast relevance assessment section."""
-    st.subheader("🔢 Contrast Relevance Assessment")
-    st.markdown("**Assess how relevant each contrast is to your research question.** Enter your research question below and click the button to score all contrasts using AI.")
+def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
+    """Render the streamlined AI analysis workflow."""
+    st.subheader("🧬 AI-Powered Gene Analysis")
+    st.markdown("**Complete AI analysis of your RNA-seq data.** Enter your research question below and the AI will assess contrast relevance and identify key genes in one workflow.")
 
     # Research query input
     research_query = st.text_input(
         "Research Question",
         placeholder="e.g., What contrasts are most relevant to T cell activation and differentiation?",
-        help="Describe your research question or area of interest. The AI will score each contrast based on how relevant it is to this query."
+        help="Describe your research question or area of interest. The AI will score each contrast based on how relevant it is to this query, then analyze key genes."
     )
 
-    # Assessment controls
+    # Single workflow button
     col1, col2 = st.columns([1, 3])
     with col1:
-        run_button = st.button("🔢 Assess Contrast Relevance", disabled=not research_query.strip())
+        run_button = st.button("🚀 Run Complete AI Analysis", disabled=not research_query.strip(), type="primary")
     with col2:
         if not research_query.strip():
-            st.info("💡 Enter a research question above to enable contrast relevance assessment.")
+            st.info("💡 Enter a research question above to start AI analysis.")
 
     if run_button:
-        log_streamlit_event(f"User started contrast relevance assessment: '{research_query.strip()}'")
-        _run_contrast_relevance_assessment(ri, research_query.strip())
+        log_streamlit_event(f"User started complete AI analysis: '{research_query.strip()}'")
+        _run_complete_ai_analysis(ri, results_dir, research_query.strip())
 
 
 @log_streamlit_agent
-def _run_contrast_relevance_assessment(ri: ResultsIntegrator, research_query: str):
-    """Run the contrast relevance assessment."""
+def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_query: str):
+    """Run the complete AI analysis workflow including contrast relevance and gene analysis."""
     if not CONTRAST_RELEVANCE_AVAILABLE:
         st.error("Contrast relevance assessment is not available. Please check your environment setup.")
+        return
+
+    if not UORCA_AGENT_AVAILABLE:
+        st.error("UORCA agent is not available. Please check your environment setup.")
         return
 
     if not os.getenv("OPENAI_API_KEY"):
         st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
         return
 
-    with st.spinner("Calling AI to score contrast relevance... This may take a few minutes."):
+    # Step 1: Contrast Relevance Assessment
+    with st.spinner("Step 1/2: Assessing contrast relevance... This may take a few minutes."):
         try:
             # Run contrast relevance assessment
             results_df = run_contrast_relevance(
@@ -143,11 +127,53 @@ def _run_contrast_relevance_assessment(ri: ResultsIntegrator, research_query: st
 
             if not results_df.empty:
                 _display_relevance_results(ri, results_df, research_query)
+
+                # Store results for AI gene analysis
+                st.session_state['selected_contrasts_for_ai'] = \
+                    results_df[['analysis_id','contrast_id']].to_dict('records')
+                st.session_state['research_query'] = research_query
             else:
                 st.warning("No contrasts found for assessment.")
+                return
 
         except Exception as e:
             st.error(f"Error during contrast relevance assessment: {str(e)}")
+            with st.expander("🔍 Error Details", expanded=False):
+                import traceback
+                st.code(traceback.format_exc())
+            return
+
+    # Step 2: AI Gene Analysis
+    st.markdown("---")
+    with st.spinner("Step 2/2: AI is analyzing differential expression patterns... This may take several minutes."):
+        try:
+            # Set the RESULTS_DIR environment variable for the MCP server
+            os.environ['RESULTS_DIR'] = results_dir
+
+            selected_contrasts = st.session_state['selected_contrasts_for_ai']
+
+            agent = create_uorca_agent()
+            prompt = f"""
+Research question: "{research_query}"
+
+Available contrasts:
+{json.dumps(selected_contrasts, indent=2)}
+
+Please perform the analysis using your four tools, choose all thresholds reasonably, and return:
+1) A structured summary showing the key genes identified for each contrast or gene set
+2) A brief 2-3 sentence biological interpretation explaining your rationale and what patterns you discovered.
+"""
+
+            # Run the agent analysis
+            result_text = _execute_ai_analysis(agent, prompt)
+
+            # Display results
+            _display_ai_analysis_results(result_text, research_query, selected_contrasts)
+
+        except Exception as e:
+            logger.error(f"Error in AI gene analysis: {str(e)}", exc_info=True)
+            st.error(f"❌ Analysis failed: {str(e)}")
+
             with st.expander("🔍 Error Details", expanded=False):
                 import traceback
                 st.code(traceback.format_exc())
@@ -250,67 +276,7 @@ def _provide_relevance_download(results_df):
     )
 
 
-@log_streamlit_function
-def _render_ai_gene_analysis_section(ri: ResultsIntegrator, results_dir: str):
-    """Render the AI gene analysis section."""
-    if (
-        'selected_contrasts_for_ai' in st.session_state
-        and 'research_query' in st.session_state
-        and UORCA_AGENT_AVAILABLE
-    ):
-        st.subheader("🧬 AI Gene Analysis")
-        st.markdown("**AI-powered analysis of differential expression patterns across selected contrasts.** The AI will choose appropriate thresholds and identify key genes.")
 
-        if st.button("🚀 Analyze Key Genes", type="primary"):
-            log_streamlit_event("User started AI gene analysis")
-            _run_ai_gene_analysis(ri, results_dir)
-
-    elif not UORCA_AGENT_AVAILABLE:
-        st.info("💡 AI gene analysis is not available. Please check your environment setup.")
-    else:
-        st.info("💡 Run contrast relevance assessment above to enable AI gene analysis.")
-
-
-@log_streamlit_agent
-def _run_ai_gene_analysis(ri: ResultsIntegrator, results_dir: str):
-    """Run the AI gene analysis."""
-    if not os.getenv("OPENAI_API_KEY"):
-        st.error("❌ OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
-        return
-
-    with st.spinner("🤖 AI is analyzing differential expression patterns... This may take several minutes."):
-        try:
-            # Set the RESULTS_DIR environment variable for the MCP server
-            os.environ['RESULTS_DIR'] = results_dir
-
-            research_question = st.session_state['research_query']
-            selected_contrasts = st.session_state['selected_contrasts_for_ai']
-
-            agent = create_uorca_agent()
-            prompt = f"""
-Research question: "{research_question}"
-
-Available contrasts:
-{json.dumps(selected_contrasts, indent=2)}
-
-Please perform the analysis using your four tools, choose all thresholds reasonably, and return:
-1) A structured summary showing the key genes identified for each contrast or gene set
-2) A brief 2-3 sentence biological interpretation explaining your rationale and what patterns you discovered.
-"""
-
-            # Run the agent analysis
-            result_text = _execute_ai_analysis(agent, prompt)
-
-            # Display results
-            _display_ai_analysis_results(result_text, research_question, selected_contrasts)
-
-        except Exception as e:
-            logger.error(f"Error in AI gene analysis: {str(e)}", exc_info=True)
-            st.error(f"❌ Analysis failed: {str(e)}")
-
-            with st.expander("🔍 Error Details", expanded=False):
-                import traceback
-                st.code(traceback.format_exc())
 
 
 @log_streamlit_agent

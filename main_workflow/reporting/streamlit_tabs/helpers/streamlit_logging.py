@@ -119,7 +119,7 @@ def log_streamlit_function(func: Callable) -> Callable:
             bound = inspect.signature(func).bind_partial(*args, **kwargs)
             args_dict = _extract_args_for_logging(bound)
 
-            logger.info("📋 %s called – args=%s", func.__name__, args_dict)
+            logger.info("📋 %s called", func.__name__)
             try:
                 result = await func(*args, **kwargs)
                 logger.info("✅ %s completed successfully", func.__name__)
@@ -135,7 +135,7 @@ def log_streamlit_function(func: Callable) -> Callable:
             bound = inspect.signature(func).bind_partial(*args, **kwargs)
             args_dict = _extract_args_for_logging(bound)
 
-            logger.info("📋 %s called – args=%s", func.__name__, args_dict)
+            logger.info("📋 %s called", func.__name__)
             try:
                 result = func(*args, **kwargs)
                 logger.info("✅ %s completed successfully", func.__name__)
@@ -203,7 +203,7 @@ def log_streamlit_tab(tab_name: str):
             bound = inspect.signature(func).bind_partial(*args, **kwargs)
             args_dict = _extract_args_for_logging(bound)
 
-            logger.info("🎯 TAB RENDER: %s (%s) – args=%s", tab_name, func.__name__, args_dict)
+            logger.info("🎯 TAB RENDER: %s (%s) called", tab_name, func.__name__)
             try:
                 result = func(*args, **kwargs)
                 logger.info("🎯 TAB RENDER: %s (%s) completed", tab_name, func.__name__)
