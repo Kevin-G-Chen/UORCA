@@ -61,7 +61,7 @@ setup_fragment_decorator()
 
 # Set page configuration
 st.set_page_config(
-    page_title="UORCA Explorer (Modular)",
+    page_title="UORCA Explorer",
     page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded",

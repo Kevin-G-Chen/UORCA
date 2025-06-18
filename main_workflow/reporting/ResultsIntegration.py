@@ -191,7 +191,7 @@ class ResultsIntegrator:
                 os.path.join(folder, "metadata", "analysis_info.json"),  # New location
                 os.path.join(folder, "analysis_info.json")  # Old location for backward compatibility
             ]
-            
+
             info_file = None
             for location in info_file_locations:
                 if os.path.isfile(location):
@@ -715,6 +715,9 @@ class ResultsIntegrator:
             if len(heatmap_df.columns) < len(contrasts):
                 remaining_contrast_indices = [i for i, label in enumerate(contrast_labels) if label in heatmap_df.columns]
                 contrasts = [contrasts[i] for i in remaining_contrast_indices]
+                # Recompute contrast labels after filtering to keep everything in sync
+                contrast_labels = [f"{a_id}_{c_id}" for a_id, c_id in contrasts]
+                simplified_labels = [simplify_contrast_label(a_id, c_id) for a_id, c_id in contrasts]
                 logger.info(f"After filtering empty rows/columns: {len(heatmap_df)} genes × {len(heatmap_df.columns)} contrasts")
 
         # Check if we still have data after filtering

@@ -271,9 +271,6 @@ def _provide_relevance_download(results_df):
     )
 
 
-
-
-
 @log_streamlit_function
 @log_streamlit_agent
 def _execute_ai_analysis(agent, prompt: str) -> str:
