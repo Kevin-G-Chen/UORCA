@@ -240,6 +240,13 @@ UORCA Explorer is a containerized Streamlit web application for interactive expl
 - **Quality Control**: Dataset-specific diagnostic plots and metrics
 - **Pathway Analysis**: Gene set enrichment and pathway visualization
 
+**AI-Powered Analysis:**
+- **Contrast Relevance Assessment**: AI scoring of contrast relevance to research questions
+- **Automated Gene Discovery**: AI-driven identification of key differential expression patterns
+- **Intelligent Threshold Selection**: AI automatically chooses appropriate statistical thresholds
+- **Pattern Recognition**: AI identifies both shared and context-specific gene expression signatures
+- **Biological Interpretation**: AI provides reasoning and biological context for findings
+
 **Performance Optimization:**
 - **Fragment Isolation**: Efficient tab switching without recomputation
 - **Advanced Caching**: Results cached throughout sessions for rapid access

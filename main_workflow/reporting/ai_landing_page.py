@@ -7,7 +7,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from ai_agent_factory import get_example_agent, validate_agent_setup
+from ai_agent_factory import get_uorca_agent, validate_agent_setup
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def render_ai_landing_page(results_dir: str) -> None:
     )
 
     try:
-        agent = get_example_agent()
+        agent = get_uorca_agent()
     except Exception as e:
         st.error(f"Failed to initialise agent: {e}")
         return
@@ -34,7 +34,7 @@ def run_example(agent, results_dir: str) -> None:
     """Run the query to get information about the first dataset."""
     async def _query():
         async with agent.run_mcp_servers():
-            result = await agent.run(f"Tell me about the first dataset in {results_dir}")
+            result = await agent.run(f"Test the get_most_common_genes tool with lfc_thresh=1.0, p_thresh=0.05, top_n=5")
             return result.output if hasattr(result, "output") else result
 
     with st.spinner("Getting dataset information..."):
