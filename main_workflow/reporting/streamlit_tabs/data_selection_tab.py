@@ -9,7 +9,7 @@ import streamlit as st
 from typing import Dict, Any, Set, Tuple
 
 from .helpers import check_ai_generating, setup_fragment_decorator
-from ..ResultsIntegration import ResultsIntegrator
+from ResultsIntegration import ResultsIntegrator
 
 # Set up fragment decorator
 setup_fragment_decorator()

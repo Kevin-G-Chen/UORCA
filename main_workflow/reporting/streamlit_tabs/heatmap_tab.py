@@ -10,7 +10,7 @@ import traceback
 from typing import List, Tuple, Optional
 
 from .helpers import check_ai_generating, setup_fragment_decorator, cached_figure_creation
-from ..ResultsIntegration import ResultsIntegrator
+from ResultsIntegration import ResultsIntegrator
 
 # Set up fragment decorator
 setup_fragment_decorator()
