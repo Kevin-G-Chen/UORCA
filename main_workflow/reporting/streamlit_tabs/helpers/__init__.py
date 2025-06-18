@@ -202,10 +202,9 @@ def initialize_session_state(ri: ResultsIntegrator):
     if 'selected_contrasts' not in st.session_state:
         # Default to all contrasts for selected datasets
         selected_contrasts = set()
-        for analysis_id, contrasts in ri.deg_data.items():
-            if analysis_id in st.session_state['selected_datasets']:
-                for contrast_id in contrasts.keys():
-                    selected_contrasts.add((analysis_id, contrast_id))
+        for analysis_id in st.session_state['selected_datasets']:
+            for c in ri.analysis_info.get(analysis_id, {}).get("contrasts", []):
+                selected_contrasts.add((analysis_id, c["name"]))
         st.session_state['selected_contrasts'] = selected_contrasts
 
     # Initialize page number
