@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 from streamlit_tabs.helpers import log_streamlit_agent
 
+
 # Load environment variables
 load_dotenv()
 

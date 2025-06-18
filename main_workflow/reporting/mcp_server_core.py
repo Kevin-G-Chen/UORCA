@@ -5,6 +5,7 @@ from mcp.server.fastmcp import FastMCP
 from ResultsIntegration import ResultsIntegrator
 from streamlit_tabs.helpers import log_streamlit_function
 
+
 server = FastMCP("UORCA-Tools")
 
 def load_long_table(results_dir: str) -> pd.DataFrame:
@@ -49,7 +50,7 @@ except Exception as e:
     LONG_DF = pd.DataFrame(columns=['analysis_id','contrast_id','Gene','logFC','pvalue'])
 
 # 1) Top recurring DEGs
-@server.tool()
+@server.tool
 @log_streamlit_function
 async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) -> str:
     """
@@ -68,7 +69,6 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
     return json.dumps([{"gene": g, "count": int(c)} for g, c in counts.items()])
 
 # 2) Per-gene + contrast stats
-@server.tool()
 @log_streamlit_function
 async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
     """
