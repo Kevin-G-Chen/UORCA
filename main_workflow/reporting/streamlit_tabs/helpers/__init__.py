@@ -89,7 +89,7 @@ def get_integrator(path: str) -> Tuple[Optional[ResultsIntegrator], Optional[str
         return None, str(e)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=3600)  # Cache for 1 hour
 @log_streamlit_function
 def cached_identify_important_genes(
     results_dir: str,
@@ -104,7 +104,7 @@ def cached_identify_important_genes(
     Cache the identify_important_genes computation to avoid recomputation on every rerun.
 
     This function is cached based on the input parameters, so it will only recompute
-    when the parameters change.
+    when the parameters change. Cache expires after 1 hour to handle data updates.
     """
     ri, error = get_integrator(results_dir)
     if error or not ri:
@@ -125,51 +125,69 @@ def cached_identify_important_genes(
         return []
 
 
-# Add a cache for figure objects to improve performance in older versions
-@st.cache_data(hash_funcs={go.Figure: lambda _: None})
+# Add a cache for figure objects to improve performance
+@st.cache_data(show_spinner=False, ttl=1800, hash_funcs={go.Figure: lambda _: None, ResultsIntegrator: lambda _: None})
 @log_streamlit_function
 def cached_figure_creation(
     func_name: str,
-    _ri: ResultsIntegrator,
+    results_dir: str,  # Use results_dir instead of RI instance for better caching
     *args,
     **kwargs) -> Optional[go.Figure]:
-    """Cache figure objects to avoid recreating them."""
-    if not _ri:
+    """Cache figure objects to avoid recreating them. Cache expires after 30 minutes."""
+    ri, error = get_integrator(results_dir)
+    if error or not ri:
         return None
 
-    if func_name == "create_lfc_heatmap":
-        return _ri.create_lfc_heatmap(*args, **kwargs)
-    elif func_name == "create_expression_plots":
-        # Map positional arguments to correct parameters for create_expression_plots
-        if len(args) >= 12:
-            genes, plot_type, analyses, output_file, hide_x_labels, page_number, facet_font_size, lock_y_axis, show_raw_points, legend_position, show_grid_lines, grid_opacity = args[:12]
-            return _ri.create_expression_plots(
-                genes=genes,
-                plot_type=plot_type,
-                analyses=analyses,
-                output_file=output_file,
-                hide_x_labels=hide_x_labels,
-                page_number=page_number,
-                facet_font_size=facet_font_size,
-                lock_y_axis=lock_y_axis,
-                show_raw_points=show_raw_points,
-                legend_position=legend_position,
-                show_grid_lines=show_grid_lines,
-                grid_opacity=grid_opacity
-            )
-        else:
-            return _ri.create_expression_plots(*args, **kwargs)
+    try:
+        if func_name == "create_lfc_heatmap":
+            return ri.create_lfc_heatmap(*args, **kwargs)
+        elif func_name == "create_expression_plots":
+            # Map positional arguments to correct parameters for create_expression_plots
+            if len(args) >= 12:
+                genes, plot_type, analyses, output_file, hide_x_labels, page_number, facet_font_size, lock_y_axis, show_raw_points, legend_position, show_grid_lines, grid_opacity = args[:12]
+                return ri.create_expression_plots(
+                    genes=genes,
+                    plot_type=plot_type,
+                    analyses=analyses,
+                    output_file=output_file,
+                    hide_x_labels=hide_x_labels,
+                    page_number=page_number,
+                    facet_font_size=facet_font_size,
+                    lock_y_axis=lock_y_axis,
+                    show_raw_points=show_raw_points,
+                    legend_position=legend_position,
+                    show_grid_lines=show_grid_lines,
+                    grid_opacity=grid_opacity
+                )
+            else:
+                return ri.create_expression_plots(*args, **kwargs)
+    except Exception as e:
+        logger.error(f"Error creating cached figure: {e}")
     return None
 
+
+@st.cache_data(show_spinner=False, ttl=3600)
+@log_streamlit_function
+def cached_get_all_genes_from_integrator(results_dir: str) -> List[str]:
+    """Extract all unique genes from all datasets in the integrator with caching."""
+    ri, error = get_integrator(results_dir)
+    if error or not ri:
+        return []
+
+    try:
+        all_genes = set()
+        for cpm_df in ri.cpm_data.values():
+            if 'Gene' in cpm_df.columns:
+                all_genes.update(cpm_df['Gene'].tolist())
+        return sorted(all_genes)
+    except Exception as e:
+        logger.error(f"Error getting all genes: {e}")
+        return []
 
 @log_streamlit_function
 def get_all_genes_from_integrator(ri: ResultsIntegrator) -> List[str]:
     """Extract all unique genes from all datasets in the integrator."""
-    all_genes = set()
-    for cpm_df in ri.cpm_data.values():
-        if 'Gene' in cpm_df.columns:
-            all_genes.update(cpm_df['Gene'].tolist())
-    return sorted(all_genes)
+    return cached_get_all_genes_from_integrator(ri.results_dir)
 
 
 @log_streamlit_function
@@ -291,6 +309,7 @@ __all__ = [
     'add_custom_css',
     'setup_fragment_decorator',
     'get_all_genes_from_integrator',
+    'cached_get_all_genes_from_integrator',
     'calculate_pagination_info',
     'safe_rerun',
     'check_ai_generating',

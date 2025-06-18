@@ -124,31 +124,23 @@ def _draw_heatmap(
 
     with st.spinner("Generating heatmap..."):
         try:
-            # Try to use cached figure creation if available
-            if 'cached_figure_creation' in globals():
-                fig = cached_figure_creation(
-                    "create_lfc_heatmap",
-                    ri,
-                    gene_selection,
-                    contrast_pairs,
-                    None,
-                )
-            else:
-                # Use direct creation with all parameters
-                p_threshold = p_thresh if use_dynamic_filtering else None
-                lfc_threshold = lfc_thresh_val if use_dynamic_filtering else None
+            # Use cached figure creation for better performance
+            p_threshold = p_thresh if use_dynamic_filtering else None
+            lfc_threshold = lfc_thresh_val if use_dynamic_filtering else None
 
-                fig = ri.create_lfc_heatmap(
-                    genes=gene_selection,
-                    contrasts=contrast_pairs,
-                    output_file=None,
-                    p_value_threshold=p_threshold,
-                    lfc_threshold=lfc_threshold,
-                    hide_empty_rows_cols=hide_empty_rows_cols,
-                    font_size=font_size,
-                    show_grid_lines=show_grid_lines,
-                    grid_opacity=grid_opacity,
-                )
+            fig = cached_figure_creation(
+                "create_lfc_heatmap",
+                ri.results_dir,
+                gene_selection,
+                contrast_pairs,
+                None,  # output_file
+                p_threshold,
+                lfc_threshold,
+                hide_empty_rows_cols,
+                font_size,
+                show_grid_lines,
+                grid_opacity,
+            )
 
             if fig:
                 log_streamlit_event("Heatmap generated successfully")
