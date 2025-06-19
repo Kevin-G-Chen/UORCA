@@ -9,6 +9,8 @@ import json
 import asyncio
 import logging
 import streamlit as st
+import pandas as pd
+import pydantic
 from typing import Dict, Any, List, Optional
 
 
@@ -21,6 +23,7 @@ from .helpers import (
     log_streamlit_event
 )
 from ResultsIntegration import ResultsIntegrator
+from ai_gene_schema import GeneAnalysisOutput
 
 # Set up fragment decorator
 setup_fragment_decorator()
@@ -207,8 +210,16 @@ def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query
     # Display results table
     st.subheader("Contrast Relevance Scores")
 
+    # Add Selected column based on session state
+    sel = st.session_state.get("selected_contrasts_for_ai", [])
+    sel_set = {(item['analysis_id'], item['contrast_id']) for item in sel}
+    results_df = results_df.copy()
+    results_df["Selected"] = results_df.apply(
+        lambda r: (r['analysis_id'], r['contrast_id']) in sel_set, axis=1
+    )
+
     # Configure column display
-    display_columns = ['Accession', 'contrast_id', 'RelevanceScore', 'Description']
+    display_columns = ['Selected', 'Accession', 'contrast_id', 'RelevanceScore', 'Description']
     if 'Run1Justification' in results_df.columns:
         display_columns.append('Run1Justification')
 
@@ -216,6 +227,7 @@ def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query
         results_df[display_columns],
         use_container_width=True,
         column_config={
+            "Selected": st.column_config.CheckboxColumn("Selected"),
             "RelevanceScore": st.column_config.NumberColumn(
                 "Relevance Score",
                 format="%.2f",
@@ -240,23 +252,11 @@ def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query
         }
     )
 
-    # Show summary statistics
-    _display_relevance_summary(results_df)
-
     # Provide download option
     _provide_relevance_download(results_df)
 
 
-@log_streamlit_function
-def _display_relevance_summary(results_df):
-    """Display summary statistics for relevance scores."""
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Highly Relevant (≥0.7)", len(results_df[results_df['RelevanceScore'] >= 0.7]))
-    with col2:
-        st.metric("Moderately Relevant (0.4-0.7)", len(results_df[(results_df['RelevanceScore'] >= 0.4) & (results_df['RelevanceScore'] < 0.7)]))
-    with col3:
-        st.metric("Low Relevance (<0.4)", len(results_df[results_df['RelevanceScore'] < 0.4]))
+
 
 
 @log_streamlit_function
@@ -274,30 +274,129 @@ def _provide_relevance_download(results_df):
 @log_streamlit_function
 @log_streamlit_agent
 def _execute_ai_analysis(agent, prompt: str) -> str:
-    """Execute the AI analysis asynchronously."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
+    """Execute the AI analysis asynchronously with proper loop hygiene."""
     async def run_analysis():
         async with agent.run_mcp_servers():
             result = await agent.run(prompt)
             return result.output if hasattr(result, 'output') else str(result)
 
     try:
-        result_text = loop.run_until_complete(run_analysis())
+        # Check if there's already a running event loop
+        try:
+            loop = asyncio.get_running_loop()
+            # If we're in an existing loop, we need to run in a thread
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(asyncio.run, run_analysis())
+                result_text = future.result()
+        except RuntimeError:
+            # No running loop, safe to use asyncio.run
+            result_text = asyncio.run(run_analysis())
+
         return result_text
-    finally:
-        loop.close()
+    except Exception as e:
+        logger.error(f"Error in AI analysis execution: {str(e)}", exc_info=True)
+        raise
 
 
 @log_streamlit_function
 def _display_ai_analysis_results(result_text: str, research_question: str, selected_contrasts: List[Dict]):
-    """Display the AI gene analysis results."""
+    """Display the AI gene analysis results with structured output."""
     log_streamlit_event("AI gene analysis completed successfully")
     st.success("✅ Analysis completed successfully!")
 
-    st.subheader("📑 AI Gene Analysis Results")
-    st.markdown(result_text)
+    # Parse structured JSON output
+    try:
+        parsed: GeneAnalysisOutput = GeneAnalysisOutput.model_validate_json(result_text)
+    except pydantic.ValidationError as e:
+        st.error(f"Agent output failed validation: {e}")
+        st.subheader("📑 Raw AI Response")
+        st.markdown(result_text)
+        return
+
+    # Get ResultsIntegrator from session state or create one
+    ri = st.session_state.get('results_integrator')
+    if not ri:
+        try:
+            from .helpers import get_integrator
+            results_dir = st.session_state.get('results_dir', '/UORCA_results')
+            ri, _ = get_integrator(results_dir)
+        except ImportError:
+            st.warning("Could not load data integrator. Some visualizations may not be available.")
+            ri = None
+
+    genes = {g.upper() for g in parsed.genes}  # normalize + dedupe
+    contrasts = [(item['analysis_id'], item['contrast_id']) for item in selected_contrasts]
+
+    # --- 1. Gene list
+    st.subheader("🧬 Genes Selected by AI")
+    st.write(f"**Filters used:** Log2FC ≥ {parsed.filters.lfc_thresh}, P-value < {parsed.filters.p_thresh}")
+
+    # Display genes in a nice format
+    gene_cols = st.columns(min(len(genes), 4))
+    for i, gene in enumerate(sorted(genes)):
+        with gene_cols[i % len(gene_cols)]:
+            st.code(gene)
+
+    # --- 2. LFC table
+    st.subheader("📊 Log Fold Change Table")
+
+    if ri and ri.deg_data:
+        rows, missing = [], []
+        for gene in genes:
+            hit = False
+            for aid, cid in contrasts:
+                if aid in ri.deg_data and cid in ri.deg_data[aid]:
+                    df = ri.deg_data[aid][cid]
+                    if 'Gene' in df.columns and gene in df['Gene'].values:
+                        hit = True
+                        rec = df.loc[df['Gene'] == gene].iloc[0]
+                        rows.append({
+                            'Gene': gene,
+                            'Dataset': aid,
+                            'Contrast': cid,
+                            'logFC': rec.get("logFC", 0),
+                            'P-value': rec.get("adj.P.Val") or rec.get("P.Value", 1)
+                        })
+            if not hit:
+                missing.append(gene)
+
+        if rows:
+            lfc_df = pd.DataFrame(rows)
+            st.dataframe(
+                lfc_df,
+                use_container_width=True,
+                column_config={
+                    "logFC": st.column_config.NumberColumn("Log2FC", format="%.2f"),
+                    "P-value": st.column_config.NumberColumn("P-value", format="%.2e")
+                }
+            )
+        else:
+            st.info("No expression data found for the selected genes in the chosen contrasts.")
+
+        if missing:
+            st.info(f"ℹ️ {len(missing)} gene(s) not present in the selected contrasts: {', '.join(missing)}")
+
+        # --- 3. Heatmap
+        if rows and len(genes - set(missing)) > 0:
+            st.subheader("🌡️ Expression Heatmap")
+            try:
+                fig = ri.create_lfc_heatmap(
+                    genes=list(genes - set(missing)),
+                    contrasts=contrasts
+                )
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Could not generate heatmap for the selected genes.")
+            except Exception as e:
+                st.warning(f"Error generating heatmap: {str(e)}")
+    else:
+        st.warning("No expression data available for visualization.")
+
+    # --- 4. Interpretation
+    st.subheader("🧠 AI-Driven Interpretation")
+    st.markdown(parsed.interpretation)
 
     # Add download option
     analysis_report = f"""
@@ -307,9 +406,16 @@ def _display_ai_analysis_results(result_text: str, research_question: str, selec
 
 **Contrasts Analyzed:** {len(selected_contrasts)}
 
-## Analysis Results
+## Selected Genes
+{', '.join(sorted(genes))}
 
-{result_text}
+## Filter Parameters
+- Log2 Fold Change Threshold: {parsed.filters.lfc_thresh}
+- P-value Threshold: {parsed.filters.p_thresh}
+
+## AI Interpretation
+
+{parsed.interpretation}
 
 ---
 *Generated by UORCA Explorer AI Assistant*
