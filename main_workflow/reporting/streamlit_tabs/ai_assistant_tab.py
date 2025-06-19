@@ -11,7 +11,7 @@ import logging
 import streamlit as st
 import pandas as pd
 import pydantic
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 
 from .helpers import (
@@ -88,7 +88,7 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
     # Single workflow button
     col1, col2 = st.columns([1, 3])
     with col1:
-        run_button = st.button("🚀 Run Complete AI Analysis", disabled=not research_query.strip(), type="primary")
+        run_button = st.button("🚀 Run Complete AI Analysis", type="primary")
     with col2:
         if not research_query.strip():
             st.info("💡 Enter a research question above to start AI analysis.")
@@ -101,6 +101,11 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
 @log_streamlit_agent
 def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_query: str):
     """Run the complete AI analysis workflow including contrast relevance and gene analysis."""
+    # Add validation for empty research query
+    if not research_query.strip():
+        st.error("Please enter a research question before running the analysis.")
+        return
+
     if not CONTRAST_RELEVANCE_AVAILABLE:
         st.error("Contrast relevance assessment is not available. Please check your environment setup.")
         return
@@ -224,10 +229,10 @@ Please perform the analysis using your four tools, choose all thresholds reasona
 """
 
             # Run the agent analysis
-            result_text = _execute_ai_analysis(agent, prompt)
+            result_text, tool_calls = _execute_ai_analysis(agent, prompt)
 
             # Display results
-            _display_ai_analysis_results(result_text, research_query, selected_contrast_dicts)
+            _display_ai_analysis_results(result_text, research_query, selected_contrast_dicts, tool_calls)
 
         except Exception as e:
             logger.error(f"Error in AI gene analysis: {str(e)}", exc_info=True)
@@ -457,12 +462,24 @@ def _provide_relevance_download(results_df):
 
 @log_streamlit_function
 @log_streamlit_agent
-def _execute_ai_analysis(agent, prompt: str) -> str:
-    """Execute the AI analysis asynchronously with proper loop hygiene."""
+def _execute_ai_analysis(agent, prompt: str) -> Tuple[str, List[Dict]]:
+    """Execute the AI analysis asynchronously with proper loop hygiene and capture tool calls."""
     async def run_analysis():
         async with agent.run_mcp_servers():
+            # Clear previous tool calls
+            await agent.run("clear_tool_log")
+
+            # Run main analysis
             result = await agent.run(prompt)
-            return result.output if hasattr(result, 'output') else str(result)
+
+            # Get tool call log
+            tool_calls_result = await agent.run("get_tool_call_log")
+            try:
+                tool_calls = json.loads(tool_calls_result.output if hasattr(tool_calls_result, 'output') else tool_calls_result)
+            except (json.JSONDecodeError, AttributeError):
+                tool_calls = []
+
+            return result.output if hasattr(result, 'output') else str(result), tool_calls
 
     try:
         # Check if there's already a running event loop
@@ -472,22 +489,57 @@ def _execute_ai_analysis(agent, prompt: str) -> str:
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, run_analysis())
-                result_text = future.result()
+                result_text, tool_calls = future.result()
         except RuntimeError:
             # No running loop, safe to use asyncio.run
-            result_text = asyncio.run(run_analysis())
+            result_text, tool_calls = asyncio.run(run_analysis())
 
-        return result_text
+        return result_text, tool_calls
     except Exception as e:
         logger.error(f"Error in AI analysis execution: {str(e)}", exc_info=True)
         raise
 
 
 @log_streamlit_function
-def _display_ai_analysis_results(result_text: str, research_question: str, selected_contrasts: List[Dict]):
+def _display_tool_calls(tool_calls: List[Dict]):
+    """Display tool calls in expandable panels."""
+    if not tool_calls:
+        return
+
+    st.subheader("🔧 AI Tool Usage")
+    st.markdown("*The AI used these tools to analyze your data:*")
+
+    for i, call in enumerate(tool_calls):
+        with st.expander(f"🛠️ {call['tool']} (Call {i+1})", expanded=False):
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Parameters:**")
+                st.json(call['parameters'])
+
+            with col2:
+                st.markdown("**Result:**")
+                try:
+                    # Try to parse and display JSON nicely
+                    result_data = json.loads(call['result'])
+                    st.json(result_data)
+                except:
+                    # Fallback to text display
+                    st.code(call['result'])
+
+            st.caption(f"Executed at: {call['timestamp']}")
+
+
+@log_streamlit_function
+def _display_ai_analysis_results(result_text: str, research_question: str, selected_contrasts: List[Dict], tool_calls: List[Dict] = None):
     """Display the AI gene analysis results with structured output."""
     log_streamlit_event("AI gene analysis completed successfully")
     st.success("✅ Analysis completed successfully!")
+
+    # Display tool calls if available
+    if tool_calls:
+        _display_tool_calls(tool_calls)
+        st.markdown("---")
 
     # Parse structured JSON output
     try:
