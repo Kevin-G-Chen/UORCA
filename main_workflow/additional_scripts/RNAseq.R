@@ -1,14 +1,9 @@
-#user_lib <- Sys.getenv("R_LIBS_USER", unset="~/R/library")
-#if (!dir.exists(user_lib)) {
-#    dir.create(user_lib, recursive = TRUE)
-#}
-#.libPaths(c(user_lib, .libPaths()))
 
-library(edgeR)
-library(limma)
-library(tximport)
-library(gplots)
-library(ComplexHeatmap)
+suppressPackageStartupMessages(library(ComplexHeatmap))
+suppressPackageStartupMessages(library(edgeR))
+suppressPackageStartupMessages(library(limma))
+suppressPackageStartupMessages(library(tximport))
+suppressPackageStartupMessages(library(gplots))
 
 create_plot_output_dirs <- function(output_dir) {
   # Create main analysis directory (RNAseqAnalysis)
