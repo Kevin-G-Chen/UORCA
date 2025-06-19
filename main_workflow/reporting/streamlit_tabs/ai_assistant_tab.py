@@ -307,7 +307,7 @@ def _display_ai_analysis_results(result_text: str, research_question: str, selec
 
     # Parse structured JSON output
     try:
-        parsed: GeneAnalysisOutput = GeneAnalysisOutput.model_validate_json(result_text)
+        parsed = result_text
     except pydantic.ValidationError as e:
         st.error(f"Agent output failed validation: {e}")
         st.subheader("📑 Raw AI Response")

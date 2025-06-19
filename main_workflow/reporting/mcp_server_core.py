@@ -54,7 +54,7 @@ except Exception as e:
 @log_streamlit_function
 async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) -> str:
     """
-    Find the most commonly differentially expressed genes across contrasts.
+    Find the most commonly differentially expressed genes across contrasts. Useful to get an overview of frequently observed DEGs.
 
     Args:
         lfc_thresh: Minimum absolute log2 fold change threshold
@@ -73,7 +73,7 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
 @log_streamlit_function
 async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
     """
-    Get statistics for a specific gene across contrasts.
+    Get statistics for a specific gene across contrasts. Useful to assess a specific gene to get more information about its expression changes across different conditions.
 
     Args:
         gene: Gene symbol to look up
@@ -92,7 +92,7 @@ async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
 @log_streamlit_function
 async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: float, p_thresh: float) -> str:
     """
-    Find genes that are significant in contrast set A but not in set B.
+    Find genes that are significant in contrast set A but not in set B. Useful for comparing two sets of contrasts, for example when wanting to find genes unique to a specific condition, and not (for example) a control condition.
 
     Args:
         set_a: List of contrast IDs for set A

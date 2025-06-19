@@ -71,7 +71,7 @@ def create_uorca_agent() -> Agent:
             model_settings={"temperature": 0.1},
             mcp_servers=[server],
             system_prompt=UORCA_SYSTEM_PROMPT,
-            response_format=GeneAnalysisOutput,
+            output_type=GeneAnalysisOutput,
         )
 
         return agent

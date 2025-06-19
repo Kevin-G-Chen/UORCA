@@ -47,7 +47,7 @@ class GeneAnalysisOutput(BaseModel):
 
     class Config:
         """Pydantic configuration."""
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "genes": ["MYCN", "ALK", "PHOX2B"],
                 "filters": {
