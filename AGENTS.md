@@ -34,7 +34,7 @@ Contains specialized agents handling different parts of the workflow:
 - **agents/analysis.py**
   Performs RNA-seq data analysis. Runs Kallisto quantification, prepares edgeR analysis sample mapping, and conducts differential expression analysis with edgeR/limma via R scripts.
 
-- **agents/reporting.py** (not mentioned explicitly, but reporting functionality is in main_workflow/reporting/ - you can likely ignore this)
+- **agents/reporting.py** (legacy - reporting functionality has been moved to main_workflow/reporting/ with comprehensive modular architecture)
 
 ### 2. **Additional scripts**
 
@@ -59,24 +59,77 @@ Scripts to help submit and manage SLURM batch jobs:
 
 ### 4. **Reporting**
 
-- **reporting/**: Contains tools and interfaces for report generation and data exploration, including:
+The reporting directory contains a comprehensive modular Streamlit application (UORCA Explorer) and supporting tools for interactive analysis and visualization:
 
-  - **ResultsIntegration.py** (see above): main integration script for multi-dataset results.
+#### Core Integration and Analysis
+  - **ResultsIntegration.py**: Main integration script for multi-dataset results with advanced features:
+    - Cross-dataset gene prioritization with intelligent ranking
+    - Interactive clustered heatmaps with hierarchical clustering
+    - Expression plots with sample grouping and statistical filtering
+    - Cached important gene identification for performance
+    - HTML report generation with publication-quality visualizations
 
-  - **single_analysis_plots.py**: Utilities for plotting QC and differential expression plots for single analyses.
+  - **single_analysis_plots.py**: Utilities for creating interactive QC and differential expression plots:
+    - PCA plots replacing static MDS plots with sample grouping
+    - Interactive volcano plots and MA plots with hover information
+    - Clustered DEG heatmaps with sample group annotations
+    - All plots feature hover data and biological context
 
-  - **ai_agent_factory.py**: Factory that creates AI agents to interact with UORCA results via MCP.
+#### UORCA Explorer - Modular Streamlit Application
+  - **uorca_explorer.py**: Main modular Streamlit app with advanced caching and fragment isolation
 
-  - **ai_landing_page.py**: Streamlit-based AI assistant landing page for interactive data exploration.
+  - **streamlit_tabs/**: Modular tab architecture for maintainability:
+    - **data_selection_tab.py**: Interactive tables for dataset and contrast selection
+    - **heatmap_tab.py**: Clustered heatmaps with advanced filtering and significance thresholds
+    - **expression_plots_tab.py**: Violin plots with pagination and sample grouping
+    - **analysis_plots_tab.py**: Quality control and differential expression plots from individual datasets
+    - **datasets_info_tab.py**: Dataset metadata browsing with study details and filtering
+    - **contrasts_info_tab.py**: Contrast information with descriptions and DEG counts
+    - **ai_assistant_tab.py**: Complete AI-powered analysis with transparency features
+    - **sidebar_controls.py**: Comprehensive parameter controls with auto gene selection
+    - **helpers/**: Shared utilities including caching, logging, and session state management
 
-  - **mcp_servers/uorca_data_server.py**: MCP server providing JSON/structured data tool access to UORCA analyses.
+#### AI-Powered Analysis Infrastructure
+  - **ai_agent_factory.py**: Factory for creating AI agents that connect to UORCA MCP servers:
+    - Configures pydantic-ai agents with OpenAI models
+    - Manages MCP server connections for tool access
+    - Handles structured output validation with schemas
 
-  - **mcp_utils.py**: Helper functions for MCP server setup.
+  - **ai_gene_schema.py**: Pydantic models for structured AI analysis output:
+    - Gene selection validation (1-50 genes)
+    - Filter parameter validation
+    - Biological interpretation requirements
 
-  - **reporting/uorca_explorer.py**: Streamlit app for interactive exploration of UORCA RNA-seq results.
+  - **mcp_server_core.py**: MCP server providing structured tool access to UORCA data:
+    - **get_most_common_genes()**: Find frequently differentially expressed genes
+    - **get_gene_contrast_stats()**: Get statistics for specific genes across contrasts
+    - **filter_genes_by_contrast_sets()**: Find genes specific to contrast subsets
+    - **summarize_contrast()**: Provide contrast summaries with top DEGs
+    - **Tool call logging**: Transparent tracking of AI tool usage with parameters and results
 
-  - **reporting/MCP_examples/**: Contains example MCP server and client demonstrating how to work with MCP.
-  - **reporting/example_output_files/** Contains example files from the output of the main workflow. Refer to these files to understand the sturcture of the output, and therefore how to approach interpreting these files for the purpose of the reporting app (e.g. JSON outputs)
+  - **contrast_relevance.py**: AI-powered contrast relevance assessment:
+    - Automated scoring of contrast relevance to research questions (0-1 scale)
+    - Intelligent contrast selection with diversity optimization
+    - Categorization of contrasts (primary, control, comparative, supportive)
+    - Batch processing with parallel API calls and result aggregation
+
+#### Supporting Infrastructure
+  - **example_output_files/**: Example files demonstrating output structure:
+    - **analysis_info.json**: Analysis metadata with checkpoints and organism information
+    - **contrasts.csv**: Contrast definitions with descriptions and expressions
+    - **edger_analysis_samples.csv**: Sample mapping for expression analysis
+    - **GSE111143_metadata.csv**: Example GEO metadata structure
+
+  - **prompts/**: AI prompt templates for various analysis workflows:
+    - **assess_and_select_contrasts.txt**: Prompts for intelligent contrast selection
+    - **assess_contrast_relevance.txt**: Prompts for contrast relevance scoring
+
+#### Key Features and Capabilities
+  - **Performance Optimization**: Advanced caching of expensive operations, fragment isolation for efficient updates
+  - **AI Transparency**: Real-time display of AI tool usage with parameters and results
+  - **Modular Architecture**: Separate modules for each functionality enabling independent development
+  - **Interactive Visualizations**: All plots feature hover information, biological context, and export capabilities
+  - **Comprehensive Analysis**: From raw results to publication-ready insights with AI-powered interpretation
 
 
 ### 5. **Prompts**
