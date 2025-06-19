@@ -150,6 +150,7 @@ uv run main_workflow/additional_scripts/DatasetIdentification.py \
 - Direct output formatting for batch processing
 
 ### Multi-dataset processing
+#### Multiple dataset analysis
 
 Process multiple datasets efficiently with resource management:
 
@@ -169,6 +170,7 @@ uv run main_workflow/run_helpers/submit_datasets.py \
 - Storage-aware resource management to prevent disk overflow
 - Automatic cleanup of intermediate files
 - Comprehensive progress tracking and error reporting
+- Results ready for immediate exploration in UORCA Explorer
 
 **CSV file format:**
 ```csv
@@ -191,14 +193,15 @@ uv run main_workflow/additional_scripts/ResultsIntegration.py \
 ```
 
 **Features:**
-- Cross-dataset gene prioritization
-- Interactive multi-dataset heatmaps
+- Cross-dataset gene prioritization with intelligent ranking
+- Interactive multi-dataset heatmaps with clustering
 - Meta-analysis statistical summaries
 - Publication-ready integrated visualizations
+- Seamless integration with UORCA Explorer for interactive analysis
 
 ## UORCA Explorer: Interactive Results Exploration
 
-UORCA Explorer is a containerized Streamlit web application for interactive exploration of analysis results.
+UORCA Explorer is a containerized Streamlit web application for interactive exploration of analysis results, featuring a modern modular architecture for enhanced performance and maintainability.
 
 ### Container-based usage
 
@@ -226,32 +229,48 @@ UORCA Explorer is a containerized Streamlit web application for interactive expl
 
 3. Open `http://127.0.0.1:8000` in your browser
 
-### Features
+### Key Features
 
 **Interactive Analysis:**
-- **Gene Selection**: Auto-identified DEGs or custom gene lists with validation
-- **Dataset Filtering**: Select subsets of datasets and contrasts for focused analysis  
-- **Dynamic Visualization**: Real-time heatmaps, expression plots, and statistical summaries
+- **Smart Gene Selection**: Auto-identified DEGs with intelligent ranking or custom gene lists with validation
+- **Dataset & Contrast Selection**: Interactive tables for selecting subsets of datasets and contrasts for focused analysis  
+- **Dynamic Visualization**: Real-time heatmaps, expression plots, and statistical summaries with advanced caching
 - **Export Capabilities**: Download results as CSV or interactive HTML reports
 
 **Advanced Exploration:**
-- **Multi-dataset Integration**: Compare patterns across multiple studies
-- **Statistical Filtering**: Adjustable significance thresholds and fold-change cutoffs
-- **Quality Control**: Dataset-specific diagnostic plots and metrics
-- **Pathway Analysis**: Gene set enrichment and pathway visualization
+- **Multi-dataset Integration**: Compare patterns across multiple studies with clustered heatmaps
+- **Statistical Filtering**: Adjustable significance thresholds and fold-change cutoffs with separate heatmap filters
+- **Quality Control**: Dataset-specific diagnostic plots including PCA, volcano plots, and MA plots
+- **Analysis Plots**: Interactive alternatives to static R plots with hover information and sample grouping
 
-**AI-Powered Analysis:**
-- **Contrast Relevance Assessment**: AI scoring of contrast relevance to research questions
-- **Automated Gene Discovery**: AI-driven identification of key differential expression patterns
-- **Intelligent Threshold Selection**: AI automatically chooses appropriate statistical thresholds
+**AI-Powered Analysis with Transparency:**
+- **One-Click Complete Analysis**: Streamlined workflow combining contrast relevance and gene analysis
+- **Contrast Relevance Assessment**: AI scoring and intelligent selection of contrasts relevant to research questions
+- **Tool Call Transparency**: Real-time display of AI tool usage with parameters and results for full transparency
+- **Automated Gene Discovery**: AI-driven identification of key differential expression patterns across selected contrasts
+- **Intelligent Threshold Selection**: AI automatically chooses appropriate statistical thresholds based on data characteristics
 - **Pattern Recognition**: AI identifies both shared and context-specific gene expression signatures
-- **Biological Interpretation**: AI provides reasoning and biological context for findings
+- **Biological Interpretation**: AI provides structured reasoning and biological context for findings
 
-**Performance Optimization:**
-- **Fragment Isolation**: Efficient tab switching without recomputation
-- **Advanced Caching**: Results cached throughout sessions for rapid access
-- **Automatic Pagination**: Large gene sets handled efficiently
+**Performance & Architecture:**
+- **Modular Design**: Separate tab modules for better maintainability and development workflow
+- **Advanced Caching**: Expensive operations like gene identification cached across sessions
+- **Fragment Isolation**: Efficient tab switching without recomputation using Streamlit fragments
+- **Automatic Pagination**: Large gene sets handled efficiently with 30 genes per page
 - **Responsive Design**: Professional styling optimized for analysis workflows
+
+### Available Tabs
+
+**Data Selection & Exploration:**
+- **☑️ Select Data & Contrasts**: Interactive tables for choosing datasets and contrasts with DEG counts
+- **🌡️ Explore DEG Heatmap**: Clustered heatmaps of log2 fold changes with hover information and filtering
+- **📈 Plot Gene Expression**: Violin plots showing expression distributions across sample groups
+- **🧑‍🔬 Analyze Experiments**: Quality control and differential expression plots from individual datasets
+
+**Information & AI Analysis:**
+- **📋 View Dataset Info**: Browse and filter dataset metadata with study details and descriptions
+- **🔍 View Contrast Info**: Browse contrast details with descriptions and DEG counts
+- **🤖 AI Assistant**: Complete AI-powered analysis with contrast relevance assessment and gene discovery
 
 ### Troubleshooting
 
@@ -266,10 +285,11 @@ UORCA Explorer is a containerized Streamlit web application for interactive expl
 - Check that no other services are using the same port
 
 **Performance Tips:**
-- Use auto-selected DEGs for optimal performance
+- Use auto-selected DEGs for optimal performance with cached gene identification
 - Enable cleanup mode for long-running batch jobs
 - Monitor storage usage when processing large datasets
-- Use the dedicated "Selections" tab for efficient dataset browsing
+- Use the dedicated "Select Data & Contrasts" tab for efficient dataset browsing
+- AI analysis benefits from OpenAI API key configuration for full functionality
 
 ## File organization
 
@@ -294,7 +314,7 @@ UORCA_results/
 
 2. **Set up your environment**:
    ```bash
-   export OPENAI_API_KEY="your_api_key_here"
+   export OPENAI_API_KEY="your_api_key_here"  # Required for AI Assistant functionality
    ```
 
 3. **Run a test analysis**:
@@ -303,9 +323,15 @@ UORCA_results/
    ./scratch/sbatch_script/Run_MasterAgent.sh
    ```
 
-4. **Explore results**:
+4. **Explore results interactively**:
    ```bash
    ./run_uorca_explorer.sh ../UORCA_results
    ```
+
+5. **Use the AI Assistant** (if OpenAI API key is configured):
+   - Navigate to the "🤖 AI Assistant" tab
+   - Enter your research question
+   - Click "🚀 Run Complete AI Analysis" for automated contrast relevance assessment and gene discovery
+   - View transparent AI tool usage and biological interpretations
 
 For questions, issues, or feature requests, please contact the UORCA development team or submit an issue through the project repository.
