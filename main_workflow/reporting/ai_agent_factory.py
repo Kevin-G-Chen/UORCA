@@ -14,6 +14,7 @@ from pathlib import Path
 import streamlit as st
 
 from streamlit_tabs.helpers import log_streamlit_function
+from ai_gene_schema import GeneAnalysisOutput
 
 
 from pydantic_ai import Agent
@@ -39,9 +40,8 @@ WORKFLOW:
 - Optionally use summarize_contrast() to get overviews of individual contrasts.
 
 OUTPUT FORMAT:
-Return your analysis in two parts:
-1) A structured summary showing the key genes identified for each contrast or gene set
-2) A brief 2-3 sentence biological interpretation explaining your rationale and what patterns you discovered
+Return ONLY valid JSON that satisfies the 'GeneAnalysisOutput' schema.
+Do NOT wrap it in markdown or add commentary outside the JSON object.
 
 Focus on identifying both shared signatures across multiple contrasts and context-specific gene expression patterns that could provide biological insights.
 """
@@ -71,6 +71,7 @@ def create_uorca_agent() -> Agent:
             model_settings={"temperature": 0.1},
             mcp_servers=[server],
             system_prompt=UORCA_SYSTEM_PROMPT,
+            response_format=GeneAnalysisOutput,
         )
 
         return agent

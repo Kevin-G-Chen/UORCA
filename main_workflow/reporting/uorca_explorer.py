@@ -105,6 +105,10 @@ def main():
         render_no_data_state()
         return
 
+    # Store integrator and results directory in session state for AI assistant access
+    st.session_state['results_integrator'] = ri
+    st.session_state['results_dir'] = results_dir
+
     # Initialize session state
     initialize_session_state(ri)
 
