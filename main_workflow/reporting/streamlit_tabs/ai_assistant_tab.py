@@ -40,11 +40,13 @@ except ImportError as e:
     UORCA_AGENT_AVAILABLE = False
 
 try:
-    from contrast_relevance import run_contrast_relevance
+    from contrast_relevance import run_contrast_relevance, run_contrast_relevance_with_selection, SelectedContrast
     CONTRAST_RELEVANCE_AVAILABLE = True
+    CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Contrast relevance not available: {e}")
     CONTRAST_RELEVANCE_AVAILABLE = False
+    CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE = False
 
 
 @log_streamlit_tab("AI Assistant")
@@ -111,28 +113,59 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
         st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
         return
 
-    # Step 1: Contrast Relevance Assessment
-    with st.spinner("Step 1/2: Assessing contrast relevance... This may take a few minutes."):
+    # Step 1: Contrast Relevance Assessment with Selection
+    with st.spinner("Step 1/2: Assessing contrast relevance and selecting optimal subset... This may take a few minutes."):
         try:
-            # Run contrast relevance assessment
-            results_df = run_contrast_relevance(
-                ri,
-                query=research_query,
-                repeats=3,
-                batch_size=50,
-                parallel_jobs=4
-            )
+            # Try to use intelligent selection if available
+            if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE:
+                # Run contrast relevance assessment with intelligent selection
+                results_df, selected_contrasts = run_contrast_relevance_with_selection(
+                    ri,
+                    query=research_query,
+                    repeats=3,  # Reduced since we're doing more complex processing
+                    batch_size=100,  # Larger batch size for better selection
+                    parallel_jobs=4
+                )
 
-            if not results_df.empty:
-                _display_relevance_results(ri, results_df, research_query)
+                if not results_df.empty and selected_contrasts:
+                    _display_relevance_and_selection_results(
+                        ri, results_df, selected_contrasts, research_query
+                    )
 
-                # Store results for AI gene analysis
-                st.session_state['selected_contrasts_for_ai'] = \
-                    results_df[['analysis_id','contrast_id']].to_dict('records')
-                st.session_state['research_query'] = research_query
+                    # Store SELECTED contrasts for AI gene analysis (not all contrasts)
+                    selected_contrast_dicts = [
+                        {'analysis_id': sc.analysis_id, 'contrast_id': sc.contrast_id}
+                        for sc in selected_contrasts
+                    ]
+                    st.session_state['selected_contrasts_for_ai'] = selected_contrast_dicts
+                    st.session_state['research_query'] = research_query
+
+                    # Show selection summary
+                    st.success(f"✅ Selected {len(selected_contrasts)} optimal contrasts from {len(results_df)} total contrasts for detailed analysis!")
+
+                else:
+                    st.warning("No contrasts found for assessment.")
+                    return
             else:
-                st.warning("No contrasts found for assessment.")
-                return
+                # Fall back to original approach
+                results_df = run_contrast_relevance(
+                    ri,
+                    query=research_query,
+                    repeats=3,
+                    batch_size=50,
+                    parallel_jobs=4
+                )
+
+                if not results_df.empty:
+                    _display_relevance_results(ri, results_df, research_query)
+
+                    # Store results for AI gene analysis
+                    st.session_state['selected_contrasts_for_ai'] = \
+                        results_df[['analysis_id','contrast_id']].to_dict('records')
+                    st.session_state['research_query'] = research_query
+                else:
+                    st.warning("No contrasts found for assessment.")
+                    return
 
         except Exception as e:
             st.error(f"Error during contrast relevance assessment: {str(e)}")
@@ -141,21 +174,49 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                 st.code(traceback.format_exc())
             return
 
-    # Step 2: AI Gene Analysis
+    # Step 2: AI Gene Analysis (now using SELECTED contrasts only)
     st.markdown("---")
-    with st.spinner("Step 2/2: AI is analyzing differential expression patterns... This may take several minutes."):
+    with st.spinner("Step 2/2: AI is analyzing differential expression patterns in selected contrasts... This may take several minutes."):
         try:
             # Set the RESULTS_DIR environment variable for the MCP server
             os.environ['RESULTS_DIR'] = results_dir
 
-            selected_contrasts = st.session_state['selected_contrasts_for_ai']
+            selected_contrast_dicts = st.session_state['selected_contrasts_for_ai']
 
             agent = create_uorca_agent()
-            prompt = f"""
+
+            # Enhanced prompt that leverages the selection
+            if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE and len(selected_contrast_dicts) <= 20:
+                prompt = f"""
+Research question: "{research_query}"
+
+I have intelligently selected the following {len(selected_contrast_dicts)} contrasts from a larger set based on relevance, diversity, and analytical value:
+
+{json.dumps(selected_contrast_dicts, indent=2)}
+
+These contrasts were chosen to provide:
+1. High relevance to the research question
+2. Diversity of biological contexts
+3. Appropriate controls and comparisons
+4. Maximum analytical power for comparative analysis
+
+Please perform comprehensive analysis using your four tools:
+1. Use get_most_common_genes() to find genes frequently differentially expressed across these selected contrasts
+2. Use filter_genes_by_contrast_sets() to find genes specific to subsets of contrasts (e.g., treatment-specific vs control-specific)
+3. Use get_gene_contrast_stats() to drill into interesting genes
+4. Use summarize_contrast() to understand individual contrast patterns
+
+Choose reasonable thresholds and return:
+1. Key genes identified with their biological significance
+2. Patterns that distinguish different contrast categories
+3. A brief biological interpretation of the findings
+"""
+            else:
+                prompt = f"""
 Research question: "{research_query}"
 
 Available contrasts:
-{json.dumps(selected_contrasts, indent=2)}
+{json.dumps(selected_contrast_dicts, indent=2)}
 
 Please perform the analysis using your four tools, choose all thresholds reasonably, and return:
 1) A structured summary showing the key genes identified for each contrast or gene set
@@ -166,7 +227,7 @@ Please perform the analysis using your four tools, choose all thresholds reasona
             result_text = _execute_ai_analysis(agent, prompt)
 
             # Display results
-            _display_ai_analysis_results(result_text, research_query, selected_contrasts)
+            _display_ai_analysis_results(result_text, research_query, selected_contrast_dicts)
 
         except Exception as e:
             logger.error(f"Error in AI gene analysis: {str(e)}", exc_info=True)
@@ -260,6 +321,129 @@ def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query
 
 
 @log_streamlit_function
+def _display_relevance_and_selection_results(
+    ri: ResultsIntegrator,
+    results_df: pd.DataFrame,
+    selected_contrasts: List[SelectedContrast],
+    research_query: str
+):
+    """Display both the full relevance results and the intelligent selection."""
+
+    # Sort by relevance score
+    results_df = results_df.sort_values('RelevanceScore', ascending=False)
+
+    # Add contrast descriptions for display
+    results_df['Description'] = results_df.apply(
+        lambda row: ri._get_contrast_description(row['analysis_id'], row['contrast_id']),
+        axis=1
+    )
+
+    # Add accession and organism info
+    results_df['Accession'] = results_df['analysis_id'].map(
+        lambda aid: ri.analysis_info.get(aid, {}).get('accession', aid)
+    )
+    results_df['organism'] = results_df['analysis_id'].map(
+        lambda aid: ri.analysis_info.get(aid, {}).get('organism', 'Unknown')
+    )
+
+    log_streamlit_event(f"Contrast relevance with selection completed: {len(results_df)} assessed, {len(selected_contrasts)} selected")
+
+    # Create tabs for full results vs selected subset
+    full_tab, selected_tab = st.tabs(["📊 All Contrasts (Relevance Scores)", "🎯 Selected Contrasts (AI Chosen)"])
+
+    with full_tab:
+        st.subheader("All Contrast Relevance Scores")
+        st.markdown("*Complete relevance assessment for all available contrasts*")
+
+        # Mark which contrasts were selected
+        selected_pairs = {(sc.analysis_id, sc.contrast_id) for sc in selected_contrasts}
+        results_df['AI_Selected'] = results_df.apply(
+            lambda r: (r['analysis_id'], r['contrast_id']) in selected_pairs, axis=1
+        )
+
+        # Configure column display for full results
+        display_columns = ['AI_Selected', 'Accession', 'contrast_id', 'RelevanceScore', 'Description']
+        if 'Run1Justification' in results_df.columns:
+            display_columns.append('Run1Justification')
+
+        st.dataframe(
+            results_df[display_columns],
+            use_container_width=True,
+            column_config={
+                "AI_Selected": st.column_config.CheckboxColumn("AI Selected", help="Selected by AI for analysis"),
+                "RelevanceScore": st.column_config.NumberColumn(
+                    "Relevance Score",
+                    format="%.2f",
+                    help="AI-assessed relevance score (0-1 scale)"
+                ),
+                "contrast_id": st.column_config.TextColumn("Contrast", help="Contrast identifier"),
+                "Description": st.column_config.TextColumn("Description", help="Contrast description"),
+                "Run1Justification": st.column_config.TextColumn("AI Justification", help="AI explanation for the relevance score"),
+                "Accession": st.column_config.TextColumn("Dataset", help="Dataset accession")
+            }
+        )
+
+    with selected_tab:
+        st.subheader("AI-Selected Contrasts for Analysis")
+        st.markdown("*Intelligently chosen subset optimizing relevance, diversity, and analytical power*")
+
+        # Create DataFrame for selected contrasts
+        selected_data = []
+        for sc in selected_contrasts:
+            # Find the relevance info
+            relevance_row = results_df[
+                (results_df['analysis_id'] == sc.analysis_id) &
+                (results_df['contrast_id'] == sc.contrast_id)
+            ]
+
+            if not relevance_row.empty:
+                selected_data.append({
+                    'Accession': relevance_row.iloc[0]['Accession'],
+                    'Contrast': sc.contrast_id,
+                    'Relevance Score': f"{sc.RelevanceScore:.2f}",
+                    'Category': sc.category.category,
+                    'Category Reason': sc.category.justification,
+                    'Selection Reason': sc.selection_justification,
+                    'Description': relevance_row.iloc[0]['Description']
+                })
+
+        if selected_data:
+            selected_df = pd.DataFrame(selected_data)
+
+            # Display with better formatting
+            st.dataframe(
+                selected_df,
+                use_container_width=True,
+                column_config={
+                    "Relevance Score": st.column_config.TextColumn("Relevance", help="AI relevance score"),
+                    "Category": st.column_config.TextColumn("Role", help="Analytical role in the study"),
+                    "Category Reason": st.column_config.TextColumn("Role Justification", help="Why assigned this role"),
+                    "Selection Reason": st.column_config.TextColumn("Selection Justification", help="Why selected for analysis"),
+                    "Description": st.column_config.TextColumn("Description", help="Contrast description")
+                }
+            )
+
+            # Show selection strategy
+            st.info("🎯 **Selection Strategy**: The AI selected these contrasts to maximize analytical power while ensuring diversity and appropriate controls for comparative analysis.")
+
+        # Category breakdown
+        if selected_contrasts:
+            st.markdown("### Selection Summary")
+            category_counts = {}
+            for sc in selected_contrasts:
+                cat = sc.category.category
+                category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            cols = st.columns(len(category_counts))
+            for i, (category, count) in enumerate(category_counts.items()):
+                with cols[i]:
+                    st.metric(f"{category.title()} Contrasts", count)
+
+    # Provide download option for both
+    _provide_relevance_download(results_df)
+
+
+@log_streamlit_function
 def _provide_relevance_download(results_df):
     """Provide download option for relevance results."""
     csv = results_df.to_csv(index=False)
@@ -325,7 +509,7 @@ def _display_ai_analysis_results(result_text: str, research_question: str, selec
             st.warning("Could not load data integrator. Some visualizations may not be available.")
             ri = None
 
-    genes = {g.upper() for g in parsed.genes}  # normalize + dedupe
+    genes = set(parsed.genes)  # normalize + dedupe
     contrasts = [(item['analysis_id'], item['contrast_id']) for item in selected_contrasts]
 
     # --- 1. Gene list

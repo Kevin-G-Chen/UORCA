@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import asyncio
 import json
 import pandas as pd
@@ -8,7 +8,12 @@ import sys
 import os
 from pathlib import Path
 from openai import OpenAI
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    # dotenv not available, continue without it
+    def load_dotenv():
+        pass
 
 from streamlit_tabs.helpers import log_streamlit_agent
 
@@ -68,7 +73,34 @@ class ContrastAssessments(BaseModel):
     model_config = ConfigDict(extra="forbid")
     assessments: List[ContrastAssessment]
 
+class ContrastCategory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    category: str  # "primary", "control", "comparative", "supportive"
+    justification: str
+
+class SelectedContrast(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    analysis_id: str
+    contrast_id: str
+    RelevanceScore: float
+    category: ContrastCategory
+    selection_justification: str
+
+class ContrastSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    research_query: str
+    selection_strategy: str
+    max_contrasts: int
+    selected_contrasts: List[SelectedContrast]
+    selection_summary: str
+
+class ContrastAssessmentWithSelection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    assessments: List[ContrastAssessment]  # All contrasts with relevance scores
+    selection: ContrastSelection  # Intelligent subset selection
+
 CONTRAST_ASSESS_SCHEMA = ContrastAssessments.model_json_schema()
+CONTRAST_ASSESS_WITH_SELECTION_SCHEMA = ContrastAssessmentWithSelection.model_json_schema()
 
 @log_streamlit_agent
 async def assess_contrast_subbatch(
@@ -210,6 +242,136 @@ def run_contrast_relevance(
     # Run the async assessment
     return asyncio.run(
         repeated_contrast_relevance(
+            df_contrasts,
+            query,
+            repeats,
+            batch_size,
+            parallel_jobs
+        )
+    )
+
+@log_streamlit_agent
+async def assess_and_select_contrasts(
+    sub_df: pd.DataFrame,
+    query: str,
+    schema: Dict[str, Any],
+    name: str,
+    rep: int,
+    batch_idx: int,
+    total_batches: int,
+    sem: asyncio.Semaphore
+) -> ContrastAssessmentWithSelection:
+    async with sem:
+        print(f"⏳ Contrast relevance + selection rep {rep+1}, batch {batch_idx+1}/{total_batches}")
+        sys_prompt = load_prompt("assess_and_select_contrasts.txt")
+        prompt = (
+            f"{sys_prompt}\n"
+            f"Research query: \"{query}\"\n"
+            f"Contrasts to assess and select from (batch {batch_idx+1}):\n"
+            f"{sub_df.to_json(orient='records')}"
+        )
+        data = await asyncio.to_thread(call_openai_json, prompt, schema, name)
+        return ContrastAssessmentWithSelection.model_validate(data)
+
+@log_streamlit_agent
+async def repeated_contrast_relevance_with_selection(
+    df: pd.DataFrame,
+    query: str,
+    repeats: int,
+    batch_size: int,
+    openai_api_jobs: int
+) -> Tuple[pd.DataFrame, List[SelectedContrast]]:
+    """
+    Run contrast relevance assessment with intelligent selection.
+
+    Returns:
+        Tuple of (relevance_df, selected_contrasts_list)
+    """
+    print(
+        f"📊 Starting contrast relevance + selection: "
+        f"{repeats} repetitions, batch size {batch_size}, "
+        f"parallel API jobs: {openai_api_jobs}"
+    )
+    sem = asyncio.Semaphore(openai_api_jobs)
+
+    # For now, we'll just do one comprehensive call instead of multiple batches
+    # to ensure consistent selection across all contrasts
+    if len(df) <= batch_size:
+        # Single batch - can do selection directly
+        task = assess_and_select_contrasts(
+            df, query, CONTRAST_ASSESS_WITH_SELECTION_SCHEMA,
+            "contrast_assessment_with_selection", 0, 0, 1, sem
+        )
+        result = await task
+
+        # Convert assessments to DataFrame
+        relevance_records = []
+        for assessment in result.assessments:
+            relevance_records.append({
+                'analysis_id': assessment.analysis_id,
+                'contrast_id': assessment.contrast_id,
+                'RelevanceScore': assessment.RelevanceScore,
+                'Run1Score': assessment.RelevanceScore,
+                'Run1Justification': assessment.Justification
+            })
+
+        relevance_df = pd.DataFrame(relevance_records)
+        selected_contrasts = result.selection.selected_contrasts
+
+        return relevance_df, selected_contrasts
+    else:
+        # Multiple batches - fall back to original approach for now
+        # (Could be enhanced later to do selection across batches)
+        relevance_df = await repeated_contrast_relevance(df, query, repeats, batch_size, openai_api_jobs)
+        return relevance_df, []
+
+@log_streamlit_agent
+def run_contrast_relevance_with_selection(
+    ri,  # ResultsIntegrator instance
+    query: str,
+    repeats: int = 1,  # Reduced since we're doing more complex processing
+    batch_size: int = 100,  # Larger batch size for better selection
+    parallel_jobs: int = 2
+) -> Tuple[pd.DataFrame, List[SelectedContrast]]:
+    """
+    Run contrast relevance assessment with intelligent selection.
+
+    Returns:
+        Tuple of (relevance_df, selected_contrasts_list)
+    """
+    # Build contrast list (same as before)
+    contrast_list = []
+    for analysis_id, contrasts in ri.deg_data.items():
+        dataset_meta = getattr(ri, "dataset_info", {}).get(analysis_id, {})
+        title = dataset_meta.get("title", "")
+        summary = dataset_meta.get("summary", "")
+        design = dataset_meta.get("design", "")
+
+        for contrast_id in contrasts.keys():
+            description = ri._get_contrast_description(analysis_id, contrast_id)
+            analysis_info = ri.analysis_info.get(analysis_id, {})
+            accession = analysis_info.get('accession', analysis_id)
+            organism = analysis_info.get('organism', 'Unknown')
+
+            contrast_list.append({
+                'analysis_id': analysis_id,
+                'contrast_id': contrast_id,
+                'accession': accession,
+                'organism': organism,
+                'description': description,
+                'title': title,
+                'summary': summary,
+                'design': design
+            })
+
+    if not contrast_list:
+        return pd.DataFrame(), []
+
+    df_contrasts = pd.DataFrame(contrast_list)
+
+    # Run the async assessment with selection
+    return asyncio.run(
+        repeated_contrast_relevance_with_selection(
             df_contrasts,
             query,
             repeats,
