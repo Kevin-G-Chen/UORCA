@@ -22,6 +22,10 @@ from .helpers import (
     log_streamlit_agent,
     log_streamlit_event
 )
+from .helpers.ai_agent_tool_logger import (
+    start_ai_analysis_session,
+    get_ai_tool_logs_for_display
+)
 from ResultsIntegration import ResultsIntegrator
 from ai_gene_schema import GeneAnalysisOutput
 
@@ -229,10 +233,10 @@ Please perform the analysis using your four tools, choose all thresholds reasona
 """
 
             # Run the agent analysis
-            result_text, tool_calls = _execute_ai_analysis(agent, prompt)
+            result_output, tool_calls = _execute_ai_analysis(agent, prompt)
 
             # Display results
-            _display_ai_analysis_results(result_text, research_query, selected_contrast_dicts, tool_calls)
+            _display_ai_analysis_results(result_output, research_query, selected_contrast_dicts, tool_calls)
 
         except Exception as e:
             logger.error(f"Error in AI gene analysis: {str(e)}", exc_info=True)
@@ -462,24 +466,21 @@ def _provide_relevance_download(results_df):
 
 @log_streamlit_function
 @log_streamlit_agent
-def _execute_ai_analysis(agent, prompt: str) -> Tuple[str, List[Dict]]:
+def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[Dict]]:
     """Execute the AI analysis asynchronously with proper loop hygiene and capture tool calls."""
     async def run_analysis():
         async with agent.run_mcp_servers():
-            # Clear previous tool calls
-            await agent.run("clear_tool_log")
+            # Start new analysis session and clear previous tool calls
+            start_ai_analysis_session()
 
             # Run main analysis
             result = await agent.run(prompt)
 
-            # Get tool call log
-            tool_calls_result = await agent.run("get_tool_call_log")
-            try:
-                tool_calls = json.loads(tool_calls_result.output if hasattr(tool_calls_result, 'output') else tool_calls_result)
-            except (json.JSONDecodeError, AttributeError):
-                tool_calls = []
+            # Get tool calls from new logging system
+            tool_calls = get_ai_tool_logs_for_display()
 
-            return result.output if hasattr(result, 'output') else str(result), tool_calls
+            # Return the structured output directly (GeneAnalysisOutput object)
+            return result.output if hasattr(result, 'output') else result, tool_calls
 
     try:
         # Check if there's already a running event loop
@@ -489,12 +490,12 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[str, List[Dict]]:
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, run_analysis())
-                result_text, tool_calls = future.result()
+                result_output, tool_calls = future.result()
         except RuntimeError:
             # No running loop, safe to use asyncio.run
-            result_text, tool_calls = asyncio.run(run_analysis())
+            result_output, tool_calls = asyncio.run(run_analysis())
 
-        return result_text, tool_calls
+        return result_output, tool_calls
     except Exception as e:
         logger.error(f"Error in AI analysis execution: {str(e)}", exc_info=True)
         raise
@@ -502,7 +503,7 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[str, List[Dict]]:
 
 @log_streamlit_function
 def _display_tool_calls(tool_calls: List[Dict]):
-    """Display tool calls in expandable panels."""
+    """Display tool calls in expandable panels using new tool logging format."""
     if not tool_calls:
         return
 
@@ -510,28 +511,44 @@ def _display_tool_calls(tool_calls: List[Dict]):
     st.markdown("*The AI used these tools to analyze your data:*")
 
     for i, call in enumerate(tool_calls):
-        with st.expander(f"🛠️ {call['tool']} (Call {i+1})", expanded=False):
+        # Format success indicator
+        status_icon = "✅" if call.get('success', True) else "❌"
+        tool_name = call.get('tool_name', 'Unknown Tool')
+
+        with st.expander(f"{status_icon} {tool_name} (Call {i+1})", expanded=False):
             col1, col2 = st.columns(2)
 
             with col1:
                 st.markdown("**Parameters:**")
-                st.json(call['parameters'])
+                if call.get('parameters'):
+                    st.json(call['parameters'])
+                else:
+                    st.write("No parameters")
 
             with col2:
                 st.markdown("**Result:**")
-                try:
-                    # Try to parse and display JSON nicely
-                    result_data = json.loads(call['result'])
-                    st.json(result_data)
-                except:
-                    # Fallback to text display
-                    st.code(call['result'])
+                if call.get('success', True):
+                    if call.get('output'):
+                        try:
+                            # Display structured output
+                            if isinstance(call['output'], (dict, list)):
+                                st.json(call['output'])
+                            else:
+                                st.code(str(call['output']))
+                        except:
+                            st.code(str(call.get('output', 'No output')))
+                    else:
+                        st.write("No output")
+                else:
+                    st.error(f"Error: {call.get('error', 'Unknown error')}")
 
-            st.caption(f"Executed at: {call['timestamp']}")
+            # Show timestamp
+            if call.get('timestamp'):
+                st.caption(f"Executed at: {call['timestamp']}")
 
 
 @log_streamlit_function
-def _display_ai_analysis_results(result_text: str, research_question: str, selected_contrasts: List[Dict], tool_calls: List[Dict] = None):
+def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_question: str, selected_contrasts: List[Dict], tool_calls: List[Dict] = None):
     """Display the AI gene analysis results with structured output."""
     log_streamlit_event("AI gene analysis completed successfully")
     st.success("✅ Analysis completed successfully!")
@@ -541,13 +558,13 @@ def _display_ai_analysis_results(result_text: str, research_question: str, selec
         _display_tool_calls(tool_calls)
         st.markdown("---")
 
-    # Parse structured JSON output
+    # Use the structured output directly
     try:
-        parsed = result_text
-    except pydantic.ValidationError as e:
-        st.error(f"Agent output failed validation: {e}")
+        parsed = result_output
+    except Exception as e:
+        st.error(f"Error processing AI output: {e}")
         st.subheader("📑 Raw AI Response")
-        st.markdown(result_text)
+        st.markdown(str(result_output))
         return
 
     # Get ResultsIntegrator from session state or create one

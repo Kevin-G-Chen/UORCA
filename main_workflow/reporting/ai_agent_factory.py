@@ -14,6 +14,11 @@ from pathlib import Path
 import streamlit as st
 
 from streamlit_tabs.helpers import log_streamlit_function
+from streamlit_tabs.helpers.ai_agent_tool_logger import (
+    start_ai_analysis_session,
+    clear_ai_tool_logs,
+    get_ai_tool_logger
+)
 from ai_gene_schema import GeneAnalysisOutput
 
 
@@ -67,12 +72,16 @@ def create_uorca_agent() -> Agent:
         )
 
         agent = Agent(
-            model="openai:o4-mini",
+            model="openai:gpt-4.1-mini",
             model_settings={"temperature": 0.1},
             mcp_servers=[server],
             system_prompt=UORCA_SYSTEM_PROMPT,
             output_type=GeneAnalysisOutput,
         )
+
+        # Initialize tool logging system
+        tool_logger = get_ai_tool_logger()
+        logger.info("AI agent created with tool logging initialized")
 
         return agent
     except Exception as e:
@@ -84,6 +93,9 @@ def validate_agent_setup(agent: Agent) -> bool:
     """Run a simple query to ensure the agent and server work."""
     async def _run_test():
         async with agent.run_mcp_servers():
+            # Start validation analysis session
+            start_ai_analysis_session("validation")
+
             result = await agent.run("Test the get_most_common_genes tool with lfc_thresh=1.0, p_thresh=0.05, top_n=5")
             return result.output if hasattr(result, "output") else result
 
@@ -91,6 +103,10 @@ def validate_agent_setup(agent: Agent) -> bool:
         import asyncio
         output = asyncio.run(_run_test())
         logger.info(f"Agent validation successful: {output}")
+
+        # Clear validation tool calls
+        clear_ai_tool_logs()
+
         return True
     except Exception as e:
         logger.error(f"Agent validation failed: {e}")

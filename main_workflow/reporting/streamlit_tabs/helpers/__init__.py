@@ -26,6 +26,14 @@ from .streamlit_logging import (
     log_streamlit_user_action
 )
 
+# Import AI agent tool logging utilities
+from .ai_agent_tool_logger import (
+    start_ai_analysis_session,
+    get_ai_tool_logs_for_display,
+    clear_ai_tool_logs,
+    get_ai_tool_logger
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -324,6 +332,12 @@ __all__ = [
     'log_streamlit_event',
     'log_streamlit_data_load',
     'log_streamlit_user_action',
+
+    # AI agent tool logging functions
+    'start_ai_analysis_session',
+    'get_ai_tool_logs_for_display',
+    'clear_ai_tool_logs',
+    'get_ai_tool_logger',
 
     # Private utilities
     '_validate_results_dir',

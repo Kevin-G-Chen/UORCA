@@ -5,26 +5,10 @@ from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 from ResultsIntegration import ResultsIntegrator
 from streamlit_tabs.helpers import log_streamlit_function
+from streamlit_tabs.helpers.ai_agent_tool_logger import log_ai_agent_tool, get_ai_tool_logs_for_display, clear_ai_tool_logs
 
 
 server = FastMCP("UORCA-Tools")
-
-# Global tool call log for tracking AI tool usage
-tool_call_log = []
-
-def log_tool_call(tool_name: str, params: dict, result: str):
-    """Log tool calls for transparency in AI analysis."""
-    tool_call_log.append({
-        'tool': tool_name,
-        'parameters': params,
-        'result': result[:500] + "..." if len(result) > 500 else result,  # Truncate long results
-        'timestamp': datetime.now().isoformat()
-    })
-
-def clear_tool_call_log():
-    """Clear the tool call log."""
-    global tool_call_log
-    tool_call_log = []
 
 def load_long_table(results_dir: str) -> pd.DataFrame:
     """
@@ -69,6 +53,7 @@ except Exception as e:
 
 # 1) Top recurring DEGs
 @server.tool()
+@log_ai_agent_tool
 @log_streamlit_function
 async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) -> str:
     """
@@ -82,17 +67,15 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
     Returns:
         JSON string with list of genes and their occurrence counts
     """
-    params = {'lfc_thresh': lfc_thresh, 'p_thresh': p_thresh, 'top_n': top_n}
-
     df = LONG_DF[(LONG_DF.logFC.abs() >= lfc_thresh) & (LONG_DF.pvalue < p_thresh)]
     counts = df.groupby("Gene").size().nlargest(top_n)
     result = json.dumps([{"gene": g, "count": int(c)} for g, c in counts.items()])
 
-    log_tool_call('get_most_common_genes', params, result)
     return result
 
 # 2) Per-gene + contrast stats
 @server.tool()
+@log_ai_agent_tool
 @log_streamlit_function
 async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
     """
@@ -105,18 +88,16 @@ async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
     Returns:
         JSON string with gene statistics across contrasts
     """
-    params = {'gene': gene, 'contrast_id': contrast_id}
-
     df = LONG_DF[LONG_DF.Gene == gene]
     if contrast_id:
         df = df[df.contrast_id == contrast_id]
     result = json.dumps(df[["contrast_id","logFC","pvalue"]].to_dict("records"))
 
-    log_tool_call('get_gene_contrast_stats', params, result)
     return result
 
 # 3) Filter by set A vs set B
 @server.tool()
+@log_ai_agent_tool
 @log_streamlit_function
 async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: float, p_thresh: float) -> str:
     """
@@ -131,8 +112,6 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
     Returns:
         JSON string with genes unique to set A and summary counts
     """
-    params = {'set_a': set_a, 'set_b': set_b, 'lfc_thresh': lfc_thresh, 'p_thresh': p_thresh}
-
     dfA = LONG_DF[
         LONG_DF.contrast_id.isin(set_a) &
         (LONG_DF.logFC.abs() >= lfc_thresh) &
@@ -157,11 +136,11 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
         }
     })
 
-    log_tool_call('filter_genes_by_contrast_sets', params, result)
     return result
 
 # 4) Contrast mini-summary
 @server.tool()
+@log_ai_agent_tool
 @log_streamlit_function
 async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: float, max_genes: int = 10) -> str:
     """
@@ -176,8 +155,6 @@ async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: floa
     Returns:
         JSON string with contrast summary and top genes
     """
-    params = {'contrast_id': contrast_id, 'lfc_thresh': lfc_thresh, 'p_thresh': p_thresh, 'max_genes': max_genes}
-
     df = LONG_DF[LONG_DF.contrast_id == contrast_id]
     df = df[(df.logFC.abs() >= lfc_thresh) & (df.pvalue < p_thresh)]
 
@@ -197,33 +174,31 @@ async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: floa
             "median_logFC": float(df.logFC.median())
         })
 
-    log_tool_call('summarize_contrast', params, result)
     return result
 
-# Tool to retrieve and manage tool call logs
+# Tool to retrieve and manage tool call logs for UI display
 @server.tool()
 @log_streamlit_function
 async def get_tool_call_log() -> str:
     """
-    Get the current tool call log and clear it for next analysis.
+    Get the current AI agent tool call log for display in UI.
 
     Returns:
         JSON string with list of tool calls made during analysis
     """
-    global tool_call_log
-    result = json.dumps(tool_call_log)
-    return result
+    tool_calls = get_ai_tool_logs_for_display()
+    return json.dumps(tool_calls)
 
 @server.tool()
 @log_streamlit_function
 async def clear_tool_log() -> str:
     """
-    Clear the tool call log.
+    Clear the AI agent tool call log.
 
     Returns:
         Confirmation message
     """
-    clear_tool_call_log()
+    clear_ai_tool_logs()
     return json.dumps({"status": "cleared"})
 
 if __name__ == "__main__":
