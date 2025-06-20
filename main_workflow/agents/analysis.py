@@ -255,7 +255,7 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
     """
     try:
         logger.info("🧬 run_kallisto_quantification started")
-        
+
         # Update checkpoint: kallisto index selection started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
             cp = ctx.deps.checkpoints.kallisto_index_selection
@@ -292,13 +292,13 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
                 f"No Kallisto index provided. Please use list_files to find a suitable index file in {ctx.deps.resource_dir}. Note that the index file will end with the .idx suffix. Also note that you should use the index file that is appropriate for {ctx.deps.organism}."
             )
             logger.error("❌ %s", msg.replace('\n', ' | '))
-            
+
             # Update checkpoint: kallisto index selection failed
             if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
                 ctx.deps.checkpoints.kallisto_index_selection.status = CheckpointStatus.FAILED
                 ctx.deps.checkpoints.kallisto_index_selection.error_message = msg
                 ctx.deps.checkpoints.kallisto_index_selection.timestamp = datetime.datetime.now().isoformat()
-            
+
             raise FileNotFoundError(msg)
 
         # Update checkpoint: kallisto index selection completed
@@ -309,7 +309,7 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
             cp.error_message = None
             cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("✅ Checkpoint: Kallisto index selection completed")
-        
+
         # Update checkpoint: kallisto quantification started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
             cp = ctx.deps.checkpoints.kallisto_quantification
@@ -426,7 +426,7 @@ Files used:
             ctx.deps.checkpoints.kallisto_quantification.status = CheckpointStatus.FAILED
             ctx.deps.checkpoints.kallisto_quantification.error_message = str(e)
             ctx.deps.checkpoints.kallisto_quantification.timestamp = datetime.datetime.now().isoformat()
-        
+
         logger.exception("❌ run_kallisto_quantification crashed: %s", e)
         return f"Error running Kallisto quantification: {e}"
 
@@ -472,7 +472,7 @@ async def prepare_edgeR_analysis(ctx: RunContext[AnalysisContext]) -> str:
     """
     try:
         logger.info("📊 prepare_edgeR_analysis started")
-        
+
         # Update checkpoint: edgeR/limma preparation started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
             cp = ctx.deps.checkpoints.edger_limma_preparation
@@ -635,13 +635,13 @@ Analysis is ready to proceed with the following groups: {', '.join(analysis_df[c
     except Exception as e:
         error_msg = f"Error preparing edgeR analysis: {str(e)}"
         logger.error("❌ %s", error_msg, exc_info=True)
-        
+
         # Update checkpoint: edgeR/limma preparation failed
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
             ctx.deps.checkpoints.edger_limma_preparation.status = CheckpointStatus.FAILED
             ctx.deps.checkpoints.edger_limma_preparation.error_message = error_msg
             ctx.deps.checkpoints.edger_limma_preparation.timestamp = datetime.datetime.now().isoformat()
-        
+
         return error_msg
 
 
@@ -698,7 +698,7 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
     """
     try:
         logger.info("📊 run_edger_limma_analysis started")
-        
+
         # Update checkpoint: RNAseq analysis started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
             cp = ctx.deps.checkpoints.rnaseq_analysis
@@ -731,7 +731,7 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
         # If we have contrasts but they're not in DataFrame format, convert them
         contrasts = getattr(ctx.deps, 'contrasts', None)
         contrast_matrix_df = getattr(ctx.deps, 'contrast_matrix_df', None)
-        
+
         if contrast_matrix_df is None and contrasts:
             logger.info("🔄 Converting contrasts from agent output to DataFrame format")
             contrast_data = []
@@ -827,7 +827,7 @@ async def run_edger_limma_analysis(ctx: RunContext[AnalysisContext],
                     deg_file = os.path.join(subdir_path, "DEG.csv")
                     if os.path.exists(deg_file):
                         deg_files.append(deg_file)
-            
+
             if deg_files:
                 setattr(ctx.deps, 'deg_results_path', deg_files[0] if len(deg_files) == 1 else deg_files)
                 logger.info("💾 Found %d differential expression result files in contrast directories", len(deg_files))
@@ -868,13 +868,13 @@ Each contrast has its own subdirectory with DEG.csv and specific plots
     except Exception as e:
         error_msg = f"Error in run_edger_limma_analysis: {str(e)}"
         logger.error("❌ %s", error_msg, exc_info=True)
-        
+
         # Update checkpoint: RNAseq analysis failed
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
             ctx.deps.checkpoints.rnaseq_analysis.status = CheckpointStatus.FAILED
             ctx.deps.checkpoints.rnaseq_analysis.error_message = error_msg
             ctx.deps.checkpoints.rnaseq_analysis.timestamp = datetime.datetime.now().isoformat()
-        
+
         return error_msg
 
 @rnaseq_agent.tool
@@ -887,7 +887,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
     """
     try:
         logger.info("📋 process_metadata_with_agent started")
-        
+
         # Update checkpoint: metadata analysis started
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
             cp = ctx.deps.checkpoints.metadata_analysis
@@ -895,7 +895,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
             cp.error_message = None
             cp.timestamp = datetime.datetime.now().isoformat()
             logger.info("📊 Checkpoint: Metadata analysis started")
-        
+
         metadata_path = getattr(ctx.deps, 'metadata_path', None)
         logger.info("🔍 Processing metadata at: %s", metadata_path)
 
@@ -943,7 +943,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
             Please consider this information when selecting relevant columns and designing contrasts.
             The biological context above may help you understand which experimental factors are most important.
             """
-            
+
         # Include reflection information if available
         reflection_context = ""
         reflections = getattr(ctx.deps, 'reflections', [])
@@ -951,7 +951,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
             reflection_list = "\n".join([f"Reflection {i+1}: {r}" for i, r in enumerate(reflections)])
             reflection_context = f"""
 
-            IMPORTANT REFLECTIONS FROM PREVIOUS ATTEMPTS: 
+            IMPORTANT REFLECTIONS FROM PREVIOUS ATTEMPTS:
             The analysis agent has provided the following reflections about previous attempts.
             Please pay close attention to these reflections as they identify specific issues
             that need to be addressed:
@@ -1046,7 +1046,7 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         # Generate a summary for the main agent
         merged_column = getattr(ctx.deps, 'merged_column', 'Not defined')
         unique_groups = getattr(ctx.deps, 'unique_groups', 'Not identified')
-        
+
         summary = f"""
 Metadata processing completed successfully.
 
@@ -1079,20 +1079,40 @@ Designed contrasts:
 
     except Exception as e:
         error_msg = f"Error processing metadata with agent: {str(e)}"
+
+        # Check if this is the "no valid columns" error from metadata processing
+        if "No valid columns remain for analysis" in str(e):
+            # Use the same termination mechanism as extraction agent
+            logger.error("❌ %s", error_msg)
+
+            ctx.deps.analysis_should_proceed = False
+            ctx.deps.analysis_skip_reason = str(e)
+            ctx.deps.analysis_success = False
+
+            # Update checkpoint: metadata analysis failed
+            if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+                cp = ctx.deps.checkpoints.metadata_analysis
+                cp.status = CheckpointStatus.FAILED
+                cp.error_message = str(e)
+                cp.timestamp = datetime.datetime.now().isoformat()
+
+            return str(e)  # Return early with the error message
+
+        # For other errors, continue with existing error handling
         logger.error("❌ %s", error_msg, exc_info=True)
-        
+
         # Update checkpoint: metadata analysis failed
         if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
             ctx.deps.checkpoints.metadata_analysis.status = CheckpointStatus.FAILED
             ctx.deps.checkpoints.metadata_analysis.error_message = error_msg
             ctx.deps.checkpoints.metadata_analysis.timestamp = datetime.datetime.now().isoformat()
-        
+
         return error_msg
 
 @log_agent_tool
 async def run_agent_async(prompt: str, deps: AnalysisContext, usage=None):
     logger.info("🚀 Analysis agent invoked with prompt: %s", prompt)
-    
+
     # Ensure all required attributes exist
     for attr_name, default_value in [
         ('tool_logs', []),
@@ -1103,16 +1123,16 @@ async def run_agent_async(prompt: str, deps: AnalysisContext, usage=None):
     ]:
         if not hasattr(deps, attr_name):
             setattr(deps, attr_name, default_value)
-    
+
     # Save the starting length of tool logs for later reporting
     tool_logs_start_len = len(deps.tool_logs)
-    
+
     # Run the agent
     result = await rnaseq_agent.run(prompt, deps=deps, usage=usage)
 
     # Log the agent's output
     logger.info("📄 Analysis agent output: %s", result.output)
-    
+
     # Report on tool logs that were added during this run
     new_logs_count = len(deps.tool_logs) - tool_logs_start_len
     if new_logs_count > 0:
@@ -1131,23 +1151,23 @@ async def run_agent_async(prompt: str, deps: AnalysisContext, usage=None):
         try:
             log_dir = pathlib.Path(deps.output_dir) / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Create a timestamped log file to preserve history
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             tool_log_path = log_dir / f"analysis_tool_logs_{timestamp}.json"
-            
+
             # Also update the main log file
             main_log_path = log_dir / "analysis_tool_logs_latest.json"
-            
+
             # Save to timestamped file
             with open(tool_log_path, 'w') as f:
                 json.dump(deps.tool_logs, f, indent=2)
-            
+
             # Update the latest log file
             with open(main_log_path, 'w') as f:
                 json.dump(deps.tool_logs, f, indent=2)
-                
-            logger.info("💾 Saved %d tool logs to %s and %s", 
+
+            logger.info("💾 Saved %d tool logs to %s and %s",
                        len(deps.tool_logs), tool_log_path.name, main_log_path.name)
         except Exception as e:
             logger.warning("⚠️ Failed to save tool logs: %s", str(e))

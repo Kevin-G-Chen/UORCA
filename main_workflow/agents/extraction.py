@@ -42,7 +42,7 @@ extract_agent = Agent(
 async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str) -> str:
     """Retrieve sample‑level metadata and SRR run IDs for a GEO series."""
     logger.info("🔍 fetch_geo_metadata() called for %s", accession)
-    
+
     # Update checkpoint: metadata extraction started
     if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
         cp = ctx.deps.checkpoints.metadata_extraction
@@ -93,10 +93,10 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
         if 'sample_taxid' in gse.metadata and gse.metadata['sample_taxid']:
             taxid = gse.metadata['sample_taxid'][0] if isinstance(gse.metadata['sample_taxid'], list) else gse.metadata['sample_taxid']
             logger.info("🧬 Found taxonomic ID: %s", taxid)
-            
+
             # Convert taxonomic ID to species name using rate-limited Entrez
             taxonomy_info = fetch_taxonomy_info(str(taxid))
-            
+
             if taxonomy_info:
                 species_name = taxonomy_info['scientific_name']
                 logger.info("🔬 Identified species: %s", species_name)
@@ -173,10 +173,73 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
 
     logger.info("%s written (%d rows)", metadata_filename, len(out_df))
 
+    # Filter for RNA-seq specific samples
+    logger.info("🔍 Filtering for RNA-seq specific samples")
+    initial_rows = len(out_df)
+
+    # Apply RNA-seq filters - exact matches required
+    rna_seq_filter = (
+        (out_df['molecule_ch1'] == "total RNA") &
+        (out_df['library_source'] == "transcriptomic") &
+        (out_df['library_strategy'] == "RNA-Seq")
+    )
+    out_df = out_df[rna_seq_filter]
+
+    logger.info("📊 RNA-seq filtering: %d → %d rows", initial_rows, len(out_df))
+
+    # Check if any samples remain after filtering
+    if len(out_df) == 0:
+        error_msg = (
+            f"No RNA-seq samples found after filtering. Dataset {accession} contains no samples "
+            f"with molecule_ch1='total RNA', library_source='transcriptomic', and library_strategy='RNA-Seq'. "
+            f"Dataset will be terminated."
+        )
+        logger.error("❌ %s", error_msg)
+
+        # Mark in context that analysis should not proceed
+        ctx.deps.analysis_should_proceed = False
+        ctx.deps.analysis_skip_reason = error_msg
+        ctx.deps.analysis_success = False
+
+        # Update checkpoint: metadata extraction failed
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            cp = ctx.deps.checkpoints.metadata_extraction
+            cp.status = CheckpointStatus.FAILED
+            cp.error_message = error_msg
+            cp.timestamp = datetime.datetime.now().isoformat()
+
+        return error_msg
+
+    # Check organism consistency
+    unique_organisms = out_df['organism_ch1'].nunique()
+    organisms_list = out_df['organism_ch1'].unique().tolist()
+    logger.info("🧬 Found %d unique organisms: %s", unique_organisms, organisms_list)
+
+    if unique_organisms > 1:
+        error_msg = (
+            f"Multiple organisms detected in dataset {accession}: {organisms_list}. "
+            f"Analysis requires samples from a single organism. Dataset will be terminated."
+        )
+        logger.error("❌ %s", error_msg)
+
+        # Mark in context that analysis should not proceed
+        ctx.deps.analysis_should_proceed = False
+        ctx.deps.analysis_skip_reason = error_msg
+        ctx.deps.analysis_success = False
+
+        # Update checkpoint: metadata extraction failed
+        if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
+            cp = ctx.deps.checkpoints.metadata_extraction
+            cp.status = CheckpointStatus.FAILED
+            cp.error_message = error_msg
+            cp.timestamp = datetime.datetime.now().isoformat()
+
+        return error_msg
+
     # Validate sample count - need more than 2 samples for meaningful analysis
     unique_samples = out_df['GSM'].nunique()
     logger.info("📊 Found %d unique samples (GSM entries)", unique_samples)
-    
+
     if unique_samples <= 2:
         error_msg = (
             f"Insufficient samples for analysis: only {unique_samples} unique "
@@ -214,7 +277,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
             logger.debug(f"Removed temporary file: {temp_file}")
         except Exception as e:
             logger.warning(f"Could not remove temporary file {temp_file}: {e}")
-    
+
     if cleanup_count > 0:
         logger.info(f"✅ Cleaned up {cleanup_count} temporary files")
 
@@ -245,7 +308,7 @@ async def download_fastqs(
 
     logger.info("📥 download_fastqs() called – %d threads, max_spots=%s",
                 threads, max_spots)
-    
+
     # Update checkpoint: FASTQ extraction started
     if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
         cp = ctx.deps.checkpoints.fastq_extraction
