@@ -106,17 +106,18 @@ def extract_terms(research_query: str) -> ExtractedTerms:
     return call_openai_json(prompt, research_query, ExtractedTerms)
 
 def perform_search(term: str, max_results: int = 2000) -> List[str]:
-    """Search GEO database for a single term."""
+    """Search GEO database for a single term with RNA-seq filter."""
+    search = f"{term} AND (\"Expression profiling by high throughput sequencing\"[Filter])"
     handle = Entrez.esearch(
         db="gds",
-        term=f'"{term}"',
-        retmax=max_results,
-        sort="relevance"
+        term=search,
+        retmode="xml",
+        retmax=max_results
     )
     search_results = Entrez.read(handle)
     handle.close()
 
-    geo_ids = search_results["IdList"]
+    geo_ids = search_results.get("IdList", [])
     logging.info(f"Found {len(geo_ids)} results for term: {term}")
 
     return geo_ids
@@ -124,45 +125,40 @@ def perform_search(term: str, max_results: int = 2000) -> List[str]:
 def get_basic_dataset_info(geo_ids: List[str], api_delay: float = 0.4) -> pd.DataFrame:
     """Get basic dataset information without full summaries."""
     datasets = []
+    unique_ids = list(dict.fromkeys(geo_ids))  # Ensure unique IDs to avoid redundant requests
 
-    logging.info("Fetching basic dataset information...")
+    logging.info(f"Fetching basic dataset information for {len(unique_ids)} unique datasets...")
 
-    for geo_id in geo_ids:
+    # Split into batches of 10 for efficient fetching and to follow NCBI guidelines
+    batches = [unique_ids[i:i+10] for i in range(0, len(unique_ids), 10)]
+    logging.info(f"Processing {len(batches)} batches of GEO summaries")
+
+    for batch in batches:
         try:
-            # Get basic GEO record info
-            handle = Entrez.esummary(db="gds", id=geo_id)
-            summary = Entrez.read(handle)[0]
+            handle = Entrez.esummary(db="gds", id=','.join(batch), retmode="xml")
+            summaries = Entrez.read(handle)
             handle.close()
 
-            # Extract GSE ID from title or accession
-            title = summary.get("title", "")
-            accession = summary.get("accession", "")
+            for i, rec in enumerate(summaries):
+                # Build basic dataset info using same approach as original script
+                accession = rec.get('Accession', '')
 
-            # Try to extract GSE ID
-            gse_id = None
-            if accession.startswith("GSE"):
-                gse_id = accession
-            elif "GSE" in title:
-                import re
-                match = re.search(r'GSE\d+', title)
-                if match:
-                    gse_id = match.group()
-
-            if gse_id:
-                datasets.append({
-                    "ID": gse_id,
-                    "GEO_ID": geo_id,
-                    "Title": title,
-                    "Accession": accession
-                })
+                # Only include datasets with valid accession
+                if accession:
+                    datasets.append({
+                        "ID": accession,  # Use accession directly as ID like original script
+                        "GEO_ID": batch[i] if i < len(batch) else batch[0],  # Map to corresponding batch ID
+                        "Title": rec.get('title', ''),
+                        "Accession": accession
+                    })
 
             time.sleep(api_delay)
 
         except Exception as e:
-            logging.warning(f"Error processing GEO ID {geo_id}: {e}")
+            logging.warning(f"Error processing batch {batch}: {e}")
             continue
 
-    # Remove duplicates by GSE ID
+    # Remove duplicates by ID (accession)
     df = pd.DataFrame(datasets)
     if not df.empty:
         df = df.drop_duplicates(subset=['ID']).reset_index(drop=True)
@@ -689,57 +685,108 @@ def main():
         invalid_for_output['Justification'] = "Dataset excluded due to filtering criteria"
         invalid_for_output['Cluster'] = -1
 
-        # Combine valid and invalid datasets
+        # Combine valid and invalid datasets for final output
         final_results = pd.concat([
             assessed_df,
             invalid_for_output
         ], ignore_index=True)
 
-        # Sort by validity first, then relevance
-        final_results = final_results.sort_values(
-            ['valid_dataset', 'RelevanceScore'],
-            ascending=[False, False]
-        ).reset_index(drop=True)
+        # Create the final dataframe structure matching the original script
+        # Map our columns to match the original expected structure
+        final = final_results.copy()
 
-        # Step 10: Output results
+        # Add missing columns to match original structure
+        final['Accession'] = final['ID']  # Use ID as Accession
+        final['PrimaryPubMedID'] = None  # We don't have PubMed IDs in this workflow
+        final['NumSamples'] = final['filtered_samples']  # Use RNA-seq filtered samples
+
+        # Add dataset size information (defaulting to 0 since we don't calculate this in the optimized workflow)
+        final['DatasetSizeBytes'] = 0
+        final['DatasetSizeGB'] = 0.0
+
+        # Create Valid column matching original logic (but based on our RNA-seq filtering)
+        final['Valid'] = final['valid_dataset'].apply(lambda x: 'Yes' if x else 'No')
+
+        # Add cluster information if available
+        if 'Cluster' not in final.columns:
+            final['Cluster'] = -1
+
+        def create_pubmed_url(pmid):
+            if pd.notna(pmid):
+                return f"https://pubmed.ncbi.nlm.nih.gov/{int(pmid)}/"
+            return None
+
+        def create_geo_url(accession):
+            if pd.notna(accession):
+                return f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={accession}"
+            return None
+
+        final['PubMedURL'] = final['PrimaryPubMedID'].apply(create_pubmed_url)
+        final['GEOURL'] = final['Accession'].apply(create_geo_url)
+
+        final = final.drop_duplicates(subset=['Accession'])
+
+        # Save to output directory
+        main_output_file = output_path / "Dataset_identification_result.csv"
+
+        final.to_csv(main_output_file, index=False)
+        message = f'Saved combined table to {main_output_file}'
+        logging.info(message)
+        print(message)
+
+        # Save a separate file with the selected datasets and their clusters if clustering was used
+        if args.use_clustering and 'Cluster' in final.columns:
+            selected_path = output_path / 'selected_datasets.csv'
+
+            selected_cols = ['ID', 'Accession', 'Title', 'Cluster', 'RelevanceScore']
+            selected_df = final[selected_cols].sort_values(['Cluster', 'RelevanceScore'], ascending=[True, False])
+            selected_df.to_csv(selected_path, index=False)
+            message = f'Saved selected datasets with cluster information to {selected_path}'
+            logging.info(message)
+            print(message)
+
+        if args.multi_dataset_csv:
+            multi_df = final[['Accession', 'Species', 'PrimaryPubMedID', 'RelevanceScore', 'Valid', 'DatasetSizeBytes', 'DatasetSizeGB']].copy()
+            multi_df = multi_df[multi_df['Valid'] == 'Yes']
+            multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
+            multi_df = multi_df.rename(columns={'Species': 'organism'})
+
+            # Set path for the multi-dataset CSV in the output directory
+            multi_csv_path = output_path / 'batch_analysis_input.csv'
+
+            multi_df.to_csv(multi_csv_path, index=False)
+            message = f"Generated batch analysis input CSV at {multi_csv_path}"
+            logging.info(message)
+            print(message)
+
+        # Print summary results
         print("\n" + "="*80)
         print("OPTIMIZED DATASET IDENTIFICATION RESULTS")
         print("="*80)
         print(f"Research Query: {research_query}")
-        print(f"Total datasets found: {len(final_results)}")
-        print(f"Valid datasets: {len(assessed_df)}")
-        print(f"Invalid datasets: {len(invalid_for_output)}")
+        print(f"Total datasets found: {len(final)}")
+        print(f"Valid datasets: {len(final[final['Valid'] == 'Yes'])}")
+        print(f"Invalid datasets: {len(final[final['Valid'] == 'No'])}")
 
-        def create_pubmed_url(gse_id: str) -> str:
-            return f"https://www.ncbi.nlm.nih.gov/pubmed?term={gse_id}"
-
-        def create_geo_url(gse_id: str) -> str:
-            return f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={gse_id}"
-
-        print(f"\nTop {min(len(final_results), args.max_evaluate or 10)} Results:")
+        print(f"\nTop {min(len(final), args.max_evaluate or 10)} Results:")
         print("-" * 80)
 
-        for i, (_, row) in enumerate(final_results.head(args.max_evaluate or 10).iterrows()):
+        for i, (_, row) in enumerate(final.head(args.max_evaluate or 10).iterrows()):
             print(f"\n{i+1}. Dataset: {row['ID']}")
             print(f"   Original samples: {row['original_samples']}")
             print(f"   RNA-seq samples: {row['filtered_samples']}")
             print(f"   Species count: {row['species_count']}")
             if row['species_list']:
                 print(f"   Species: {row['species_list']}")
-            print(f"   Valid for analysis: {'✅ Yes' if row['valid_dataset'] else '❌ No'}")
-            if not row['valid_dataset']:
+            print(f"   Valid for analysis: {'✅ Yes' if row['Valid'] == 'Yes' else '❌ No'}")
+            if row['Valid'] == 'No':
                 print(f"   Skip reason: {row['skip_reason']}")
-            if row['valid_dataset']:
+            if row['Valid'] == 'Yes':
                 print(f"   Cluster: {row.get('Cluster', 'N/A')}")
             print(f"   Relevance: {row['RelevanceScore']}/10")
             print(f"   Justification: {row['Justification']}")
-            print(f"   GEO URL: {create_geo_url(row['ID'])}")
-            print(f"   PubMed: {create_pubmed_url(row['ID'])}")
-
-        # Save results to file
-        output_file = f"dataset_identification_results_{int(time.time())}.csv"
-        final_results.to_csv(output_file, index=False)
-        logging.info(f"Results saved to {output_file}")
+            if row['GEOURL']:
+                print(f"   GEO URL: {row['GEOURL']}")
 
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
