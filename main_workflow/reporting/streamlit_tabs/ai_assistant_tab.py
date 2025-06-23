@@ -123,7 +123,7 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
         return
 
     # Step 1: Contrast Relevance Assessment with Selection
-    with st.spinner("Step 1/2: Assessing contrast relevance and selecting optimal subset... This may take a few minutes."):
+    with st.spinner("Step 1/2: Assessing contrast relevance and selecting optimal subset..."):
         try:
             # Try to use intelligent selection if available
             if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE:
@@ -185,7 +185,7 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
 
     # Step 2: AI Gene Analysis (now using SELECTED contrasts only)
     st.markdown("---")
-    with st.spinner("Step 2/2: AI is analyzing differential expression patterns in selected contrasts... This may take several minutes."):
+    with st.spinner("Step 2/2: AI is analyzing differential expression patterns in selected contrasts..."):
         try:
             # Set the RESULTS_DIR environment variable for the MCP server
             os.environ['RESULTS_DIR'] = results_dir
