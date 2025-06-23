@@ -4,8 +4,7 @@ import pandas as pd
 from datetime import datetime
 from mcp.server.fastmcp import FastMCP
 from ResultsIntegration import ResultsIntegrator
-from streamlit_tabs.helpers import log_streamlit_function
-from streamlit_tabs.helpers.ai_agent_tool_logger import log_ai_agent_tool, get_ai_tool_logs_for_display, clear_ai_tool_logs
+from streamlit_tabs.helpers.ai_agent_tool_logger import log_ai_agent_tool
 
 
 server = FastMCP("UORCA-Tools")
@@ -54,7 +53,6 @@ except Exception as e:
 # 1) Top recurring DEGs
 @server.tool()
 @log_ai_agent_tool
-@log_streamlit_function
 async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) -> str:
     """
     Find the most commonly differentially expressed genes across contrasts. Useful to get an overview of frequently observed DEGs.
@@ -76,7 +74,6 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
 # 2) Per-gene + contrast stats
 @server.tool()
 @log_ai_agent_tool
-@log_streamlit_function
 async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
     """
     Get statistics for a specific gene across contrasts. Useful to assess a specific gene to get more information about its expression changes across different conditions.
@@ -98,7 +95,6 @@ async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
 # 3) Filter by set A vs set B
 @server.tool()
 @log_ai_agent_tool
-@log_streamlit_function
 async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: float, p_thresh: float) -> str:
     """
     Find genes that are significant in contrast set A but not in set B. Useful for comparing two sets of contrasts, for example when wanting to find genes unique to a specific condition, and not (for example) a control condition.
@@ -141,7 +137,6 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
 # 4) Contrast mini-summary
 @server.tool()
 @log_ai_agent_tool
-@log_streamlit_function
 async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: float, max_genes: int = 10) -> str:
     """
     Summarize a specific contrast with top DEGs and statistics.
@@ -176,30 +171,7 @@ async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: floa
 
     return result
 
-# Tool to retrieve and manage tool call logs for UI display
-@server.tool()
-@log_streamlit_function
-async def get_tool_call_log() -> str:
-    """
-    Get the current AI agent tool call log for display in UI.
 
-    Returns:
-        JSON string with list of tool calls made during analysis
-    """
-    tool_calls = get_ai_tool_logs_for_display()
-    return json.dumps(tool_calls)
-
-@server.tool()
-@log_streamlit_function
-async def clear_tool_log() -> str:
-    """
-    Clear the AI agent tool call log.
-
-    Returns:
-        Confirmation message
-    """
-    clear_ai_tool_logs()
-    return json.dumps({"status": "cleared"})
 
 if __name__ == "__main__":
     server.run()

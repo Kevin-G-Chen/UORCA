@@ -31,7 +31,9 @@ from .ai_agent_tool_logger import (
     start_ai_analysis_session,
     get_ai_tool_logs_for_display,
     clear_ai_tool_logs,
-    get_ai_tool_logger
+    get_ai_tool_logger,
+    get_current_log_file,
+    read_log_file_contents
 )
 
 logger = logging.getLogger(__name__)
@@ -338,6 +340,8 @@ __all__ = [
     'get_ai_tool_logs_for_display',
     'clear_ai_tool_logs',
     'get_ai_tool_logger',
+    'get_current_log_file',
+    'read_log_file_contents',
 
     # Private utilities
     '_validate_results_dir',
