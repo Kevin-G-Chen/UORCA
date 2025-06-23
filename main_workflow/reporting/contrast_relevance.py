@@ -294,8 +294,6 @@ async def repeated_contrast_relevance_with_selection(
     )
     sem = asyncio.Semaphore(openai_api_jobs)
 
-    # For now, we'll just do one comprehensive call instead of multiple batches
-    # to ensure consistent selection across all contrasts
     if len(df) <= batch_size:
         # Single batch - can do selection directly
         task = assess_and_select_contrasts(
