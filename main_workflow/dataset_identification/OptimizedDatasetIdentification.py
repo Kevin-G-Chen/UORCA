@@ -691,38 +691,23 @@ def main():
             invalid_for_output
         ], ignore_index=True)
 
-        # Create the final dataframe structure matching the original script
-        # Map our columns to match the original expected structure
-        final = final_results.copy()
+        # Remove embedding column to prevent CSV malformation
+        if 'embedding' in final_results.columns:
+            final_results = final_results.drop('embedding', axis=1)
 
-        # Add missing columns to match original structure
-        final['Accession'] = final['ID']  # Use ID as Accession
-        final['PrimaryPubMedID'] = None  # We don't have PubMed IDs in this workflow
-        final['NumSamples'] = final['filtered_samples']  # Use RNA-seq filtered samples
-
-        # Add dataset size information (defaulting to 0 since we don't calculate this in the optimized workflow)
-        final['DatasetSizeBytes'] = 0
-        final['DatasetSizeGB'] = 0.0
-
-        # Create Valid column matching original logic (but based on our RNA-seq filtering)
-        final['Valid'] = final['valid_dataset'].apply(lambda x: 'Yes' if x else 'No')
-
-        # Add cluster information if available
-        if 'Cluster' not in final.columns:
-            final['Cluster'] = -1
-
-        def create_pubmed_url(pmid):
-            if pd.notna(pmid):
-                return f"https://pubmed.ncbi.nlm.nih.gov/{int(pmid)}/"
-            return None
-
-        def create_geo_url(accession):
-            if pd.notna(accession):
-                return f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={accession}"
-            return None
-
-        final['PubMedURL'] = final['PrimaryPubMedID'].apply(create_pubmed_url)
-        final['GEOURL'] = final['Accession'].apply(create_geo_url)
+        # Create simplified final dataframe with only essential columns
+        final = pd.DataFrame()
+        final['Title'] = final_results.get('Title', '')
+        final['Accession'] = final_results['ID']
+        final['Samples'] = final_results['filtered_samples']
+        final['Species'] = final_results.get('Species', 'Unknown')
+        final['Summary'] = final_results.get('Summary', '')
+        final['valid_dataset'] = final_results['valid_dataset']
+        final['skip_reason'] = final_results['skip_reason']
+        final['RelevanceScore'] = final_results['RelevanceScore']
+        final['Justification'] = final_results['Justification']
+        final['PrimaryPubMed'] = None  # We don't have PubMed IDs in this workflow
+        final['DatasetSizeGB'] = 0.0  # Default to 0 since we don't calculate this
 
         final = final.drop_duplicates(subset=['Accession'])
 
@@ -735,19 +720,24 @@ def main():
         print(message)
 
         # Save a separate file with the selected datasets and their clusters if clustering was used
-        if args.use_clustering and 'Cluster' in final.columns:
+        if args.use_clustering and 'Cluster' in final_results.columns:
             selected_path = output_path / 'selected_datasets.csv'
 
-            selected_cols = ['ID', 'Accession', 'Title', 'Cluster', 'RelevanceScore']
-            selected_df = final[selected_cols].sort_values(['Cluster', 'RelevanceScore'], ascending=[True, False])
-            selected_df.to_csv(selected_path, index=False)
+            # Create clustering output with simplified columns
+            clustering_df = pd.DataFrame()
+            clustering_df['Accession'] = final['Accession']
+            clustering_df['Title'] = final['Title']
+            clustering_df['Cluster'] = final_results.get('Cluster', -1)
+            clustering_df['RelevanceScore'] = final['RelevanceScore']
+            clustering_df = clustering_df.sort_values(['Cluster', 'RelevanceScore'], ascending=[True, False])
+            clustering_df.to_csv(selected_path, index=False)
             message = f'Saved selected datasets with cluster information to {selected_path}'
             logging.info(message)
             print(message)
 
         if args.multi_dataset_csv:
-            multi_df = final[['Accession', 'Species', 'PrimaryPubMedID', 'RelevanceScore', 'Valid', 'DatasetSizeBytes', 'DatasetSizeGB']].copy()
-            multi_df = multi_df[multi_df['Valid'] == 'Yes']
+            multi_df = final[['Accession', 'Species', 'PrimaryPubMed', 'RelevanceScore', 'valid_dataset', 'DatasetSizeGB']].copy()
+            multi_df = multi_df[multi_df['valid_dataset'] == True]
             multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
             multi_df = multi_df.rename(columns={'Species': 'organism'})
 
@@ -765,28 +755,23 @@ def main():
         print("="*80)
         print(f"Research Query: {research_query}")
         print(f"Total datasets found: {len(final)}")
-        print(f"Valid datasets: {len(final[final['Valid'] == 'Yes'])}")
-        print(f"Invalid datasets: {len(final[final['Valid'] == 'No'])}")
+        print(f"Valid datasets: {len(final[final['valid_dataset'] == True])}")
+        print(f"Invalid datasets: {len(final[final['valid_dataset'] == False])}")
 
         print(f"\nTop {min(len(final), args.max_evaluate or 10)} Results:")
         print("-" * 80)
 
         for i, (_, row) in enumerate(final.head(args.max_evaluate or 10).iterrows()):
-            print(f"\n{i+1}. Dataset: {row['ID']}")
-            print(f"   Original samples: {row['original_samples']}")
-            print(f"   RNA-seq samples: {row['filtered_samples']}")
-            print(f"   Species count: {row['species_count']}")
-            if row['species_list']:
-                print(f"   Species: {row['species_list']}")
-            print(f"   Valid for analysis: {'✅ Yes' if row['Valid'] == 'Yes' else '❌ No'}")
-            if row['Valid'] == 'No':
+            print(f"\n{i+1}. Dataset: {row['Accession']}")
+            print(f"   Title: {row['Title']}")
+            print(f"   RNA-seq samples: {row['Samples']}")
+            print(f"   Species: {row['Species']}")
+            print(f"   Valid for analysis: {'✅ Yes' if row['valid_dataset'] else '❌ No'}")
+            if not row['valid_dataset']:
                 print(f"   Skip reason: {row['skip_reason']}")
-            if row['Valid'] == 'Yes':
-                print(f"   Cluster: {row.get('Cluster', 'N/A')}")
             print(f"   Relevance: {row['RelevanceScore']}/10")
             print(f"   Justification: {row['Justification']}")
-            if row['GEOURL']:
-                print(f"   GEO URL: {row['GEOURL']}")
+            print(f"   GEO URL: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={row['Accession']}")
 
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
