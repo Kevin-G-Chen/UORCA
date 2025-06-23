@@ -2,10 +2,9 @@
 AI Agent Tool Call Logger for UORCA Streamlit App
 ================================================
 
-This module provides logging functionality specifically for the AI agent's
-MCP tool usage in the UORCA Streamlit application. It mirrors the approach
-used in the master agent's workflow_logging.py but is adapted for Streamlit
-session state and focuses on the 4 MCP server tools.
+File-based logging system for AI agent MCP tool usage in the UORCA Streamlit application.
+This replaces the session state approach with temporary JSON log files that persist
+across the MCP server process boundary.
 """
 
 import logging
@@ -13,15 +12,18 @@ import datetime
 import json
 import functools
 import inspect
-import streamlit as st
-from typing import Dict, Any, List, Optional
+import os
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Union
 
 __all__ = [
     "AIAgentToolLogger",
     "log_ai_agent_tool",
     "get_ai_tool_logger",
     "clear_ai_tool_logs",
-    "get_ai_tool_logs_for_display"
+    "get_ai_tool_logs_for_display",
+    "start_ai_analysis_session",
+    "get_current_log_file"
 ]
 
 # Terminal logging format similar to master agent
@@ -29,32 +31,52 @@ logger = logging.getLogger(__name__)
 
 class AIAgentToolLogger:
     """
-    Tool call logger specifically for AI agent MCP tool usage.
+    File-based tool call logger for AI agent MCP tool usage.
 
-    Mirrors the master agent's tool logging approach but stores data
-    in Streamlit session state for post-analysis display.
+    Stores tool call data in temporary JSON files instead of session state
+    to work across process boundaries with MCP servers.
     """
 
     def __init__(self):
-        self.session_key = 'ai_agent_tool_calls'
+        self.log_file = None
         self.current_analysis_id = None
+        self.log_dir = Path("temp_logs")
+
+        # Ensure log directory exists
+        self.log_dir.mkdir(exist_ok=True)
 
     def start_analysis(self, analysis_id: str = None):
-        """Start a new analysis session and clear previous tool calls."""
-        self.current_analysis_id = analysis_id or f"analysis_{datetime.datetime.now().strftime('%H%M%S')}"
+        """Start a new analysis session and create a fresh log file."""
+        self.current_analysis_id = analysis_id or f"analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        # Initialize session state if needed
-        if self.session_key not in st.session_state:
-            st.session_state[self.session_key] = []
+        # Create new log file for this analysis
+        self.log_file = self.log_dir / f"ai_tool_calls_{self.current_analysis_id}.json"
 
-        # Clear previous tool calls for new analysis
-        st.session_state[self.session_key] = []
-        logger.info("🤖 AI Agent analysis started: %s", self.current_analysis_id)
+        # Initialize with empty list
+        with open(self.log_file, 'w', encoding='utf-8') as f:
+            json.dump([], f, indent=2)
+
+        logger.info("🤖 AI Agent analysis started: %s (log: %s)",
+                   self.current_analysis_id, self.log_file)
+
+    def _truncate_output(self, output: Any, max_length: int = 500) -> str:
+        """Truncate large outputs to manageable snippets for logging."""
+        if output is None:
+            return None
+
+        # Convert to string representation
+        output_str = str(output)
+
+        if len(output_str) <= max_length:
+            return output_str
+
+        # Truncate and add indicator
+        return output_str[:max_length] + f"... [truncated, total length: {len(output_str)}]"
 
     def log_tool_call(self, tool_name: str, parameters: Dict[str, Any],
                      output: Any = None, success: bool = True, error: str = None):
         """
-        Log a tool call with structure similar to master agent's approach.
+        Log a tool call to the current JSON log file.
 
         Args:
             tool_name: Name of the MCP tool called
@@ -63,47 +85,73 @@ class AIAgentToolLogger:
             success: Whether the tool call succeeded
             error: Error message if failed
         """
-        # Create tool log entry similar to master agent structure
+        if not self.log_file or not self.log_file.exists():
+            # If no log file, try to create a default one
+            self.start_analysis()
+
+        # Create tool log entry
         tool_log_entry = {
             "tool_name": tool_name,
             "parameters": parameters,
             "timestamp": datetime.datetime.now().isoformat(),
             "success": success,
-            "output": output,
+            "output_snippet": self._truncate_output(output),
             "error": error,
             "analysis_id": self.current_analysis_id
         }
 
-        # Initialize session state if needed
-        if self.session_key not in st.session_state:
-            st.session_state[self.session_key] = []
+        try:
+            # Read current log entries
+            with open(self.log_file, 'r', encoding='utf-8') as f:
+                log_entries = json.load(f)
 
-        # Add to session state
-        st.session_state[self.session_key].append(tool_log_entry)
+            # Add new entry
+            log_entries.append(tool_log_entry)
 
-        # Terminal logging similar to master agent
-        if success:
-            logger.info("✅ AI Agent tool %s finished", tool_name)
-        else:
-            logger.error("❌ AI Agent tool %s failed: %s", tool_name, error)
+            # Write back to file
+            with open(self.log_file, 'w', encoding='utf-8') as f:
+                json.dump(log_entries, f, indent=2, ensure_ascii=False)
+
+            # Terminal logging
+            if success:
+                logger.info("✅ AI Agent tool %s finished with %d chars output",
+                           tool_name, len(str(output)) if output else 0)
+            else:
+                logger.error("❌ AI Agent tool %s failed: %s", tool_name, error)
+
+        except Exception as e:
+            logger.error("Failed to log tool call to file %s: %s", self.log_file, e)
 
     def get_tool_calls_for_display(self) -> List[Dict[str, Any]]:
-        """Get all tool calls for the current analysis for UI display."""
-        if self.session_key not in st.session_state:
+        """Get all tool calls from the current log file for UI display."""
+        if not self.log_file or not self.log_file.exists():
             return []
 
-        # Filter to current analysis if specified
-        tool_calls = st.session_state[self.session_key]
-        if self.current_analysis_id:
-            tool_calls = [tc for tc in tool_calls if tc.get('analysis_id') == self.current_analysis_id]
+        try:
+            with open(self.log_file, 'r', encoding='utf-8') as f:
+                log_entries = json.load(f)
 
-        return tool_calls
+            # Filter to current analysis if specified
+            if self.current_analysis_id:
+                log_entries = [entry for entry in log_entries
+                             if entry.get('analysis_id') == self.current_analysis_id]
+
+            return log_entries
+
+        except Exception as e:
+            logger.error("Failed to read tool calls from file %s: %s", self.log_file, e)
+            return []
+
+    def get_log_file_path(self) -> Optional[Path]:
+        """Get the current log file path."""
+        return self.log_file
 
     def clear_tool_calls(self):
-        """Clear all tool calls from session state."""
-        if self.session_key in st.session_state:
-            st.session_state[self.session_key] = []
-        logger.info("🧹 AI Agent tool calls cleared")
+        """Clear all tool calls by creating a fresh log file."""
+        if self.log_file and self.log_file.exists():
+            with open(self.log_file, 'w', encoding='utf-8') as f:
+                json.dump([], f, indent=2)
+            logger.info("🧹 AI Agent tool calls cleared from %s", self.log_file)
 
 
 # Global instance for the Streamlit app
@@ -119,10 +167,10 @@ def get_ai_tool_logger() -> AIAgentToolLogger:
 
 def log_ai_agent_tool(func):
     """
-    Decorator for AI agent MCP tools that provides logging similar to master agent's
-    log_tool_for_reflection decorator.
+    Decorator for AI agent MCP tools that provides file-based logging.
 
-    This should be applied to the 4 MCP server tools:
+    This replaces the session state approach and works across process boundaries.
+    Should be applied to the 4 MCP server tools:
     - get_most_common_genes
     - get_gene_contrast_stats
     - filter_genes_by_contrast_sets
@@ -132,7 +180,7 @@ def log_ai_agent_tool(func):
 
     @functools.wraps(func)
     async def wrapper(*args, **kwargs):
-        # Get tool name and parameters (similar to master agent approach)
+        # Get tool name and parameters
         tool_name = func.__name__
         bound = inspect.signature(func).bind_partial(*args, **kwargs)
 
@@ -140,40 +188,26 @@ def log_ai_agent_tool(func):
         params = {k: v for k, v in bound.arguments.items()
                  if k not in {'ctx', 'self'}}
 
-        # Terminal logging at start (similar to master agent)
+        # Terminal logging at start
         logger.info("🛠️ AI Agent tool %s called – params=%s", tool_name, params)
-
-        tool_log_entry = {
-            "tool_name": tool_name,
-            "parameters": params,
-            "timestamp": datetime.datetime.now().isoformat(),
-            "success": None,
-            "output": None,
-            "error": None
-        }
 
         try:
             # Execute the tool
             result = await func(*args, **kwargs)
 
-            # Handle JSON string outputs (common for MCP tools)
+            # Parse JSON results if they're strings (common for MCP tools)
+            parsed_result = result
             if isinstance(result, str):
                 try:
-                    # Try to parse JSON for better display
                     parsed_result = json.loads(result)
-                    tool_log_entry["output"] = parsed_result
                 except json.JSONDecodeError:
-                    tool_log_entry["output"] = result
-            else:
-                tool_log_entry["output"] = result
-
-            tool_log_entry["success"] = True
+                    parsed_result = result
 
             # Log success
             tool_logger.log_tool_call(
                 tool_name=tool_name,
                 parameters=params,
-                output=tool_log_entry["output"],
+                output=parsed_result,
                 success=True
             )
 
@@ -182,9 +216,6 @@ def log_ai_agent_tool(func):
         except Exception as e:
             # Log failure
             error_msg = str(e)
-            tool_log_entry["success"] = False
-            tool_log_entry["error"] = error_msg
-
             tool_logger.log_tool_call(
                 tool_name=tool_name,
                 parameters=params,
@@ -192,7 +223,7 @@ def log_ai_agent_tool(func):
                 error=error_msg
             )
 
-            # Terminal logging for error (similar to master agent)
+            # Terminal logging for error
             logger.exception("❌ AI Agent tool %s crashed", tool_name)
             raise
 
@@ -217,3 +248,25 @@ def start_ai_analysis_session(analysis_id: str = None):
     """Start a new AI analysis session (convenience function for UI)."""
     tool_logger = get_ai_tool_logger()
     tool_logger.start_analysis(analysis_id)
+
+
+def get_current_log_file() -> Optional[Path]:
+    """Get the current log file path (convenience function for UI)."""
+    tool_logger = get_ai_tool_logger()
+    return tool_logger.get_log_file_path()
+
+
+def read_log_file_contents() -> Optional[str]:
+    """Read the raw contents of the current log file."""
+    tool_logger = get_ai_tool_logger()
+    log_file = tool_logger.get_log_file_path()
+
+    if not log_file or not log_file.exists():
+        return None
+
+    try:
+        with open(log_file, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception as e:
+        logger.error("Failed to read log file contents: %s", e)
+        return None

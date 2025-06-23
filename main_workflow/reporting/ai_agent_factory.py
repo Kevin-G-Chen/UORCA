@@ -68,7 +68,7 @@ def create_uorca_agent() -> Agent:
             command="uv",
             args=["run", str(server_script), "server"],
             env=os.environ.copy(),
-            timeout=60
+            timeout=180
         )
 
         agent = Agent(
@@ -77,11 +77,12 @@ def create_uorca_agent() -> Agent:
             mcp_servers=[server],
             system_prompt=UORCA_SYSTEM_PROMPT,
             output_type=GeneAnalysisOutput,
+            request_limit = 100
         )
 
-        # Initialize tool logging system
+        # Initialize file-based tool logging system
         tool_logger = get_ai_tool_logger()
-        logger.info("AI agent created with tool logging initialized")
+        logger.info("AI agent created with file-based tool logging initialized")
 
         return agent
     except Exception as e:

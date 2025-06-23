@@ -11,6 +11,7 @@ import logging
 import streamlit as st
 import pandas as pd
 import pydantic
+from pydantic_ai.usage import UsageLimits
 from typing import Dict, Any, List, Optional, Tuple
 
 
@@ -24,7 +25,9 @@ from .helpers import (
 )
 from .helpers.ai_agent_tool_logger import (
     start_ai_analysis_session,
-    get_ai_tool_logs_for_display
+    get_ai_tool_logs_for_display,
+    get_current_log_file,
+    read_log_file_contents
 )
 from ResultsIntegration import ResultsIntegrator
 from ai_gene_schema import GeneAnalysisOutput
@@ -56,7 +59,7 @@ except ImportError as e:
 @log_streamlit_tab("AI Assistant")
 def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
     """
-    Render the AI assistant tab.
+    Render the AI assistant tab with subtabs for analysis and tool logs.
 
     Args:
         ri: ResultsIntegrator instance
@@ -72,8 +75,16 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
         st.info("Please set your OpenAI API key to use AI features.")
         return
 
-    # Render streamlined AI analysis workflow
-    _render_streamlined_ai_workflow(ri, results_dir)
+    # Create subtabs for analysis and tool logs
+    analysis_tab, logs_tab = st.tabs(["🤖 Analysis", "📋 Tool Logs"])
+
+    with analysis_tab:
+        # Render streamlined AI analysis workflow
+        _render_streamlined_ai_workflow(ri, results_dir)
+
+    with logs_tab:
+        # Display tool call logs
+        _display_ai_tool_logs_tab()
 
 
 @log_streamlit_function
@@ -474,7 +485,8 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
             start_ai_analysis_session()
 
             # Run main analysis
-            result = await agent.run(prompt)
+            result = await agent.run(prompt,
+                usage_limits = UsageLimits(request_limit = 100))
 
             # Get tool calls from new logging system
             tool_calls = get_ai_tool_logs_for_display()
@@ -680,3 +692,136 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
         file_name="uorca_ai_gene_analysis.md",
         mime="text/markdown"
     )
+
+
+@log_streamlit_function
+def _display_ai_tool_logs_tab():
+    """Display the AI tool logs in a dedicated tab."""
+    st.subheader("🔧 AI Tool Call Logs")
+    st.markdown("**View detailed logs of AI agent tool usage** from the most recent analysis session.")
+
+    # Get current log file
+    log_file = get_current_log_file()
+
+    if not log_file or not log_file.exists():
+        st.info("🔍 No tool logs available. Tool logs will appear here after running an AI analysis.")
+        st.markdown("**To generate logs:**")
+        st.markdown("1. Go to the **Analysis** tab")
+        st.markdown("2. Enter a research question")
+        st.markdown("3. Click **Run Complete AI Analysis**")
+        return
+
+    # Display log file info
+    st.markdown(f"**Log file:** `{log_file.name}`")
+
+    # Get tool calls for display
+    tool_calls = get_ai_tool_logs_for_display()
+
+    if not tool_calls:
+        st.info("🔍 No tool calls found in the current log file.")
+        return
+
+    # Display summary
+    st.markdown(f"**Total tool calls:** {len(tool_calls)}")
+
+    # Create tabs for different views
+    detailed_tab, raw_tab = st.tabs(["📊 Detailed View", "📄 Raw Log"])
+
+    with detailed_tab:
+        _display_tool_calls_detailed(tool_calls)
+
+    with raw_tab:
+        _display_raw_log_file()
+
+
+@log_streamlit_function
+def _display_tool_calls_detailed(tool_calls: List[Dict]):
+    """Display tool calls in a detailed, structured format."""
+    if not tool_calls:
+        st.info("No tool calls to display.")
+        return
+
+    st.markdown("### Tool Call Details")
+
+    for i, call in enumerate(tool_calls, 1):
+        # Format success indicator
+        status_icon = "✅" if call.get('success', True) else "❌"
+        tool_name = call.get('tool_name', 'Unknown Tool')
+        timestamp = call.get('timestamp', 'Unknown time')
+
+        with st.expander(f"{status_icon} **{tool_name}** (Call #{i}) - {timestamp}", expanded=False):
+
+            # Parameters section
+            st.markdown("#### 📋 Parameters")
+            if call.get('parameters'):
+                # Display parameters in a formatted way
+                for param_name, param_value in call['parameters'].items():
+                    if isinstance(param_value, (list, dict)):
+                        st.markdown(f"**{param_name}:**")
+                        st.json(param_value)
+                    else:
+                        st.markdown(f"**{param_name}:** `{param_value}`")
+            else:
+                st.write("*No parameters*")
+
+            st.markdown("---")
+
+            # Results section
+            st.markdown("#### 📤 Results")
+            if call.get('success', True):
+                if call.get('output_snippet'):
+                    # Check if it's truncated
+                    output_text = call['output_snippet']
+                    if "truncated" in output_text:
+                        st.warning("⚠️ Output truncated for display")
+
+                    # Try to display as JSON if possible, otherwise as text
+                    try:
+                        if isinstance(call.get('output_snippet'), (dict, list)):
+                            st.json(call['output_snippet'])
+                        else:
+                            # Try to parse JSON from string
+                            import json as json_module
+                            if output_text.strip().startswith(('{', '[')):
+                                try:
+                                    parsed = json_module.loads(output_text.split('[truncated')[0])
+                                    st.json(parsed)
+                                    if "truncated" in output_text:
+                                        st.caption("*Output truncated - see raw log for complete results*")
+                                except:
+                                    st.code(output_text, language='json')
+                            else:
+                                st.code(output_text)
+                    except Exception:
+                        st.code(str(call.get('output_snippet', 'No output')))
+                else:
+                    st.write("*No output*")
+            else:
+                st.error(f"**Error:** {call.get('error', 'Unknown error')}")
+
+            # Metadata
+            if call.get('analysis_id'):
+                st.caption(f"Analysis ID: {call['analysis_id']}")
+
+
+@log_streamlit_function
+def _display_raw_log_file():
+    """Display the raw log file contents."""
+    st.markdown("### Raw Log File Contents")
+    st.markdown("*Complete JSON log file with all tool call data*")
+
+    raw_contents = read_log_file_contents()
+
+    if raw_contents:
+        # Add download button for raw log
+        st.download_button(
+            label="📥 Download Raw Log File",
+            data=raw_contents,
+            file_name=f"ai_tool_calls_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json"
+        )
+
+        # Display in code block
+        st.code(raw_contents, language='json')
+    else:
+        st.error("Could not read log file contents.")
