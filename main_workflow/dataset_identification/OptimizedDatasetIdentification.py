@@ -15,9 +15,11 @@ Usage:
 """
 
 import argparse
+import asyncio
 import json
 import logging
 import os
+import statistics
 import sys
 import time
 import xml.etree.ElementTree as ET
@@ -35,6 +37,7 @@ from pydantic import BaseModel
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from tqdm import tqdm
 
 # Load environment variables
 load_dotenv()
@@ -215,42 +218,88 @@ def parse_bioprojects(xml_str: str) -> List[str]:
 
 def fetch_runinfo(gse: str, api_delay: float = 0.4, retmax: int = 100_000) -> pd.DataFrame:
     """Fetch RunInfo data for a GSE accession."""
-    try:
-        # GSE -> GEO UID
-        geo_uid = get_geo_uid(gse)
-        time.sleep(api_delay)
+    max_retries = 3
+    last_err = None
 
-        # GEO UID -> SRA UID
-        sra_uid = get_sra_uid(geo_uid)
-        time.sleep(api_delay)
+    for attempt in range(max_retries):
+        try:
+            # GSE -> GEO UID
+            geo_uid = get_geo_uid(gse)
+            time.sleep(api_delay)
 
-        # SRA UID -> XML -> BioProjects
-        xml_data = fetch_sra_xml(sra_uid)
-        bioprojects = parse_bioprojects(xml_data)
-        time.sleep(api_delay)
+            # GEO UID -> SRA UID
+            sra_uid = get_sra_uid(geo_uid)
+            time.sleep(api_delay)
 
-        # BioProjects -> RunInfo
-        frames = []
-        for bp in bioprojects:
-            handle = Entrez.esearch(db="sra", term=f"{bp}[BioProject]", retmax=retmax)
-            uid_list = Entrez.read(handle)["IdList"]
-            handle.close()
+            # SRA UID -> XML -> BioProjects
+            xml_data = fetch_sra_xml(sra_uid)
+            bioprojects = parse_bioprojects(xml_data)
+            time.sleep(api_delay)
 
-            for uid in uid_list:
-                handle = Entrez.efetch(db="sra", id=uid, rettype="runinfo", retmode="text")
-                try:
-                    df = pd.read_csv(handle, low_memory=False)
-                    frames.append(df)
-                except Exception as e:
-                    logging.warning(f"Error reading RunInfo for {uid}: {e}")
+            # BioProjects -> RunInfo
+            frames = []
+            for bp in bioprojects:
+                handle = Entrez.esearch(db="sra", term=f"{bp}[BioProject]", retmax=retmax)
+                uid_list = Entrez.read(handle)["IdList"]
                 handle.close()
-                time.sleep(api_delay)
 
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+                for uid in uid_list:
+                    handle = Entrez.efetch(db="sra", id=uid, rettype="runinfo", retmode="text")
+                    try:
+                        df = pd.read_csv(handle, low_memory=False)
+                        frames.append(df)
+                    except Exception as e:
+                        logging.warning(f"Error reading RunInfo for {uid}: {e}")
+                    handle.close()
+                    time.sleep(api_delay)
 
-    except Exception as e:
-        logging.warning(f"Error fetching RunInfo for {gse}: {e}")
-        return pd.DataFrame()
+            return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                logging.warning(f"Failed to fetch runinfo for {gse}, attempt {attempt + 1}/{max_retries}: {e}")
+                time.sleep(10)  # Wait 10 seconds before retry
+            else:
+                logging.warning(f"Error fetching RunInfo for {gse}: {e}")
+                return pd.DataFrame()
+
+
+# ==================== OPTIONAL: DATASET SIZE CALCULATION FUNCTION ====================
+# The following function calculates dataset sizes from SRA runinfo data
+# Remove this function if you don't need dataset size information
+def calculate_dataset_sizes_from_runinfo(sra_df: pd.DataFrame) -> Dict[str, int]:
+    """
+    Calculate dataset sizes using the size_MB column already present in runinfo data.
+
+    This is much faster than calling vdb-dump for each SRR individually.
+
+    Returns:
+        Dictionary mapping GEO_Accession to total size in bytes
+    """
+    if sra_df.empty or 'size_MB' not in sra_df.columns or 'GEO_Accession' not in sra_df.columns:
+        logging.warning("Cannot calculate dataset sizes: missing required columns in runinfo data")
+        return {}
+
+    # Convert size_MB to bytes and group by GEO accession
+    sra_df_copy = sra_df.copy()
+    sra_df_copy['size_MB'] = pd.to_numeric(sra_df_copy['size_MB'], errors='coerce').fillna(0)
+    sra_df_copy['size_bytes'] = (sra_df_copy['size_MB'] * 1024 * 1024).astype(int)
+
+    # Group by GEO accession and sum sizes
+    dataset_sizes = sra_df_copy.groupby('GEO_Accession')['size_bytes'].sum().to_dict()
+
+    # Log results
+    total_datasets = len(dataset_sizes)
+    total_size_gb = sum(dataset_sizes.values()) / (1024**3)
+    logging.info(f"Dataset size calculation complete: {total_datasets} datasets, total: {total_size_gb:.2f} GB")
+
+    for geo_acc, size_bytes in dataset_sizes.items():
+        logging.info(f"Dataset {geo_acc}: {size_bytes:,} bytes ({size_bytes/(1024**3):.2f} GB)")
+
+    return dataset_sizes
+# =====================================================================================
+
 
 def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4) -> pd.DataFrame:
     """Validate datasets and calculate sizes with RNA-seq filtering."""
@@ -490,45 +539,69 @@ def select_representative_datasets(datasets_df: pd.DataFrame, max_datasets: int)
 
     return representatives_df.reset_index(drop=True)
 
-async def assess_relevance(datasets_df: pd.DataFrame, research_query: str) -> pd.DataFrame:
-    """Assess relevance of datasets to research query."""
-    logging.info(f"Assessing relevance of {len(datasets_df)} datasets...")
+# ==================== OPTIONAL: REPEATED ASSESSMENT FUNCTIONS ====================
+# The following functions implement repeated assessment with averaging
+# Remove both assess_subbatch and repeated_relevance if you want single assessment only
+async def assess_subbatch(df: pd.DataFrame, query: str, schema, key: str, rep: int, idx: int, total_batches: int, sem: asyncio.Semaphore) -> List[Assessment]:
+    """Assess a sub-batch of datasets."""
+    async with sem:
+        try:
+            # Prepare data for assessment
+            assessment_data = []
+            for _, row in df.iterrows():
+                assessment_data.append({
+                    "ID": row['ID'],
+                    "Species": row.get('Species', 'Unknown'),
+                    "Tissue": "Unknown",
+                    "Technique": row.get('Technique', 'RNA-seq'),
+                    "Summary": row.get('Summary', '')
+                })
 
-    # Prepare data for assessment
-    assessment_data = []
-    for _, row in datasets_df.iterrows():
-        assessment_data.append({
-            "ID": row['ID'],
-            "Species": row.get('Species', 'Unknown'),
-            "Tissue": "Unknown",  # Would need more parsing to extract
-            "Technique": row.get('Technique', 'RNA-seq'),
-            "Summary": row.get('Summary', '')
-        })
+            prompt = load_prompt("./main_workflow/prompts/dataset_identification/assess_relevance.txt")
+            user_input = f"Research Query: {query}\n\nDatasets:\n{json.dumps(assessment_data, indent=2)}"
 
-    # Call OpenAI for assessment
-    prompt = load_prompt("./main_workflow/prompts/dataset_identification/assess_relevance.txt")
-    user_input = f"Research Query: {research_query}\n\nDatasets:\n{json.dumps(assessment_data, indent=2)}"
+            assessments = call_openai_json(prompt, user_input, Assessments)
+            logging.info(f"Completed assessment batch {idx+1}/{total_batches} (repetition {rep+1})")
+            return assessments.assessments
+        except Exception as e:
+            logging.warning(f"Error in assessment batch {idx+1}/{total_batches} (rep {rep+1}): {e}")
+            # Return default assessments
+            return [Assessment(ID=row['ID'], RelevanceScore=5, Justification="Assessment failed") for _, row in df.iterrows()]
 
-    try:
-        assessments = call_openai_json(prompt, user_input, Assessments)
+async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, batch_size: int = 10, openai_api_jobs: int = 3) -> pd.DataFrame:
+    """Perform repeated relevance assessment with averaging."""
+    print(f"📊 Starting relevance scoring: {repeats} repetitions, batch size {batch_size}, parallel API jobs: {openai_api_jobs}")
+    sem = asyncio.Semaphore(openai_api_jobs)
+    tasks = []
 
-        # Create assessment lookup
-        assessment_lookup = {a.ID: (a.RelevanceScore, a.Justification) for a in assessments.assessments}
+    # create sub-batches
+    batches = [df.iloc[i:i+batch_size] for i in range(0, len(df), batch_size)]
+    total_batches = len(batches)
 
-        # Add assessments to dataframe
-        datasets_df = datasets_df.copy()
-        datasets_df['RelevanceScore'] = datasets_df['ID'].map(lambda x: assessment_lookup.get(x, (0, "No assessment"))[0])
-        datasets_df['Justification'] = datasets_df['ID'].map(lambda x: assessment_lookup.get(x, (0, "No assessment"))[1])
+    for rep in range(repeats):
+        for idx, sub in enumerate(batches):
+            tasks.append(assess_subbatch(sub, query, None, "assessments", rep, idx, total_batches, sem))
 
-        return datasets_df
+    all_results = await asyncio.gather(*tasks)
 
-    except Exception as e:
-        logging.warning(f"Error in relevance assessment: {e}")
-        # Fallback: assign default scores
-        datasets_df = datasets_df.copy()
-        datasets_df['RelevanceScore'] = 5
-        datasets_df['Justification'] = "Assessment failed"
-        return datasets_df
+    # flatten and aggregate
+    coll: Dict[str, Dict[str, Any]] = {}
+    for result in all_results:
+        for a in result:
+            entry = coll.setdefault(a.ID, {'scores': [], 'justifications': []})
+            entry['scores'].append(a.RelevanceScore)
+            entry['justifications'].append(a.Justification)
+
+    records: List[Dict[str, Any]] = []
+    for id_, v in coll.items():
+        rec = {'ID': id_, 'RelevanceScore': round(statistics.mean(v['scores']), 2)}
+        for i, (score, just) in enumerate(zip(v['scores'], v['justifications']), 1):
+            rec[f'Run{i}Score'] = score
+            rec[f'Run{i}Justification'] = just
+        records.append(rec)
+
+    return pd.DataFrame(records)
+# ===============================================================================
 
 def main():
     """Main function."""
@@ -673,21 +746,114 @@ def main():
         logging.info("Selecting representative datasets...")
         representatives_df = select_representative_datasets(clustered_df, args.max_evaluate or 10)
 
-        # Step 8: Assess relevance
-        logging.info("Assessing relevance...")
-        import asyncio
-        assessed_df = asyncio.run(assess_relevance(representatives_df, research_query))
+        # Step 8: Assess relevance with repeated scoring
+        # ==================== REPLACE WITH SIMPLE ASSESSMENT IF DESIRED ====================
+        # To use single assessment instead of repeated assessment, replace the line below with:
+        # assessed_df = asyncio.run(assess_single_relevance(representatives_df, research_query))
+        # (and implement assess_single_relevance function similar to the original assess_relevance)
+        logging.info("Assessing relevance with repeated scoring...")
+        assessed_df = asyncio.run(repeated_relevance(representatives_df, research_query))
+        # ===================================================================================
 
-        # Step 9: Combine results and sort
+        # ==================== OPTIONAL: SRA DATA FETCHING SECTION ====================
+        # The following section fetches SRA metadata and calculates dataset sizes
+        # Remove this entire section if you don't need dataset sizes or SRA metadata
+        to_fetch = assessed_df[assessed_df['RelevanceScore'] >= args.threshold]
+        logging.info(f"🔗 Fetching SRA metadata for {len(to_fetch)} datasets (threshold >= {args.threshold})...")
+
+        runs = []
+        successful_datasets = 0
+        total_runs_fetched = 0
+
+        for _, row in tqdm(to_fetch.iterrows(), desc='Processing SRA', total=len(to_fetch)):
+            acc = row['ID']
+            try:
+                g_uid = get_geo_uid(acc)
+                s_uid = get_sra_uid(g_uid)
+                xml = fetch_sra_xml(s_uid)
+                bioprojects = parse_bioprojects(xml)
+
+                # Handle multiple BioProjects for a single GEO accession
+                acc_frames = []
+                for bp in bioprojects:
+                    df_run = fetch_runinfo(bp, args.api_delay)
+                    if not df_run.empty:
+                        df_run.insert(0, 'GEO_Accession', acc)
+                        acc_frames.append(df_run)
+
+                if acc_frames:
+                    combined_df = pd.concat(acc_frames, ignore_index=True)
+                    runs.append(combined_df)
+                    successful_datasets += 1
+                    total_runs_fetched += len(combined_df)
+                    logging.info(f"Fetched {len(combined_df)} runs for {acc} from {len(bioprojects)} BioProject(s)")
+                else:
+                    logging.warning(f"No runs found for {acc}")
+
+            except Exception as e:
+                logging.info(f'Warning, skipping {acc}: {e}')
+
+        # Combine SRA data
+        if runs:
+            sra_df = pd.concat(runs, ignore_index=True)
+            logging.info(f"Successfully processed {successful_datasets}/{len(to_fetch)} GEO datasets")
+            logging.info(f"Retrieved metadata for {total_runs_fetched} total SRA runs")
+        else:
+            sra_df = pd.DataFrame(columns=['GEO_Accession'])
+            logging.warning("No SRA runs were successfully fetched")
+
+        # Calculate dataset sizes using runinfo data
+        dataset_sizes = {}
+        if not sra_df.empty:
+            logging.info("🔍 Calculating dataset sizes from runinfo data...")
+            dataset_sizes = calculate_dataset_sizes_from_runinfo(sra_df)
+        # ===============================================================================
+
+        # Merge assessed datasets with original data to get all required columns
+        geo_full = representatives_df.merge(assessed_df, on='ID', how='left')
+
+        # ==================== OPTIONAL: DATASET SIZE AND SRA MERGE ====================
+        # The following section adds dataset sizes and merges with SRA data
+        # If SRA fetching section above is removed, replace this with: merged = geo_full
+        if dataset_sizes:
+            geo_full['DatasetSizeBytes'] = geo_full['ID'].map(dataset_sizes)
+            geo_full['DatasetSizeGB'] = geo_full['DatasetSizeBytes'] / (1024**3)
+            # Fill NaN values with 0 for datasets where size couldn't be calculated
+            geo_full['DatasetSizeBytes'] = geo_full['DatasetSizeBytes'].fillna(0)
+            geo_full['DatasetSizeGB'] = geo_full['DatasetSizeGB'].fillna(0.0)
+        else:
+            geo_full['DatasetSizeBytes'] = 0
+            geo_full['DatasetSizeGB'] = 0.0
+
+        # Merge all GEO datasets with fetched SRA info
+        merged = geo_full.merge(
+            sra_df,
+            left_on='ID',
+            right_on='GEO_Accession',
+            how='left'
+        )
+        logging.info(f"Merged GEO and SRA data for {len(merged)} total records")
+        # ===============================================================================
+
         # Add invalid datasets with default scores
         invalid_for_output = invalid_datasets_df.copy()
         invalid_for_output['RelevanceScore'] = 0
         invalid_for_output['Justification'] = "Dataset excluded due to filtering criteria"
         invalid_for_output['Cluster'] = -1
+        # ==================== OPTIONAL: Add columns for invalid datasets ====================
+        # Add missing optional columns for invalid datasets (remove this section if columns above are removed)
+        for col in ['Run1Score', 'Run2Score', 'Run3Score', 'Run1Justification', 'Run2Justification', 'Run3Justification']:
+            invalid_for_output[col] = None
+        invalid_for_output['DatasetSizeBytes'] = 0
+        invalid_for_output['DatasetSizeGB'] = 0.0
+        invalid_for_output['LibrarySource'] = None
+        invalid_for_output['LibraryLayout'] = None
+        invalid_for_output['LibraryStrategy'] = None
+        # ===================================================================================
 
-        # Combine valid and invalid datasets for final output
+        # Combine valid (merged) and invalid datasets for final output
         final_results = pd.concat([
-            assessed_df,
+            merged,
             invalid_for_output
         ], ignore_index=True)
 
@@ -695,19 +861,63 @@ def main():
         if 'embedding' in final_results.columns:
             final_results = final_results.drop('embedding', axis=1)
 
-        # Create simplified final dataframe with only essential columns
+        # Create final dataframe with all columns to match original implementation
         final = pd.DataFrame()
+        final['ID'] = final_results['ID']
         final['Title'] = final_results.get('Title', '')
-        final['Accession'] = final_results['ID']
-        final['Samples'] = final_results['filtered_samples']
-        final['Species'] = final_results.get('Species', 'Unknown')
         final['Summary'] = final_results.get('Summary', '')
-        final['valid_dataset'] = final_results['valid_dataset']
-        final['skip_reason'] = final_results['skip_reason']
+        final['Accession'] = final_results['ID']
+        final['Species'] = final_results.get('Species', 'Unknown')
+        final['Date'] = final_results.get('Date', '')
+        final['NumSamples'] = final_results.get('filtered_samples', final_results.get('NumSamples', 0))
+        final['PrimaryPubMedID'] = None  # We don't have PubMed IDs in this workflow
+        final['AllPubMedIDs'] = None
         final['RelevanceScore'] = final_results['RelevanceScore']
-        final['Justification'] = final_results['Justification']
-        final['PrimaryPubMed'] = None  # We don't have PubMed IDs in this workflow
-        final['DatasetSizeGB'] = 0.0  # Default to 0 since we don't calculate this
+
+        # ==================== OPTIONAL: REPEATED ASSESSMENT COLUMNS ====================
+        # The following columns show individual assessment runs (can be removed for simplified output)
+        final['Run1Score'] = final_results.get('Run1Score', None)
+        final['Run1Justification'] = final_results.get('Run1Justification', None)
+        final['Run2Score'] = final_results.get('Run2Score', None)
+        final['Run2Justification'] = final_results.get('Run2Justification', None)
+        final['Run3Score'] = final_results.get('Run3Score', None)
+        final['Run3Justification'] = final_results.get('Run3Justification', None)
+        # ===============================================================================
+
+        # ==================== OPTIONAL: DATASET SIZE COLUMNS ====================
+        # The following columns show dataset storage size (can be removed for simplified output)
+        final['DatasetSizeBytes'] = final_results.get('DatasetSizeBytes', 0)
+        final['DatasetSizeGB'] = final_results.get('DatasetSizeGB', 0.0)
+        # =========================================================================
+
+        # ==================== OPTIONAL: SRA METADATA COLUMNS ====================
+        # The following columns show SRA technical details (can be removed for simplified output)
+        final['LibrarySource'] = final_results.get('LibrarySource', None)
+        final['LibraryLayout'] = final_results.get('LibraryLayout', None)
+        final['LibraryStrategy'] = final_results.get('LibraryStrategy', None)
+        # =========================================================================
+
+        # Select and flag validity based on SRA criteria (matching original implementation)
+        final['Valid'] = final.apply(
+            lambda row: 'Yes' if (row.get('LibraryLayout') == 'PAIRED' and row.get('LibrarySource') == 'TRANSCRIPTOMIC') else 'No',
+            axis=1
+        )
+
+        # ==================== OPTIONAL: CONVENIENCE URL COLUMNS ====================
+        # The following columns create clickable URLs (can be removed for simplified output)
+        def create_pubmed_url(pmid):
+            if pd.notna(pmid):
+                return f"https://pubmed.ncbi.nlm.nih.gov/{int(pmid)}/"
+            return None
+
+        def create_geo_url(accession):
+            if pd.notna(accession):
+                return f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={accession}"
+            return None
+
+        final['PubMedURL'] = final['PrimaryPubMedID'].apply(create_pubmed_url)
+        final['GEOURL'] = final['Accession'].apply(create_geo_url)
+        # ============================================================================
 
         final = final.drop_duplicates(subset=['Accession'])
 
@@ -736,8 +946,8 @@ def main():
             print(message)
 
         if args.multi_dataset_csv:
-            multi_df = final[['Accession', 'Species', 'PrimaryPubMed', 'RelevanceScore', 'valid_dataset', 'DatasetSizeGB']].copy()
-            multi_df = multi_df[multi_df['valid_dataset'] == True]
+            multi_df = final[['Accession', 'Species', 'PrimaryPubMedID', 'RelevanceScore', 'Valid', 'DatasetSizeBytes', 'DatasetSizeGB']].copy()
+            multi_df = multi_df[multi_df['Valid'] == 'Yes']
             multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
             multi_df = multi_df.rename(columns={'Species': 'organism'})
 
@@ -755,8 +965,8 @@ def main():
         print("="*80)
         print(f"Research Query: {research_query}")
         print(f"Total datasets found: {len(final)}")
-        print(f"Valid datasets: {len(final[final['valid_dataset'] == True])}")
-        print(f"Invalid datasets: {len(final[final['valid_dataset'] == False])}")
+        print(f"Valid datasets: {len(final[final['Valid'] == 'Yes'])}")
+        print(f"Invalid datasets: {len(final[final['Valid'] == 'No'])}")
 
         print(f"\nTop {min(len(final), args.max_evaluate or 10)} Results:")
         print("-" * 80)
@@ -764,13 +974,11 @@ def main():
         for i, (_, row) in enumerate(final.head(args.max_evaluate or 10).iterrows()):
             print(f"\n{i+1}. Dataset: {row['Accession']}")
             print(f"   Title: {row['Title']}")
-            print(f"   RNA-seq samples: {row['Samples']}")
+            print(f"   RNA-seq samples: {row['NumSamples']}")
             print(f"   Species: {row['Species']}")
-            print(f"   Valid for analysis: {'✅ Yes' if row['valid_dataset'] else '❌ No'}")
-            if not row['valid_dataset']:
-                print(f"   Skip reason: {row['skip_reason']}")
+            print(f"   Valid for analysis: {'✅ Yes' if row['Valid'] == 'Yes' else '❌ No'}")
             print(f"   Relevance: {row['RelevanceScore']}/10")
-            print(f"   Justification: {row['Justification']}")
+            print(f"   Dataset Size: {row['DatasetSizeGB']:.2f} GB")
             print(f"   GEO URL: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={row['Accession']}")
 
     except Exception as e:
