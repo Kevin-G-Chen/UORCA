@@ -3,12 +3,18 @@
 Optimized Dataset Identification Script
 ======================================
 
-This script performs dataset identification with early filtering to improve efficiency.
-Key optimizations:
-- Early RNA-seq filtering before expensive operations
-- Species consistency validation
-- Only fetch summaries for valid datasets
-- Enhanced reporting with filtering details
+This script performs dataset identification with optimal workflow and parallelization.
+Key features:
+- API key-based dynamic rate limiting (9 req/sec with key, 3 req/sec without)
+- Parallel processing for SRA fetching and dataset validation
+- Optimal workflow: get all info → validate → cluster/score only valid datasets
+- Enhanced reporting with validation reasons
+
+Workflow (optimal efficiency):
+1. Fetch ALL dataset information including SRA metadata
+2. Validate ALL datasets based on complete criteria
+3. Only perform expensive operations (clustering, relevance) on valid datasets
+4. Include ALL datasets in final output for transparency
 
 Usage:
     python OptimizedDatasetIdentification.py "research query" --max-datasets 10
@@ -328,147 +334,8 @@ def calculate_dataset_sizes_from_runinfo(sra_df: pd.DataFrame) -> Dict[str, int]
 # =====================================================================================
 
 
-def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4, max_workers: int = None) -> pd.DataFrame:
-    """Validate datasets and calculate sizes with RNA-seq filtering using parallel processing."""
-
-    # Auto-determine optimal worker count based on API key if not specified
-    if max_workers is None:
-        if os.getenv("ENTREZ_API_KEY"):
-            max_workers = 8  # More aggressive with API key
-            logging.info("🚀 API key detected - using 8 validation workers")
-        else:
-            max_workers = 3  # Conservative without API key
-            logging.info("⚠️ No API key - using 3 validation workers")
-
-    # Update global rate limiter
-    global api_rate_limiter
-    api_rate_limiter = APIRateLimiter()
-
-    def process_dataset_with_delay(gse_id, api_delay):
-        """Process a single dataset with API delay and rate limiting."""
-        try:
-            logging.info(f"Processing {gse_id}...")
-            # Apply rate limiting before making API calls
-            api_rate_limiter.wait()
-            runinfo_df = fetch_runinfo(gse_id, api_delay)
-
-            if runinfo_df.empty:
-                return {
-                    'ID': gse_id,
-                    'original_samples': 0,
-                    'filtered_samples': 0,
-                    'species_count': 0,
-                    'species_list': [],
-                    'valid_dataset': False,
-                    'skip_reason': 'No runinfo data available'
-                }
-
-            original_samples = len(runinfo_df)
-
-            # Apply RNA-seq filters
-            rna_seq_filter = (
-                (runinfo_df['LibrarySource'] == 'TRANSCRIPTOMIC') &
-                (runinfo_df['LibraryStrategy'] == 'RNA-Seq')
-            )
-            filtered_df = runinfo_df[rna_seq_filter]
-            filtered_samples = len(filtered_df)
-
-            # Check if any samples remain after filtering
-            if filtered_samples == 0:
-                return {
-                    'ID': gse_id,
-                    'original_samples': original_samples,
-                    'filtered_samples': 0,
-                    'species_count': 0,
-                    'species_list': [],
-                    'valid_dataset': False,
-                    'skip_reason': 'No RNA-seq samples after filtering'
-                }
-
-            # Check species consistency
-            unique_species = filtered_df['TaxID'].nunique()
-            species_list = filtered_df['TaxID'].unique().tolist()
-
-            if unique_species > 1:
-                return {
-                    'ID': gse_id,
-                    'original_samples': original_samples,
-                    'filtered_samples': filtered_samples,
-                    'species_count': unique_species,
-                    'species_list': species_list,
-                    'valid_dataset': False,
-                    'skip_reason': f'Multiple species detected ({unique_species})'
-                }
-
-            # Check minimum sample count
-            if filtered_samples < 3:
-                return {
-                    'ID': gse_id,
-                    'original_samples': original_samples,
-                    'filtered_samples': filtered_samples,
-                    'species_count': unique_species,
-                    'species_list': species_list,
-                    'valid_dataset': False,
-                    'skip_reason': f'Insufficient samples ({filtered_samples} < 3)'
-                }
-
-            return {
-                'ID': gse_id,
-                'original_samples': original_samples,
-                'filtered_samples': filtered_samples,
-                'species_count': unique_species,
-                'species_list': species_list,
-                'valid_dataset': True,
-                'skip_reason': None
-            }
-
-        except Exception as e:
-            logging.warning(f"Error processing {gse_id}: {e}")
-            return {
-                'ID': gse_id,
-                'original_samples': 0,
-                'filtered_samples': 0,
-                'species_count': 0,
-                'species_list': [],
-                'valid_dataset': False,
-                'skip_reason': f'Error: {str(e)}'
-            }
-
-    # Process datasets in parallel
-    logging.info(f"Validating datasets with RNA-seq filtering using {max_workers} parallel workers...")
-    gse_ids = datasets_df['ID'].tolist()
-    validation_data = []
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Create partial function with fixed api_delay
-        process_func = partial(process_dataset_with_delay, api_delay=api_delay)
-
-        # Submit all tasks
-        future_to_gse = {executor.submit(process_func, gse_id): gse_id for gse_id in gse_ids}
-
-        # Collect results as they complete
-        for future in as_completed(future_to_gse):
-            validation_info = future.result()
-            validation_data.append(validation_info)
-
-            # Progress logging
-            completed = len(validation_data)
-            total = len(gse_ids)
-            if completed % 10 == 0 or completed == total:
-                logging.info(f"Validation progress: {completed}/{total} datasets processed")
-
-    # Create results dataframe
-    validation_df = pd.DataFrame(validation_data)
-
-    # Merge with original dataset info
-    result_df = datasets_df.merge(validation_df, on='ID', how='left')
-
-    # Log summary
-    total_datasets = len(result_df)
-    valid_datasets = result_df['valid_dataset'].sum()
-    logging.info(f"Dataset validation summary: {valid_datasets}/{total_datasets} datasets are valid")
-
-    return result_df
+# validate_and_size_datasets function removed - validation now happens after SRA merge
+# to match original implementation workflow
 
 def fetch_geo_summaries_for_valid(valid_datasets_df: pd.DataFrame, api_delay: float = 0.4) -> pd.DataFrame:
     """Fetch detailed GEO summaries only for valid datasets."""
@@ -765,66 +632,13 @@ def main():
             logging.error("No valid GSE datasets found")
             return
 
-        # Step 4: EARLY VALIDATION - Filter datasets with RNA-seq criteria
-        logging.info("Performing early validation with RNA-seq filtering...")
-        validated_datasets_df = validate_and_size_datasets(basic_datasets_df, args.api_delay, max_workers=args.validation_workers)
+        # Step 4: Fetch detailed summaries for all datasets
+        logging.info("Fetching detailed GEO summaries for all datasets...")
+        enriched_datasets_df = fetch_geo_summaries_for_valid(basic_datasets_df, args.api_delay)
 
-        # Split into valid and invalid datasets
-        valid_datasets_df = validated_datasets_df[validated_datasets_df['valid_dataset'] == True].copy()
-        invalid_datasets_df = validated_datasets_df[validated_datasets_df['valid_dataset'] == False].copy()
-
-        logging.info(f"Valid datasets: {len(valid_datasets_df)}")
-        logging.info(f"Invalid datasets: {len(invalid_datasets_df)}")
-
-        if len(valid_datasets_df) == 0:
-            logging.error("No valid datasets found after filtering")
-
-            # Still show the invalid datasets for transparency
-            print("\n" + "="*80)
-            print("DATASET IDENTIFICATION RESULTS")
-            print("="*80)
-            print(f"Research Query: {research_query}")
-            print(f"No valid datasets found after RNA-seq filtering")
-            print(f"\nInvalid datasets ({len(invalid_datasets_df)}):")
-
-            for _, row in invalid_datasets_df.iterrows():
-                print(f"\nDataset: {row['ID']}")
-                print(f"  Original samples: {row['original_samples']}")
-                print(f"  RNA-seq samples: {row['filtered_samples']}")
-                print(f"  Species count: {row['species_count']}")
-                print(f"  Valid for analysis: ❌ No")
-                print(f"  Skip reason: {row['skip_reason']}")
-
-            return
-
-        # Step 5: Fetch detailed summaries only for valid datasets
-        enriched_valid_df = fetch_geo_summaries_for_valid(valid_datasets_df, args.api_delay)
-
-        # Step 6: Embed and cluster only valid datasets
-        logging.info("Embedding valid datasets...")
-        embedded_df = embed_datasets(enriched_valid_df)
-
-        logging.info("Clustering valid datasets...")
-        clustered_df = cluster_datasets(embedded_df)
-
-        # Step 7: Select representatives
-        logging.info("Selecting representative datasets...")
-        representatives_df = select_representative_datasets(clustered_df, args.max_evaluate or 10)
-
-        # Step 8: Assess relevance with repeated scoring
-        # ==================== REPLACE WITH SIMPLE ASSESSMENT IF DESIRED ====================
-        # To use single assessment instead of repeated assessment, replace the line below with:
-        # assessed_df = asyncio.run(assess_single_relevance(representatives_df, research_query))
-        # (and implement assess_single_relevance function similar to the original assess_relevance)
-        logging.info("Assessing relevance with repeated scoring...")
-        assessed_df = asyncio.run(repeated_relevance(representatives_df, research_query))
-        # ===================================================================================
-
-        # ==================== OPTIONAL: SRA DATA FETCHING SECTION ====================
-        # The following section fetches SRA metadata and calculates dataset sizes
-        # Remove this entire section if you don't need dataset sizes or SRA metadata
-        to_fetch = assessed_df[assessed_df['RelevanceScore'] >= args.threshold]
-        logging.info(f"🔗 Fetching SRA metadata for {len(to_fetch)} datasets (threshold >= {args.threshold})...")
+        # Step 5: Fetch SRA data for ALL datasets to determine validity (optimal workflow)
+        logging.info(f"🔗 Fetching SRA metadata for ALL {len(enriched_datasets_df)} datasets to determine validity...")
+        to_fetch = enriched_datasets_df  # Fetch SRA data for ALL datasets
 
         def fetch_sra_for_dataset(row, api_delay):
             """Fetch SRA data for a single dataset with rate limiting."""
@@ -914,55 +728,111 @@ def main():
         if not sra_df.empty:
             logging.info("🔍 Calculating dataset sizes from runinfo data...")
             dataset_sizes = calculate_dataset_sizes_from_runinfo(sra_df)
-        # ===============================================================================
 
-        # Merge assessed datasets with original data to get all required columns
-        geo_full = representatives_df.merge(assessed_df, on='ID', how='left')
-
-        # ==================== OPTIONAL: DATASET SIZE AND SRA MERGE ====================
-        # The following section adds dataset sizes and merges with SRA data
-        # If SRA fetching section above is removed, replace this with: merged = geo_full
+        # Add dataset sizes to enriched datasets before merging
         if dataset_sizes:
-            geo_full['DatasetSizeBytes'] = geo_full['ID'].map(dataset_sizes)
-            geo_full['DatasetSizeGB'] = geo_full['DatasetSizeBytes'] / (1024**3)
+            enriched_datasets_df['DatasetSizeBytes'] = enriched_datasets_df['ID'].map(dataset_sizes)
+            enriched_datasets_df['DatasetSizeGB'] = enriched_datasets_df['DatasetSizeBytes'] / (1024**3)
             # Fill NaN values with 0 for datasets where size couldn't be calculated
-            geo_full['DatasetSizeBytes'] = geo_full['DatasetSizeBytes'].fillna(0)
-            geo_full['DatasetSizeGB'] = geo_full['DatasetSizeGB'].fillna(0.0)
+            enriched_datasets_df['DatasetSizeBytes'] = enriched_datasets_df['DatasetSizeBytes'].fillna(0)
+            enriched_datasets_df['DatasetSizeGB'] = enriched_datasets_df['DatasetSizeGB'].fillna(0.0)
         else:
-            geo_full['DatasetSizeBytes'] = 0
-            geo_full['DatasetSizeGB'] = 0.0
+            enriched_datasets_df['DatasetSizeBytes'] = 0
+            enriched_datasets_df['DatasetSizeGB'] = 0.0
 
         # Merge all GEO datasets with fetched SRA info
-        merged = geo_full.merge(
+        final_results = enriched_datasets_df.merge(
             sra_df,
             left_on='ID',
             right_on='GEO_Accession',
             how='left'
         )
-        logging.info(f"Merged GEO and SRA data for {len(merged)} total records")
-        # ===============================================================================
+        logging.info(f"Merged GEO and SRA data for {len(final_results)} total records")
 
-        # Add invalid datasets with default scores
-        invalid_for_output = invalid_datasets_df.copy()
-        invalid_for_output['RelevanceScore'] = 0
-        invalid_for_output['Justification'] = "Dataset excluded due to filtering criteria"
-        invalid_for_output['Cluster'] = -1
-        # ==================== OPTIONAL: Add columns for invalid datasets ====================
-        # Add missing optional columns for invalid datasets (remove this section if columns above are removed)
-        for col in ['Run1Score', 'Run2Score', 'Run3Score', 'Run1Justification', 'Run2Justification', 'Run3Justification']:
-            invalid_for_output[col] = None
-        invalid_for_output['DatasetSizeBytes'] = 0
-        invalid_for_output['DatasetSizeGB'] = 0.0
-        invalid_for_output['LibrarySource'] = None
-        invalid_for_output['LibraryLayout'] = None
-        invalid_for_output['LibraryStrategy'] = None
-        # ===================================================================================
+        # Step 6: Validate ALL datasets based on complete SRA criteria
+        logging.info("Performing dataset validation based on SRA criteria...")
+        validation_data = []
+        for _, row in final_results.iterrows():
+            gse_id = row['ID']
+            lib_source = row.get('LibrarySource')
+            lib_layout = row.get('LibraryLayout')
+            lib_strategy = row.get('LibraryStrategy')
 
-        # Combine valid (merged) and invalid datasets for final output
-        final_results = pd.concat([
-            merged,
-            invalid_for_output
-        ], ignore_index=True)
+            # Check RNA-seq criteria
+            if pd.isna(lib_source) or pd.isna(lib_layout) or pd.isna(lib_strategy):
+                valid = False
+                reason = "No SRA metadata available"
+            elif lib_source != 'TRANSCRIPTOMIC':
+                valid = False
+                reason = f"Not transcriptomic (LibrarySource: {lib_source})"
+            elif lib_strategy != 'RNA-Seq':
+                valid = False
+                reason = f"Not RNA-seq (LibraryStrategy: {lib_strategy})"
+            elif lib_layout != 'PAIRED':
+                valid = False
+                reason = f"Not paired-end (LibraryLayout: {lib_layout})"
+            else:
+                valid = True
+                reason = "Meets RNA-seq criteria"
+
+            validation_data.append({
+                'ID': gse_id,
+                'valid_dataset': valid,
+                'validation_reason': reason
+            })
+
+        validation_df = pd.DataFrame(validation_data)
+        final_results = final_results.merge(validation_df, on='ID', how='left')
+
+        # Step 7: Filter to ONLY valid datasets for expensive operations (clustering & relevance)
+        valid_datasets_df = final_results[final_results['valid_dataset'] == True].copy()
+        invalid_datasets_df = final_results[final_results['valid_dataset'] == False].copy()
+
+        logging.info(f"Found {len(valid_datasets_df)} valid datasets and {len(invalid_datasets_df)} invalid datasets")
+        logging.info(f"🚀 EFFICIENCY GAIN: Will only cluster/score {len(valid_datasets_df)} datasets instead of {len(final_results)} total")
+        logging.info(f"⚡ Avoiding expensive operations on {len(invalid_datasets_df)} invalid datasets")
+
+        if len(valid_datasets_df) == 0:
+            logging.error("No valid datasets found - cannot proceed with clustering/relevance assessment")
+            # Still output all datasets for transparency
+            final_results['RelevanceScore'] = None
+            final_results['Run1Score'] = None
+            final_results['Run1Justification'] = None
+            final_results['Run2Score'] = None
+            final_results['Run2Justification'] = None
+            final_results['Run3Score'] = None
+            final_results['Run3Justification'] = None
+        else:
+            # Step 8: Embed and cluster ONLY valid datasets (efficient approach)
+            start_time = time.time()
+            logging.info(f"🧮 Embedding {len(valid_datasets_df)} valid datasets (skipping {len(invalid_datasets_df)} invalid)...")
+            embedded_df = embed_datasets(valid_datasets_df)
+
+            logging.info("🔗 Clustering valid datasets...")
+            clustered_df = cluster_datasets(embedded_df)
+
+            # Step 9: Select representatives from valid datasets only
+            logging.info("🎯 Selecting representative datasets for assessment...")
+            representatives_df = select_representative_datasets(clustered_df, args.max_evaluate or 10)
+
+            # Step 10: Assess relevance of representatives only
+            logging.info(f"📊 Assessing relevance of {len(representatives_df)} representative valid datasets...")
+            assessed_df = asyncio.run(repeated_relevance(representatives_df, research_query, repeats=3, batch_size=10, openai_api_jobs=4))
+
+            end_time = time.time()
+            processing_time = end_time - start_time
+            logging.info(f"⚡ Expensive operations completed in {processing_time:.1f}s for {len(valid_datasets_df)} valid datasets")
+            estimated_saved_time = processing_time * (len(invalid_datasets_df) / len(valid_datasets_df)) if len(valid_datasets_df) > 0 else 0
+            logging.info(f"💰 Estimated time saved by skipping invalid datasets: {estimated_saved_time:.1f}s")
+
+            # Step 11: Merge assessment results back to valid datasets
+            valid_with_scores = valid_datasets_df.merge(assessed_df, on='ID', how='left')
+
+            # Combine valid (with scores) and invalid datasets for final output
+            final_results = pd.concat([
+                valid_with_scores,
+                invalid_datasets_df
+            ], ignore_index=True)
 
         # Remove embedding column to prevent CSV malformation
         if 'embedding' in final_results.columns:
@@ -976,10 +846,10 @@ def main():
         final['Accession'] = final_results['ID']
         final['Species'] = final_results.get('Species', 'Unknown')
         final['Date'] = final_results.get('Date', '')
-        final['NumSamples'] = final_results.get('filtered_samples', final_results.get('NumSamples', 0))
-        final['PrimaryPubMedID'] = None  # We don't have PubMed IDs in this workflow
-        final['AllPubMedIDs'] = None
-        final['RelevanceScore'] = final_results['RelevanceScore']
+        final['NumSamples'] = final_results.get('NumSamples', 0)
+        final['PrimaryPubMedID'] = final_results.get('PrimaryPubMedID', None)
+        final['AllPubMedIDs'] = final_results.get('AllPubMedIDs', None)
+        final['RelevanceScore'] = final_results.get('RelevanceScore', None)
 
         # ==================== OPTIONAL: REPEATED ASSESSMENT COLUMNS ====================
         # The following columns show individual assessment runs (can be removed for simplified output)
@@ -1005,10 +875,10 @@ def main():
         # =========================================================================
 
         # Select and flag validity based on SRA criteria (matching original implementation)
-        final['Valid'] = final.apply(
-            lambda row: 'Yes' if (row.get('LibraryLayout') == 'PAIRED' and row.get('LibrarySource') == 'TRANSCRIPTOMIC') else 'No',
-            axis=1
-        )
+        final['Valid'] = final_results.get('valid_dataset', False).apply(lambda x: 'Yes' if x else 'No')
+
+        # Add validation reason column for debugging
+        final['ValidationReason'] = final_results.get('validation_reason', 'Unknown')
 
         # ==================== OPTIONAL: CONVENIENCE URL COLUMNS ====================
         # The following columns create clickable URLs (can be removed for simplified output)
@@ -1055,6 +925,7 @@ def main():
         if args.multi_dataset_csv:
             multi_df = final[['Accession', 'Species', 'PrimaryPubMedID', 'RelevanceScore', 'Valid', 'DatasetSizeBytes', 'DatasetSizeGB']].copy()
             multi_df = multi_df[multi_df['Valid'] == 'Yes']
+            multi_df = multi_df.dropna(subset=['RelevanceScore'])  # Only include assessed datasets
             multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
             multi_df = multi_df.rename(columns={'Species': 'organism'})
 
@@ -1071,19 +942,36 @@ def main():
         print("OPTIMIZED DATASET IDENTIFICATION RESULTS")
         print("="*80)
         print(f"Research Query: {research_query}")
-        print(f"Total datasets found: {len(final)}")
-        print(f"Valid datasets: {len(final[final['Valid'] == 'Yes'])}")
-        print(f"Invalid datasets: {len(final[final['Valid'] == 'No'])}")
+        print(f"\n📊 WORKFLOW SUMMARY:")
+        print(f"   Total datasets found: {len(final)}")
+        print(f"   Valid datasets (RNA-seq, paired-end, transcriptomic): {len(final[final['Valid'] == 'Yes'])}")
+        print(f"   Invalid datasets: {len(final[final['Valid'] == 'No'])}")
+        print(f"   Clustered & assessed (from valid only): {len(final.dropna(subset=['RelevanceScore']))}")
 
-        print(f"\nTop {min(len(final), args.max_evaluate or 10)} Results:")
+        print(f"\n🔍 EFFICIENCY GAINS:")
+        print(f"   ✅ Fetched complete info for ALL {len(final)} datasets")
+        print(f"   ✅ Only clustered/scored {len(final[final['Valid'] == 'Yes'])} valid datasets")
+        print(f"   ✅ Saved compute by skipping {len(final[final['Valid'] == 'No'])} invalid datasets")
+
+        # Show some invalid datasets with reasons
+        invalid_df = final[final['Valid'] == 'No']
+        if len(invalid_df) > 0:
+            print(f"\n❌ Sample invalid datasets (showing first 5):")
+            for _, row in invalid_df.head(5).iterrows():
+                print(f"   {row['Accession']}: {row['ValidationReason']}")
+
+        print(f"\n🏆 Top {min(len(final.dropna(subset=['RelevanceScore'])), args.max_evaluate or 10)} Assessed Results:")
         print("-" * 80)
 
-        for i, (_, row) in enumerate(final.head(args.max_evaluate or 10).iterrows()):
+        assessed_final = final.dropna(subset=['RelevanceScore']).sort_values('RelevanceScore', ascending=False)
+        for i, (_, row) in enumerate(assessed_final.head(args.max_evaluate or 10).iterrows()):
             print(f"\n{i+1}. Dataset: {row['Accession']}")
             print(f"   Title: {row['Title']}")
-            print(f"   RNA-seq samples: {row['NumSamples']}")
+            print(f"   Samples: {row['NumSamples']}")
             print(f"   Species: {row['Species']}")
             print(f"   Valid for analysis: {'✅ Yes' if row['Valid'] == 'Yes' else '❌ No'}")
+            if row['Valid'] == 'No':
+                print(f"   Validation reason: {row['ValidationReason']}")
             print(f"   Relevance: {row['RelevanceScore']}/10")
             print(f"   Dataset Size: {row['DatasetSizeGB']:.2f} GB")
             print(f"   GEO URL: https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={row['Accession']}")
