@@ -197,6 +197,10 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
 
             selected_contrast_dicts = st.session_state['selected_contrasts_for_ai']
 
+            # Pass selected contrasts to MCP server for filtering
+            import json
+            os.environ['SELECTED_CONTRASTS_FOR_AI'] = json.dumps(selected_contrast_dicts)
+
             agent = create_uorca_agent()
 
             # Enhanced prompt that leverages the selection
@@ -371,7 +375,7 @@ def _display_relevance_and_selection_results(
     selected_contrasts: List[SelectedContrast],
     research_query: str
 ):
-    """Display both the full relevance results and the intelligent selection."""
+    """Display the AI-selected contrasts for analysis."""
 
     # Sort by relevance score
     results_df = results_df.sort_values('RelevanceScore', ascending=False)
@@ -392,98 +396,40 @@ def _display_relevance_and_selection_results(
 
     log_streamlit_event(f"Contrast relevance with selection completed: {len(results_df)} assessed, {len(selected_contrasts)} selected")
 
-    # Create tabs for full results vs selected subset
-    full_tab, selected_tab = st.tabs(["📊 All Contrasts (Relevance Scores)", "🎯 Selected Contrasts (AI Chosen)"])
+    st.subheader("AI-Selected Contrasts for Analysis")
+    st.markdown("*Intelligently chosen subset for detailed analysis*")
 
-    with full_tab:
-        st.subheader("All Contrast Relevance Scores")
-        st.markdown("*Complete relevance assessment for all available contrasts*")
+    # Create DataFrame for selected contrasts
+    selected_data = []
+    for sc in selected_contrasts:
+        # Find the relevance info
+        relevance_row = results_df[
+            (results_df['analysis_id'] == sc.analysis_id) &
+            (results_df['contrast_id'] == sc.contrast_id)
+        ]
 
-        # Mark which contrasts were selected
-        selected_pairs = {(sc.analysis_id, sc.contrast_id) for sc in selected_contrasts}
-        results_df['AI_Selected'] = results_df.apply(
-            lambda r: (r['analysis_id'], r['contrast_id']) in selected_pairs, axis=1
-        )
+        if not relevance_row.empty:
+            selected_data.append({
+                'Dataset': relevance_row.iloc[0]['Accession'],
+                'Contrast': sc.contrast_id,
+                'Justification': sc.selection_justification
+            })
 
-        # Configure column display for full results
-        display_columns = ['AI_Selected', 'Accession', 'contrast_id', 'RelevanceScore', 'Description']
-        if 'Run1Justification' in results_df.columns:
-            display_columns.append('Run1Justification')
+    if selected_data:
+        selected_df = pd.DataFrame(selected_data)
 
+        # Display with simple formatting
         st.dataframe(
-            results_df[display_columns],
+            selected_df,
             use_container_width=True,
             column_config={
-                "AI_Selected": st.column_config.CheckboxColumn("AI Selected", help="Selected by AI for analysis"),
-                "RelevanceScore": st.column_config.NumberColumn(
-                    "Relevance Score",
-                    format="%.2f",
-                    help="AI-assessed relevance score (0-1 scale)"
-                ),
-                "contrast_id": st.column_config.TextColumn("Contrast", help="Contrast identifier"),
-                "Description": st.column_config.TextColumn("Description", help="Contrast description"),
-                "Run1Justification": st.column_config.TextColumn("AI Justification", help="AI explanation for the relevance score"),
-                "Accession": st.column_config.TextColumn("Dataset", help="Dataset accession")
+                "Dataset": st.column_config.TextColumn("Dataset", help="Dataset accession (GSE)"),
+                "Contrast": st.column_config.TextColumn("Contrast", help="Contrast identifier"),
+                "Justification": st.column_config.TextColumn("Justification", help="Why selected for analysis")
             }
         )
 
-    with selected_tab:
-        st.subheader("AI-Selected Contrasts for Analysis")
-        st.markdown("*Intelligently chosen subset optimizing relevance, diversity, and analytical power*")
-
-        # Create DataFrame for selected contrasts
-        selected_data = []
-        for sc in selected_contrasts:
-            # Find the relevance info
-            relevance_row = results_df[
-                (results_df['analysis_id'] == sc.analysis_id) &
-                (results_df['contrast_id'] == sc.contrast_id)
-            ]
-
-            if not relevance_row.empty:
-                selected_data.append({
-                    'Accession': relevance_row.iloc[0]['Accession'],
-                    'Contrast': sc.contrast_id,
-                    'Relevance Score': f"{sc.RelevanceScore:.2f}",
-                    'Category': sc.category.category,
-                    'Category Reason': sc.category.justification,
-                    'Selection Reason': sc.selection_justification,
-                    'Description': relevance_row.iloc[0]['Description']
-                })
-
-        if selected_data:
-            selected_df = pd.DataFrame(selected_data)
-
-            # Display with better formatting
-            st.dataframe(
-                selected_df,
-                use_container_width=True,
-                column_config={
-                    "Relevance Score": st.column_config.TextColumn("Relevance", help="AI relevance score"),
-                    "Category": st.column_config.TextColumn("Role", help="Analytical role in the study"),
-                    "Category Reason": st.column_config.TextColumn("Role Justification", help="Why assigned this role"),
-                    "Selection Reason": st.column_config.TextColumn("Selection Justification", help="Why selected for analysis"),
-                    "Description": st.column_config.TextColumn("Description", help="Contrast description")
-                }
-            )
-
-            # Show selection strategy
-            st.info("🎯 **Selection Strategy**: The AI selected these contrasts to maximize analytical power while ensuring diversity and appropriate controls for comparative analysis.")
-
-        # Category breakdown
-        if selected_contrasts:
-            st.markdown("### Selection Summary")
-            category_counts = {}
-            for sc in selected_contrasts:
-                cat = sc.category.category
-                category_counts[cat] = category_counts.get(cat, 0) + 1
-
-            cols = st.columns(len(category_counts))
-            for i, (category, count) in enumerate(category_counts.items()):
-                with cols[i]:
-                    st.metric(f"{category.title()} Contrasts", count)
-
-    # Provide download option for both
+    # Provide download option for selected contrasts data
     _provide_relevance_download(results_df)
 
 
@@ -538,61 +484,12 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
 
 
 @log_streamlit_function
-def _display_tool_calls(tool_calls: List[Dict]):
-    """Display tool calls in expandable panels using new tool logging format."""
-    if not tool_calls:
-        return
-
-    st.subheader("🔧 AI Tool Usage")
-    st.markdown("*The AI used these tools to analyze your data:*")
-
-    for i, call in enumerate(tool_calls):
-        # Format success indicator
-        status_icon = "✅" if call.get('success', True) else "❌"
-        tool_name = call.get('tool_name', 'Unknown Tool')
-
-        with st.expander(f"{status_icon} {tool_name} (Call {i+1})", expanded=False):
-            col1, col2 = st.columns(2)
-
-            with col1:
-                st.markdown("**Parameters:**")
-                if call.get('parameters'):
-                    st.json(call['parameters'])
-                else:
-                    st.write("No parameters")
-
-            with col2:
-                st.markdown("**Result:**")
-                if call.get('success', True):
-                    if call.get('output'):
-                        try:
-                            # Display structured output
-                            if isinstance(call['output'], (dict, list)):
-                                st.json(call['output'])
-                            else:
-                                st.code(str(call['output']))
-                        except:
-                            st.code(str(call.get('output', 'No output')))
-                    else:
-                        st.write("No output")
-                else:
-                    st.error(f"Error: {call.get('error', 'Unknown error')}")
-
-            # Show timestamp
-            if call.get('timestamp'):
-                st.caption(f"Executed at: {call['timestamp']}")
-
-
-@log_streamlit_function
 def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_question: str, selected_contrasts: List[Dict], tool_calls: List[Dict] = None):
     """Display the AI gene analysis results with structured output."""
     log_streamlit_event("AI gene analysis completed successfully")
     st.success("✅ Analysis completed successfully!")
 
-    # Display tool calls if available
-    if tool_calls:
-        _display_tool_calls(tool_calls)
-        st.markdown("---")
+
 
     # Use the structured output directly
     try:
@@ -617,19 +514,14 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
     genes = set(parsed.genes)  # normalize + dedupe
     contrasts = [(item['analysis_id'], item['contrast_id']) for item in selected_contrasts]
 
-    # --- 1. Gene list
-    st.subheader("🧬 Genes Selected by AI")
-    st.write(f"**Filters used:** Log2FC ≥ {parsed.filters.lfc_thresh}, P-value < {parsed.filters.p_thresh}")
+    # --- AI Interpretation (at the start)
+    st.subheader("🧠 AI-Driven Interpretation")
+    st.markdown(parsed.interpretation)
 
-    # Display genes in a nice format
-    gene_cols = st.columns(min(len(genes), 4))
-    for i, gene in enumerate(sorted(genes)):
-        with gene_cols[i % len(gene_cols)]:
-            st.code(gene)
+    # Create tabs for organized display
+    gene_tab, table_tab, heatmap_tab = st.tabs(["🧬 Selected Genes", "📊 Expression Data", "🌡️ Heatmap"])
 
-    # --- 2. LFC table
-    st.subheader("📊 Log Fold Change Table")
-
+    # Prepare data for all tabs
     if ri and ri.deg_data:
         rows, missing = [], []
         for gene in genes:
@@ -649,6 +541,25 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
                         })
             if not hit:
                 missing.append(gene)
+    else:
+        rows, missing = [], []
+
+    # Tab 1: Gene List
+    with gene_tab:
+        st.subheader("Selected Genes")
+
+        # Display genes in a copyable format
+        sorted_genes = sorted(genes)
+        genes_text = ', '.join(sorted_genes)
+
+        st.markdown("**Gene List (Copy-friendly format):**")
+        st.code(genes_text, language=None)
+
+        st.write(f"**Total genes:** {len(sorted_genes)}")
+
+    # Tab 2: Expression Table
+    with table_tab:
+        st.subheader("Log Fold Change Data")
 
         if rows:
             lfc_df = pd.DataFrame(rows)
@@ -666,9 +577,11 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
         if missing:
             st.info(f"ℹ️ {len(missing)} gene(s) not present in the selected contrasts: {', '.join(missing)}")
 
-        # --- 3. Heatmap
+    # Tab 3: Heatmap
+    with heatmap_tab:
+        st.subheader("Expression Heatmap")
+
         if rows and len(genes - set(missing)) > 0:
-            st.subheader("🌡️ Expression Heatmap")
             try:
                 fig = ri.create_lfc_heatmap(
                     genes=list(genes - set(missing)),
@@ -680,15 +593,42 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
                     st.info("Could not generate heatmap for the selected genes.")
             except Exception as e:
                 st.warning(f"Error generating heatmap: {str(e)}")
-    else:
-        st.warning("No expression data available for visualization.")
+        else:
+            st.warning("No expression data available for heatmap visualization.")
 
-    # --- 4. Interpretation
-    st.subheader("🧠 AI-Driven Interpretation")
-    st.markdown(parsed.interpretation)
+    # --- Download Options
+    st.subheader("📥 Download Options")
 
-    # Add download option
-    analysis_report = f"""
+    # Create columns for download buttons
+    col1, col2 = st.columns(2)
+
+    with col1:
+        # Download filtered dataframe CSV
+        try:
+            # Try to get the filtered dataframe that the AI agent worked with
+            try:
+                from mcp_server_core import get_filtered_dataframe
+                filtered_df = get_filtered_dataframe()
+
+                if not filtered_df.empty:
+                    csv_data = filtered_df.to_csv(index=False)
+                    st.download_button(
+                        label="📊 Download Filtered Dataset (CSV)",
+                        data=csv_data,
+                        file_name="uorca_ai_filtered_data.csv",
+                        mime="text/csv",
+                        help="Download the exact dataset the AI agent analyzed"
+                    )
+                else:
+                    st.info("No filtered data available for download")
+            except ImportError:
+                st.info("Filtered dataset download not available (MCP server not loaded)")
+        except Exception as e:
+            st.warning(f"Could not prepare filtered dataset: {e}")
+
+    with col2:
+        # Download analysis report
+        analysis_report = f"""
 # AI Gene Analysis Report
 
 **Research Question:** {research_question}
@@ -698,10 +638,6 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
 ## Selected Genes
 {', '.join(sorted(genes))}
 
-## Filter Parameters
-- Log2 Fold Change Threshold: {parsed.filters.lfc_thresh}
-- P-value Threshold: {parsed.filters.p_thresh}
-
 ## AI Interpretation
 
 {parsed.interpretation}
@@ -710,12 +646,15 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
 *Generated by UORCA Explorer AI Assistant*
 """
 
-    st.download_button(
-        label="📄 Download Analysis Report",
-        data=analysis_report,
-        file_name="uorca_ai_gene_analysis.md",
-        mime="text/markdown"
-    )
+        st.download_button(
+            label="📄 Download Analysis Report",
+            data=analysis_report,
+            file_name="uorca_ai_gene_analysis.md",
+            mime="text/markdown",
+            help="Download the complete analysis report"
+        )
+
+
 
 
 @log_streamlit_function
@@ -756,31 +695,176 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
             with result_col:
                 st.markdown("#### 📤 Results")
                 if call.get('success', True):
-                    if call.get('output_snippet'):
-                        # Check if it's truncated
-                        output_text = call['output_snippet']
-                        if "truncated" in output_text:
+                    output_snippet = call.get('output_snippet')
+                    if output_snippet and output_snippet.strip():
+                        # Get tool name and output for custom formatting
+                        tool_name = call.get('tool_name', '')
+
+                        # Use full_output for parsing if available, otherwise use snippet
+                        full_output = call.get('full_output')
+                        if full_output is not None:
+                            output_for_parsing = full_output
+                            is_truncated = "truncated" in output_snippet
+                        else:
+                            output_for_parsing = output_snippet
+                            is_truncated = "truncated" in output_snippet
+
+                        if is_truncated:
                             st.warning("⚠️ Output truncated for display")
 
-                        # Try to display as JSON if possible, otherwise as text
+                        # Clean output for parsing (remove truncation text if present)
+                        if is_truncated and full_output is None:
+                            clean_output = output_snippet.split('[truncated')[0]
+                        else:
+                            clean_output = output_for_parsing
+
                         try:
+                            # Parse Python literal output (not JSON)
+                            import ast
                             if isinstance(call.get('output_snippet'), (dict, list)):
-                                st.json(call['output_snippet'])
+                                parsed_output = call.get('output_snippet')
+                            elif clean_output.strip().startswith(('{', '[')):
+                                # Use ast.literal_eval for Python literals with single quotes
+                                parsed_output = ast.literal_eval(clean_output)
                             else:
-                                # Try to parse JSON from string
-                                import json as json_module
-                                if output_text.strip().startswith(('{', '[')):
-                                    try:
-                                        parsed = json_module.loads(output_text.split('[truncated')[0])
-                                        st.json(parsed)
-                                        if "truncated" in output_text:
-                                            st.caption("*Output truncated - see raw log for complete results*")
-                                    except:
-                                        st.code(output_text, language='json')
+                                parsed_output = None
+
+                            # Custom formatting based on tool type
+                            if tool_name == 'get_most_common_genes' and parsed_output:
+                                # Display as table
+                                if isinstance(parsed_output, list):
+                                    df_data = []
+                                    for item in parsed_output:
+                                        if isinstance(item, dict) and 'gene' in item and 'count' in item:
+                                            df_data.append({'Gene': item['gene'], 'Count': item['count']})
+                                    if df_data:
+                                        import pandas as pd
+                                        df = pd.DataFrame(df_data)
+                                        st.dataframe(df, use_container_width=True)
+                                    else:
+                                        st.code(clean_output)
                                 else:
-                                    st.code(output_text)
-                        except Exception:
-                            st.code(str(call.get('output_snippet', 'No output')))
+                                    st.code(clean_output)
+
+                            elif tool_name == 'filter_genes_by_contrast_sets' and parsed_output:
+                                # Extract and display just the gene list
+                                if isinstance(parsed_output, dict) and 'genes' in parsed_output:
+                                    genes = parsed_output['genes']
+                                    if genes:
+                                        # Display genes as wrapped text
+                                        gene_text = ', '.join(genes)
+                                        st.text_area("Genes:", value=gene_text, height=150, disabled=True)
+                                        st.caption(f"Total genes: {len(genes)}")
+                                    else:
+                                        st.write("No genes found")
+                                else:
+                                    st.code(clean_output)
+
+                            elif tool_name == 'get_gene_contrast_stats':
+                                # Display as dataframe or show empty message
+                                if parsed_output and isinstance(parsed_output, list) and len(parsed_output) > 0:
+                                    df_data = []
+                                    for item in parsed_output:
+                                        if isinstance(item, dict):
+                                            df_data.append({
+                                                'Contrast': item.get('contrast_id', ''),
+                                                'logFC': item.get('logFC', ''),
+                                                'P-value': item.get('pvalue', '')
+                                            })
+                                    if df_data:
+                                        import pandas as pd
+                                        df = pd.DataFrame(df_data)
+                                        st.dataframe(df, use_container_width=True)
+                                    else:
+                                        st.info("ℹ️ No gene statistics found for the specified parameters")
+                                elif parsed_output == [] or (isinstance(parsed_output, list) and len(parsed_output) == 0):
+                                    st.info("ℹ️ No gene statistics found - this gene may not be significantly expressed in any contrasts")
+                                else:
+                                    st.info("ℹ️ No gene statistics available")
+
+                            elif tool_name == 'summarize_contrast' and parsed_output:
+                                # Display with text wrapping
+                                if isinstance(parsed_output, dict):
+                                    st.json(parsed_output)
+                                else:
+                                    st.text_area("Summary:", value=str(parsed_output), height=100, disabled=True)
+
+                            else:
+                                # Default display for other tools or unparseable output
+                                if parsed_output:
+                                    st.json(parsed_output)
+                                else:
+                                    st.code(clean_output)
+
+                            if is_truncated:
+                                st.caption("*Output truncated - see raw log for complete results*")
+
+                        except Exception as e:
+                            # Handle truncated output specially
+                            if is_truncated and "truncated" in output_snippet:
+                                st.warning("⚠️ Output was truncated and cannot be fully parsed")
+
+                                # For truncated output, try to extract what we can
+                                if tool_name == 'get_most_common_genes':
+                                    # Try to extract partial gene list from truncated output
+                                    try:
+                                        # Look for complete gene entries before truncation
+                                        import re
+                                        gene_pattern = r"\{'gene': '([^']+)', 'count': (\d+)\}"
+                                        matches = re.findall(gene_pattern, clean_output)
+                                        if matches:
+                                            st.info(f"Showing first {len(matches)} genes (output was truncated)")
+                                            import pandas as pd
+                                            df_data = [{'Gene': gene, 'Count': int(count)} for gene, count in matches]
+                                            df = pd.DataFrame(df_data)
+                                            st.dataframe(df, use_container_width=True)
+                                            st.caption("*See raw log for complete results*")
+                                        else:
+                                            st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
+                                    except:
+                                        st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
+
+                                elif tool_name == 'filter_genes_by_contrast_sets':
+                                    # Try to extract partial gene list
+                                    try:
+                                        import re
+                                        # Look for genes in the format ['gene1', 'gene2', ...]
+                                        gene_pattern = r"'([A-Za-z0-9_]+)'"
+                                        matches = re.findall(gene_pattern, clean_output)
+                                        if matches:
+                                            st.info(f"Showing first {len(matches)} genes (output was truncated)")
+                                            gene_text = ', '.join(matches)
+                                            st.text_area("Partial Gene List:", value=gene_text, height=100, disabled=True)
+                                            st.caption("*See raw log for complete results*")
+                                        else:
+                                            st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
+                                    except:
+                                        st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
+
+                                else:
+                                    # For other tools, just show the truncated output
+                                    st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
+
+                            else:
+                                # Non-truncated parsing error
+                                st.warning(f"⚠️ Could not parse output: {e}")
+
+                                # Try JSON parsing as fallback
+                                try:
+                                    import json as json_module
+                                    parsed_json = json_module.loads(clean_output.replace("'", '"'))
+                                    st.json(parsed_json)
+                                    st.caption("*Successfully parsed using JSON fallback*")
+                                except:
+                                    # Display as formatted text
+                                    if clean_output.strip().startswith(('{', '[')):
+                                        st.code(clean_output, language='json')
+                                        st.caption("*Displaying as formatted code (parsing failed)*")
+                                    else:
+                                        st.text_area("Raw Output:", value=clean_output, height=100, disabled=True)
+                                        st.caption("*Displaying as raw text*")
+                    elif not output_snippet or not output_snippet.strip():
+                        st.info("ℹ️ Tool completed successfully but returned no output")
                     else:
                         st.write("*No output*")
                 else:

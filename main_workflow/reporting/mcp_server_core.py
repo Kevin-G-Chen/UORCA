@@ -44,11 +44,39 @@ def load_long_table(results_dir: str) -> pd.DataFrame:
 # Load upon import
 RESULTS_DIR = os.getenv('RESULTS_DIR', '/UORCA_results')
 try:
-    LONG_DF = load_long_table(RESULTS_DIR)
+    FULL_DF = load_long_table(RESULTS_DIR)
+    print(f"Loaded full dataframe: {len(FULL_DF)} rows")
 except Exception as e:
     print(f"Warning: Could not load long table from {RESULTS_DIR}: {e}")
     # Create empty DataFrame with correct structure as fallback
-    LONG_DF = pd.DataFrame(columns=['analysis_id','contrast_id','Gene','logFC','pvalue'])
+    FULL_DF = pd.DataFrame(columns=['analysis_id','contrast_id','Gene','logFC','pvalue'])
+
+def get_filtered_dataframe() -> pd.DataFrame:
+    """
+    Get the dataframe filtered to selected contrasts, checking environment variable dynamically.
+    """
+    global FULL_DF
+
+    # Check for selected contrasts environment variable
+    selected_contrasts_json = os.getenv('SELECTED_CONTRASTS_FOR_AI')
+    if selected_contrasts_json:
+        try:
+            selected_contrasts = json.loads(selected_contrasts_json)
+            print(f"Filtering to {len(selected_contrasts)} selected contrasts")
+
+            # Create filter condition
+            contrast_tuples = [(sc['analysis_id'], sc['contrast_id']) for sc in selected_contrasts]
+            mask = FULL_DF.apply(lambda row: (row['analysis_id'], row['contrast_id']) in contrast_tuples, axis=1)
+            filtered_df = FULL_DF[mask].copy()
+
+            print(f"Filtered dataframe: {len(filtered_df)} rows from {len(FULL_DF)} total rows")
+            return filtered_df
+        except json.JSONDecodeError:
+            print("Warning: Could not parse SELECTED_CONTRASTS_FOR_AI, using full dataframe")
+            return FULL_DF
+    else:
+        print("No selected contrasts specified, using full dataframe")
+        return FULL_DF
 
 # 1) Top recurring DEGs
 @server.tool()
@@ -65,7 +93,8 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
     Returns:
         JSON string with list of genes and their occurrence counts
     """
-    df = LONG_DF[(LONG_DF.logFC.abs() >= lfc_thresh) & (LONG_DF.pvalue < p_thresh)]
+    df = get_filtered_dataframe()
+    df = df[(df.logFC.abs() >= lfc_thresh) & (df.pvalue < p_thresh)]
     counts = df.groupby("Gene").size().nlargest(top_n)
     result = json.dumps([{"gene": g, "count": int(c)} for g, c in counts.items()])
 
@@ -85,7 +114,8 @@ async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
     Returns:
         JSON string with gene statistics across contrasts
     """
-    df = LONG_DF[LONG_DF.Gene == gene]
+    df = get_filtered_dataframe()
+    df = df[df.Gene == gene]
     if contrast_id:
         df = df[df.contrast_id == contrast_id]
     result = json.dumps(df[["contrast_id","logFC","pvalue"]].to_dict("records"))
@@ -108,17 +138,19 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
     Returns:
         JSON string with genes unique to set A and summary counts
     """
-    dfA = LONG_DF[
-        LONG_DF.contrast_id.isin(set_a) &
-        (LONG_DF.logFC.abs() >= lfc_thresh) &
-        (LONG_DF.pvalue < p_thresh)
+    df = get_filtered_dataframe()
+
+    dfA = df[
+        df.contrast_id.isin(set_a) &
+        (df.logFC.abs() >= lfc_thresh) &
+        (df.pvalue < p_thresh)
     ]
     genesA = set(dfA.Gene)
 
-    dfB = LONG_DF[
-        LONG_DF.contrast_id.isin(set_b) &
-        (LONG_DF.logFC.abs() >= lfc_thresh) &
-        (LONG_DF.pvalue < p_thresh)
+    dfB = df[
+        df.contrast_id.isin(set_b) &
+        (df.logFC.abs() >= lfc_thresh) &
+        (df.pvalue < p_thresh)
     ]
     genesB = set(dfB.Gene)
 
@@ -150,7 +182,8 @@ async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: floa
     Returns:
         JSON string with contrast summary and top genes
     """
-    df = LONG_DF[LONG_DF.contrast_id == contrast_id]
+    df = get_filtered_dataframe()
+    df = df[df.contrast_id == contrast_id]
     df = df[(df.logFC.abs() >= lfc_thresh) & (df.pvalue < p_thresh)]
 
     if df.empty:
