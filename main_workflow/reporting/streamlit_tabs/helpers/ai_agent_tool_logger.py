@@ -40,7 +40,11 @@ class AIAgentToolLogger:
     def __init__(self):
         self.log_file = None
         self.current_analysis_id = None
-        self.log_dir = Path("temp_logs")
+        # Set log directory relative to project root (UORCA directory)
+        # From this file: UORCA/main_workflow/reporting/streamlit_tabs/helpers/ai_agent_tool_logger.py
+        # Go up to UORCA root, then to temp_logs
+        project_root = Path(__file__).parent.parent.parent.parent.parent
+        self.log_dir = project_root / "temp_logs"
 
         # Ensure log directory exists
         self.log_dir.mkdir(exist_ok=True)
@@ -101,6 +105,7 @@ class AIAgentToolLogger:
             "timestamp": datetime.datetime.now().isoformat(),
             "success": success,
             "output_snippet": self._truncate_output(output),
+            "full_output": str(output) if output is not None else None,
             "error": error,
             "analysis_id": self.current_analysis_id
         }
@@ -141,47 +146,24 @@ class AIAgentToolLogger:
             with open(log_file_to_use, 'r', encoding='utf-8') as f:
                 raw_content = f.read()
 
-            logger.info(f"🔍 DEBUG: Read {len(raw_content)} chars from {log_file_to_use}")
-            logger.info(f"🔍 DEBUG: First 200 chars: {raw_content[:200]}")
-
             # Parse JSON
             log_entries = json.loads(raw_content)
-            logger.info(f"🔍 DEBUG: Parsed JSON successfully. Found {len(log_entries)} entries")
-
-            # Log some sample entries
-            if log_entries:
-                logger.info(f"🔍 DEBUG: First entry keys: {list(log_entries[0].keys())}")
-                logger.info(f"🔍 DEBUG: First entry analysis_id: {log_entries[0].get('analysis_id')}")
 
             # Filter to current analysis if specified
             original_count = len(log_entries)
 
-            # Check for debug bypass (useful for Apptainer environments)
-            bypass_filter = os.getenv('UORCA_DEBUG_BYPASS_ANALYSIS_ID_FILTER', '').lower() in ('true', '1', 'yes')
-
-            if bypass_filter:
-                logger.info(f"🔍 DEBUG: BYPASSING analysis_id filter due to debug flag. Returning all {len(log_entries)} entries")
-                logger.info(f"🔍 DEBUG: Analysis IDs in file: {list(set(entry.get('analysis_id', 'None') for entry in log_entries))}")
-                logger.info(f"🔍 DEBUG: Current analysis_id: {self.current_analysis_id}")
-            elif self.current_analysis_id:
-                logger.info(f"🔍 DEBUG: Filtering by analysis_id={self.current_analysis_id}")
+            # Filter to current analysis if specified
+            if self.current_analysis_id:
                 log_entries = [entry for entry in log_entries
                              if entry.get('analysis_id') == self.current_analysis_id]
-                logger.info(f"🔍 DEBUG: After filtering: {len(log_entries)} entries (was {original_count})")
-                if len(log_entries) == 0 and original_count > 0:
-                    logger.warning(f"🔍 DEBUG: Analysis ID mismatch! Found {original_count} entries but none match current_analysis_id={self.current_analysis_id}")
-                    logger.warning(f"🔍 DEBUG: Analysis IDs in file: {list(set(entry.get('analysis_id', 'None') for entry in log_entries))}")
-            else:
-                logger.info(f"🔍 DEBUG: No analysis_id filter set, returning all {len(log_entries)} entries")
 
             return log_entries
 
         except json.JSONDecodeError as e:
-            logger.error("🔍 DEBUG: JSON decode error in file %s: %s", log_file_to_use, e)
-            logger.error("🔍 DEBUG: Raw content causing JSON error: %s", raw_content[:500])
+            logger.error("JSON decode error in file %s: %s", log_file_to_use, e)
             return []
         except Exception as e:
-            logger.error("🔍 DEBUG: Unexpected error reading tool calls from file %s: %s", log_file_to_use, e)
+            logger.error("Unexpected error reading tool calls from file %s: %s", log_file_to_use, e)
             return []
 
     def get_tool_calls_for_ui_display(self) -> List[Dict[str, Any]]:
@@ -190,7 +172,6 @@ class AIAgentToolLogger:
         log_file_to_use = self.get_log_file_path()
 
         if not log_file_to_use or not log_file_to_use.exists():
-            logger.info(f"🔍 DEBUG: No log file found for UI display. log_file_to_use={log_file_to_use}")
             return []
 
         try:
@@ -198,27 +179,18 @@ class AIAgentToolLogger:
             with open(log_file_to_use, 'r', encoding='utf-8') as f:
                 raw_content = f.read()
 
-            logger.info(f"🔍 DEBUG: UI Display - Read {len(raw_content)} chars from {log_file_to_use}")
-
             # Parse JSON
             log_entries = json.loads(raw_content)
-            logger.info(f"🔍 DEBUG: UI Display - Parsed JSON successfully. Found {len(log_entries)} entries")
 
             # No analysis_id filtering for UI display - always show all entries
-            if log_entries:
-                logger.info(f"🔍 DEBUG: UI Display - Returning all {len(log_entries)} entries (no filtering)")
-                logger.info(f"🔍 DEBUG: UI Display - Analysis IDs in file: {list(set(entry.get('analysis_id', 'None') for entry in log_entries))}")
-            else:
-                logger.info(f"🔍 DEBUG: UI Display - No entries found in log file")
 
             return log_entries
 
         except json.JSONDecodeError as e:
-            logger.error("🔍 DEBUG: UI Display - JSON decode error in file %s: %s", log_file_to_use, e)
-            logger.error("🔍 DEBUG: UI Display - Raw content causing JSON error: %s", raw_content[:500])
+            logger.error("JSON decode error in file %s: %s", log_file_to_use, e)
             return []
         except Exception as e:
-            logger.error("🔍 DEBUG: UI Display - Unexpected error reading tool calls from file %s: %s", log_file_to_use, e)
+            logger.error("Unexpected error reading tool calls from file %s: %s", log_file_to_use, e)
             return []
 
     def get_log_file_path(self) -> Optional[Path]:

@@ -115,7 +115,7 @@ async def assess_contrast_subbatch(
 ) -> List[ContrastAssessment]:
     async with sem:
         print(f"⏳ Contrast relevance rep {rep+1}, batch {batch_idx+1}/{total_batches}")
-        sys_prompt = load_prompt("assess_contrast_relevance.txt")
+        sys_prompt = load_prompt("assess_and_select_contrasts.txt")
         prompt = (
             f"{sys_prompt}\n"
             f"Research query: \"{query}\"\n"
