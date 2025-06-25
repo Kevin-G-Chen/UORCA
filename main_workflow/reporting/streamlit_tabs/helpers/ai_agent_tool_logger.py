@@ -49,8 +49,13 @@ class AIAgentToolLogger:
         """Start a new analysis session and create a fresh log file."""
         self.current_analysis_id = analysis_id or f"analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-        # Create new log file for this analysis
-        self.log_file = self.log_dir / f"ai_tool_calls_{self.current_analysis_id}.json"
+        # Use static filename for current analysis
+        self.log_file = self.log_dir / "ai_tool_calls_current.json"
+
+        # Delete existing log file if it exists
+        if self.log_file.exists():
+            self.log_file.unlink()
+            logger.info("🧹 Cleared previous AI tool log file")
 
         # Initialize with empty list
         with open(self.log_file, 'w', encoding='utf-8') as f:
