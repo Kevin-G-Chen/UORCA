@@ -186,33 +186,7 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                 st.code(traceback.format_exc())
             return
 
-    # Tool Logs Display (after contrast relevance, before gene analysis)
-    st.markdown("---")
-    st.subheader("🔧 AI Tool Call Logs")
-    st.markdown("**Real-time logs of AI agent tool usage** during the analysis below.")
 
-    # Get current log file
-    log_file = get_current_log_file()
-
-    if log_file and log_file.exists():
-        # Get tool calls for display
-        tool_calls = get_ai_tool_logs_for_display()
-
-        if tool_calls:
-            st.markdown(f"**Total tool calls:** {len(tool_calls)}")
-
-            # Create tabs for different views
-            detailed_tab, raw_tab = st.tabs(["📊 Detailed View", "📄 Raw Log"])
-
-            with detailed_tab:
-                _display_tool_calls_detailed(tool_calls)
-
-            with raw_tab:
-                _display_raw_log_file()
-        else:
-            st.info("🔍 Tool logs will appear here as the AI agent runs analysis below.")
-    else:
-        st.info("🔍 Tool logs will appear here as the AI agent runs analysis below.")
 
     # Step 2: AI Gene Analysis (now using SELECTED contrasts only)
     st.markdown("---")
@@ -276,6 +250,36 @@ Please perform the analysis using your four tools, choose all thresholds reasona
             with st.expander("🔍 Error Details", expanded=False):
                 import traceback
                 st.code(traceback.format_exc())
+
+    # Display Tool Logs (at the end after analysis is complete)
+    st.markdown("---")
+    st.subheader("🔧 AI Tool Call Logs")
+    st.markdown("**Detailed logs of AI agent tool usage** from the completed analysis.")
+
+    # Get current log file with debugging
+    log_file = get_current_log_file()
+
+
+
+    if log_file and log_file.exists():
+        # Get tool calls for display
+        tool_calls = get_ai_tool_logs_for_display()
+
+        if tool_calls:
+            st.success(f"✅ Found {len(tool_calls)} tool calls in log file")
+
+            # Create tabs for different views
+            detailed_tab, raw_tab = st.tabs(["📊 Detailed View", "📄 Raw Log"])
+
+            with detailed_tab:
+                _display_tool_calls_detailed(tool_calls)
+
+            with raw_tab:
+                _display_raw_log_file()
+        else:
+            st.warning("⚠️ Log file exists but no tool calls found")
+    else:
+        st.info("🔍 No tool log file found. Logs appear after running AI analysis.")
 
 
 @log_streamlit_function
