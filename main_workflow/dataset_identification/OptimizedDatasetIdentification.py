@@ -21,11 +21,14 @@ import logging
 import os
 import statistics
 import sys
+import threading
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -49,6 +52,39 @@ if os.getenv("ENTREZ_API_KEY"):
 
 # OpenAI client
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Rate limiting for API calls
+class APIRateLimiter:
+    """Thread-safe rate limiter for API calls with dynamic rates based on API key."""
+    def __init__(self, base_delay: float = None):
+        # Auto-detect optimal delay based on API key presence
+        if base_delay is None:
+            if os.getenv("ENTREZ_API_KEY"):
+                # With API key: up to 10 requests/second = 0.1 second delay
+                self.min_delay = 0.11  # Slightly conservative
+                logging.info("🚀 API key detected - using fast rate limit (9 requests/sec)")
+            else:
+                # Without API key: up to 3 requests/second = 0.33 second delay
+                self.min_delay = 0.34  # Slightly conservative
+                logging.info("⚠️ No API key - using standard rate limit (3 requests/sec)")
+        else:
+            self.min_delay = base_delay
+
+        self.last_call_time = 0
+        self.lock = threading.Lock()
+
+    def wait(self):
+        """Wait if necessary to respect rate limits."""
+        with self.lock:
+            current_time = time.time()
+            time_since_last_call = current_time - self.last_call_time
+            if time_since_last_call < self.min_delay:
+                sleep_time = self.min_delay - time_since_last_call
+                time.sleep(sleep_time)
+            self.last_call_time = time.time()
+
+# Global rate limiter instance with auto-detection
+api_rate_limiter = APIRateLimiter()
 
 # Constants
 MAX_RETRIES = 3
@@ -217,52 +253,43 @@ def parse_bioprojects(xml_str: str) -> List[str]:
     return sorted(accs)
 
 def fetch_runinfo(gse: str, api_delay: float = 0.4, retmax: int = 100_000) -> pd.DataFrame:
-    """Fetch RunInfo data for a GSE accession."""
-    max_retries = 3
-    last_err = None
+    """Fetch RunInfo data for a GSE accession with no retries for faster processing."""
+    try:
+        # GSE -> GEO UID
+        geo_uid = get_geo_uid(gse)
+        time.sleep(api_delay)
 
-    for attempt in range(max_retries):
-        try:
-            # GSE -> GEO UID
-            geo_uid = get_geo_uid(gse)
-            time.sleep(api_delay)
+        # GEO UID -> SRA UID
+        sra_uid = get_sra_uid(geo_uid)
+        time.sleep(api_delay)
 
-            # GEO UID -> SRA UID
-            sra_uid = get_sra_uid(geo_uid)
-            time.sleep(api_delay)
+        # SRA UID -> XML -> BioProjects
+        xml_data = fetch_sra_xml(sra_uid)
+        bioprojects = parse_bioprojects(xml_data)
+        time.sleep(api_delay)
 
-            # SRA UID -> XML -> BioProjects
-            xml_data = fetch_sra_xml(sra_uid)
-            bioprojects = parse_bioprojects(xml_data)
-            time.sleep(api_delay)
+        # BioProjects -> RunInfo
+        frames = []
+        for bp in bioprojects:
+            handle = Entrez.esearch(db="sra", term=f"{bp}[BioProject]", retmax=retmax)
+            uid_list = Entrez.read(handle)["IdList"]
+            handle.close()
 
-            # BioProjects -> RunInfo
-            frames = []
-            for bp in bioprojects:
-                handle = Entrez.esearch(db="sra", term=f"{bp}[BioProject]", retmax=retmax)
-                uid_list = Entrez.read(handle)["IdList"]
+            for uid in uid_list:
+                handle = Entrez.efetch(db="sra", id=uid, rettype="runinfo", retmode="text")
+                try:
+                    df = pd.read_csv(handle, low_memory=False)
+                    frames.append(df)
+                except Exception as e:
+                    logging.warning(f"Error reading RunInfo for {uid}: {e}")
                 handle.close()
+                time.sleep(api_delay)
 
-                for uid in uid_list:
-                    handle = Entrez.efetch(db="sra", id=uid, rettype="runinfo", retmode="text")
-                    try:
-                        df = pd.read_csv(handle, low_memory=False)
-                        frames.append(df)
-                    except Exception as e:
-                        logging.warning(f"Error reading RunInfo for {uid}: {e}")
-                    handle.close()
-                    time.sleep(api_delay)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
-            return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-        except Exception as e:
-            last_err = e
-            if attempt < max_retries - 1:
-                logging.warning(f"Failed to fetch runinfo for {gse}, attempt {attempt + 1}/{max_retries}: {e}")
-                time.sleep(10)  # Wait 10 seconds before retry
-            else:
-                logging.warning(f"Error fetching RunInfo for {gse}: {e}")
-                return pd.DataFrame()
+    except Exception as e:
+        logging.warning(f"Error fetching RunInfo for {gse}: {e}")
+        return pd.DataFrame()
 
 
 # ==================== OPTIONAL: DATASET SIZE CALCULATION FUNCTION ====================
@@ -301,15 +328,33 @@ def calculate_dataset_sizes_from_runinfo(sra_df: pd.DataFrame) -> Dict[str, int]
 # =====================================================================================
 
 
-def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4) -> pd.DataFrame:
-    """Validate datasets and calculate sizes with RNA-seq filtering."""
-    def process_dataset(gse_id):
+def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4, max_workers: int = None) -> pd.DataFrame:
+    """Validate datasets and calculate sizes with RNA-seq filtering using parallel processing."""
+
+    # Auto-determine optimal worker count based on API key if not specified
+    if max_workers is None:
+        if os.getenv("ENTREZ_API_KEY"):
+            max_workers = 8  # More aggressive with API key
+            logging.info("🚀 API key detected - using 8 validation workers")
+        else:
+            max_workers = 3  # Conservative without API key
+            logging.info("⚠️ No API key - using 3 validation workers")
+
+    # Update global rate limiter
+    global api_rate_limiter
+    api_rate_limiter = APIRateLimiter()
+
+    def process_dataset_with_delay(gse_id, api_delay):
+        """Process a single dataset with API delay and rate limiting."""
         try:
             logging.info(f"Processing {gse_id}...")
+            # Apply rate limiting before making API calls
+            api_rate_limiter.wait()
             runinfo_df = fetch_runinfo(gse_id, api_delay)
 
             if runinfo_df.empty:
                 return {
+                    'ID': gse_id,
                     'original_samples': 0,
                     'filtered_samples': 0,
                     'species_count': 0,
@@ -331,6 +376,7 @@ def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4
             # Check if any samples remain after filtering
             if filtered_samples == 0:
                 return {
+                    'ID': gse_id,
                     'original_samples': original_samples,
                     'filtered_samples': 0,
                     'species_count': 0,
@@ -345,6 +391,7 @@ def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4
 
             if unique_species > 1:
                 return {
+                    'ID': gse_id,
                     'original_samples': original_samples,
                     'filtered_samples': filtered_samples,
                     'species_count': unique_species,
@@ -356,6 +403,7 @@ def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4
             # Check minimum sample count
             if filtered_samples < 3:
                 return {
+                    'ID': gse_id,
                     'original_samples': original_samples,
                     'filtered_samples': filtered_samples,
                     'species_count': unique_species,
@@ -365,6 +413,7 @@ def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4
                 }
 
             return {
+                'ID': gse_id,
                 'original_samples': original_samples,
                 'filtered_samples': filtered_samples,
                 'species_count': unique_species,
@@ -376,6 +425,7 @@ def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4
         except Exception as e:
             logging.warning(f"Error processing {gse_id}: {e}")
             return {
+                'ID': gse_id,
                 'original_samples': 0,
                 'filtered_samples': 0,
                 'species_count': 0,
@@ -384,17 +434,28 @@ def validate_and_size_datasets(datasets_df: pd.DataFrame, api_delay: float = 0.4
                 'skip_reason': f'Error: {str(e)}'
             }
 
-    # Process all datasets
-    logging.info("Validating datasets with RNA-seq filtering...")
+    # Process datasets in parallel
+    logging.info(f"Validating datasets with RNA-seq filtering using {max_workers} parallel workers...")
+    gse_ids = datasets_df['ID'].tolist()
     validation_data = []
 
-    for _, row in datasets_df.iterrows():
-        gse_id = row['ID']
-        validation_info = process_dataset(gse_id)
-        validation_data.append({
-            'ID': gse_id,
-            **validation_info
-        })
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # Create partial function with fixed api_delay
+        process_func = partial(process_dataset_with_delay, api_delay=api_delay)
+
+        # Submit all tasks
+        future_to_gse = {executor.submit(process_func, gse_id): gse_id for gse_id in gse_ids}
+
+        # Collect results as they complete
+        for future in as_completed(future_to_gse):
+            validation_info = future.result()
+            validation_data.append(validation_info)
+
+            # Progress logging
+            completed = len(validation_data)
+            total = len(gse_ids)
+            if completed % 10 == 0 or completed == total:
+                logging.info(f"Validation progress: {completed}/{total} datasets processed")
 
     # Create results dataframe
     validation_df = pd.DataFrame(validation_data)
@@ -650,7 +711,11 @@ def main():
     advanced_group.add_argument('--max-per-cluster', type=int, default=3,
                                help='Maximum datasets to select from each cluster')
     advanced_group.add_argument('--api-delay', type=float, default=0.4,
-                               help='Delay between NCBI API calls (seconds) to respect rate limits')
+                               help='Delay between API calls (seconds) to respect rate limits')
+    advanced_group.add_argument('--validation-workers', type=int, default=None,
+                               help='Number of parallel workers for dataset validation (auto-detects based on API key)')
+    advanced_group.add_argument('--sra-workers', type=int, default=None,
+                               help='Number of parallel workers for SRA data fetching (auto-detects based on API key)')
     advanced_group.add_argument('--min-samples', type=int, default=None,
                                 help='Minimum number of samples in a neighbourhood for HDBSCAN (None lets HDBSCAN default to min_cluster_size)')
 
@@ -702,7 +767,7 @@ def main():
 
         # Step 4: EARLY VALIDATION - Filter datasets with RNA-seq criteria
         logging.info("Performing early validation with RNA-seq filtering...")
-        validated_datasets_df = validate_and_size_datasets(basic_datasets_df, args.api_delay)
+        validated_datasets_df = validate_and_size_datasets(basic_datasets_df, args.api_delay, max_workers=args.validation_workers)
 
         # Split into valid and invalid datasets
         valid_datasets_df = validated_datasets_df[validated_datasets_df['valid_dataset'] == True].copy()
@@ -761,37 +826,79 @@ def main():
         to_fetch = assessed_df[assessed_df['RelevanceScore'] >= args.threshold]
         logging.info(f"🔗 Fetching SRA metadata for {len(to_fetch)} datasets (threshold >= {args.threshold})...")
 
-        runs = []
-        successful_datasets = 0
-        total_runs_fetched = 0
-
-        for _, row in tqdm(to_fetch.iterrows(), desc='Processing SRA', total=len(to_fetch)):
+        def fetch_sra_for_dataset(row, api_delay):
+            """Fetch SRA data for a single dataset with rate limiting."""
             acc = row['ID']
             try:
+                # Apply rate limiting before making API calls
+                api_rate_limiter.wait()
                 g_uid = get_geo_uid(acc)
+                api_rate_limiter.wait()
                 s_uid = get_sra_uid(g_uid)
+                api_rate_limiter.wait()
                 xml = fetch_sra_xml(s_uid)
                 bioprojects = parse_bioprojects(xml)
 
                 # Handle multiple BioProjects for a single GEO accession
                 acc_frames = []
                 for bp in bioprojects:
-                    df_run = fetch_runinfo(bp, args.api_delay)
+                    df_run = fetch_runinfo(bp, api_delay)
                     if not df_run.empty:
                         df_run.insert(0, 'GEO_Accession', acc)
                         acc_frames.append(df_run)
 
                 if acc_frames:
                     combined_df = pd.concat(acc_frames, ignore_index=True)
-                    runs.append(combined_df)
-                    successful_datasets += 1
-                    total_runs_fetched += len(combined_df)
                     logging.info(f"Fetched {len(combined_df)} runs for {acc} from {len(bioprojects)} BioProject(s)")
+                    return combined_df, True
                 else:
                     logging.warning(f"No runs found for {acc}")
+                    return pd.DataFrame(), False
 
             except Exception as e:
                 logging.info(f'Warning, skipping {acc}: {e}')
+                return pd.DataFrame(), False
+
+        runs = []
+        successful_datasets = 0
+        total_runs_fetched = 0
+
+        # Auto-determine optimal SRA worker count if not specified
+        sra_workers = args.sra_workers
+        if sra_workers is None:
+            if os.getenv("ENTREZ_API_KEY"):
+                sra_workers = 6  # More aggressive with API key
+                logging.info("🚀 API key detected - using 6 SRA workers")
+            else:
+                sra_workers = 2  # Conservative without API key
+                logging.info("⚠️ No API key - using 2 SRA workers")
+
+        # Process SRA fetching in parallel with rate limiting
+        logging.info(f"Fetching SRA data using {sra_workers} parallel workers (rate limited)...")
+        # Update rate limiter for SRA operations
+        api_rate_limiter = APIRateLimiter()
+        with ThreadPoolExecutor(max_workers=sra_workers) as executor:
+            # Create partial function with fixed api_delay
+            fetch_func = partial(fetch_sra_for_dataset, api_delay=args.api_delay)
+
+            # Submit all tasks
+            future_to_row = {executor.submit(fetch_func, row): row for _, row in to_fetch.iterrows()}
+
+            # Collect results as they complete
+            completed = 0
+            total = len(future_to_row)
+            for future in as_completed(future_to_row):
+                df_result, success = future.result()
+                completed += 1
+
+                if success and not df_result.empty:
+                    runs.append(df_result)
+                    successful_datasets += 1
+                    total_runs_fetched += len(df_result)
+
+                # Progress logging
+                if completed % 5 == 0 or completed == total:
+                    logging.info(f"SRA fetching progress: {completed}/{total} datasets processed")
 
         # Combine SRA data
         if runs:
