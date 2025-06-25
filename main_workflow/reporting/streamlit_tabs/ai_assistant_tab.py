@@ -75,16 +75,8 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
         st.info("Please set your OpenAI API key to use AI features.")
         return
 
-    # Create subtabs for analysis and tool logs
-    analysis_tab, logs_tab = st.tabs(["🤖 Analysis", "📋 Tool Logs"])
-
-    with analysis_tab:
-        # Render streamlined AI analysis workflow
-        _render_streamlined_ai_workflow(ri, results_dir)
-
-    with logs_tab:
-        # Display tool call logs
-        _display_ai_tool_logs_tab()
+    # Render streamlined AI analysis workflow (no tabs needed)
+    _render_streamlined_ai_workflow(ri, results_dir)
 
 
 @log_streamlit_function
@@ -193,6 +185,34 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                 import traceback
                 st.code(traceback.format_exc())
             return
+
+    # Tool Logs Display (after contrast relevance, before gene analysis)
+    st.markdown("---")
+    st.subheader("🔧 AI Tool Call Logs")
+    st.markdown("**Real-time logs of AI agent tool usage** during the analysis below.")
+
+    # Get current log file
+    log_file = get_current_log_file()
+
+    if log_file and log_file.exists():
+        # Get tool calls for display
+        tool_calls = get_ai_tool_logs_for_display()
+
+        if tool_calls:
+            st.markdown(f"**Total tool calls:** {len(tool_calls)}")
+
+            # Create tabs for different views
+            detailed_tab, raw_tab = st.tabs(["📊 Detailed View", "📄 Raw Log"])
+
+            with detailed_tab:
+                _display_tool_calls_detailed(tool_calls)
+
+            with raw_tab:
+                _display_raw_log_file()
+        else:
+            st.info("🔍 Tool logs will appear here as the AI agent runs analysis below.")
+    else:
+        st.info("🔍 Tool logs will appear here as the AI agent runs analysis below.")
 
     # Step 2: AI Gene Analysis (now using SELECTED contrasts only)
     st.markdown("---")
@@ -695,46 +715,6 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
 
 
 @log_streamlit_function
-def _display_ai_tool_logs_tab():
-    """Display the AI tool logs in a dedicated tab."""
-    st.subheader("🔧 AI Tool Call Logs")
-    st.markdown("**View detailed logs of AI agent tool usage** from the most recent analysis session.")
-
-    # Get current log file
-    log_file = get_current_log_file()
-
-    if not log_file or not log_file.exists():
-        st.info("🔍 No tool logs available. Tool logs will appear here after running an AI analysis.")
-        st.markdown("**To generate logs:**")
-        st.markdown("1. Go to the **Analysis** tab")
-        st.markdown("2. Enter a research question")
-        st.markdown("3. Click **Run Complete AI Analysis**")
-        return
-
-    # Display log file info
-    st.markdown(f"**Log file:** `{log_file.name}`")
-
-    # Get tool calls for display
-    tool_calls = get_ai_tool_logs_for_display()
-
-    if not tool_calls:
-        st.info("🔍 No tool calls found in the current log file.")
-        return
-
-    # Display summary
-    st.markdown(f"**Total tool calls:** {len(tool_calls)}")
-
-    # Create tabs for different views
-    detailed_tab, raw_tab = st.tabs(["📊 Detailed View", "📄 Raw Log"])
-
-    with detailed_tab:
-        _display_tool_calls_detailed(tool_calls)
-
-    with raw_tab:
-        _display_raw_log_file()
-
-
-@log_streamlit_function
 def _display_tool_calls_detailed(tool_calls: List[Dict]):
     """Display tool calls in a detailed, structured format."""
     if not tool_calls:
@@ -751,55 +731,58 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
 
         with st.expander(f"{status_icon} **{tool_name}** (Call #{i}) - {timestamp}", expanded=False):
 
-            # Parameters section
-            st.markdown("#### 📋 Parameters")
-            if call.get('parameters'):
-                # Display parameters in a formatted way
-                for param_name, param_value in call['parameters'].items():
-                    if isinstance(param_value, (list, dict)):
-                        st.markdown(f"**{param_name}:**")
-                        st.json(param_value)
-                    else:
-                        st.markdown(f"**{param_name}:** `{param_value}`")
-            else:
-                st.write("*No parameters*")
+            # Create two-column layout
+            param_col, result_col = st.columns(2)
 
-            st.markdown("---")
-
-            # Results section
-            st.markdown("#### 📤 Results")
-            if call.get('success', True):
-                if call.get('output_snippet'):
-                    # Check if it's truncated
-                    output_text = call['output_snippet']
-                    if "truncated" in output_text:
-                        st.warning("⚠️ Output truncated for display")
-
-                    # Try to display as JSON if possible, otherwise as text
-                    try:
-                        if isinstance(call.get('output_snippet'), (dict, list)):
-                            st.json(call['output_snippet'])
+            # Left column: Parameters
+            with param_col:
+                st.markdown("#### 📋 Parameters")
+                if call.get('parameters'):
+                    # Display parameters in a formatted way
+                    for param_name, param_value in call['parameters'].items():
+                        if isinstance(param_value, (list, dict)):
+                            st.markdown(f"**{param_name}:**")
+                            st.json(param_value)
                         else:
-                            # Try to parse JSON from string
-                            import json as json_module
-                            if output_text.strip().startswith(('{', '[')):
-                                try:
-                                    parsed = json_module.loads(output_text.split('[truncated')[0])
-                                    st.json(parsed)
-                                    if "truncated" in output_text:
-                                        st.caption("*Output truncated - see raw log for complete results*")
-                                except:
-                                    st.code(output_text, language='json')
-                            else:
-                                st.code(output_text)
-                    except Exception:
-                        st.code(str(call.get('output_snippet', 'No output')))
+                            st.markdown(f"**{param_name}:** `{param_value}`")
                 else:
-                    st.write("*No output*")
-            else:
-                st.error(f"**Error:** {call.get('error', 'Unknown error')}")
+                    st.write("*No parameters*")
 
-            # Metadata
+            # Right column: Results
+            with result_col:
+                st.markdown("#### 📤 Results")
+                if call.get('success', True):
+                    if call.get('output_snippet'):
+                        # Check if it's truncated
+                        output_text = call['output_snippet']
+                        if "truncated" in output_text:
+                            st.warning("⚠️ Output truncated for display")
+
+                        # Try to display as JSON if possible, otherwise as text
+                        try:
+                            if isinstance(call.get('output_snippet'), (dict, list)):
+                                st.json(call['output_snippet'])
+                            else:
+                                # Try to parse JSON from string
+                                import json as json_module
+                                if output_text.strip().startswith(('{', '[')):
+                                    try:
+                                        parsed = json_module.loads(output_text.split('[truncated')[0])
+                                        st.json(parsed)
+                                        if "truncated" in output_text:
+                                            st.caption("*Output truncated - see raw log for complete results*")
+                                    except:
+                                        st.code(output_text, language='json')
+                                else:
+                                    st.code(output_text)
+                        except Exception:
+                            st.code(str(call.get('output_snippet', 'No output')))
+                    else:
+                        st.write("*No output*")
+                else:
+                    st.error(f"**Error:** {call.get('error', 'Unknown error')}")
+
+            # Metadata (full width below columns)
             if call.get('analysis_id'):
                 st.caption(f"Analysis ID: {call['analysis_id']}")
 
