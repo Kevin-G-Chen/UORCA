@@ -13,6 +13,7 @@ import pandas as pd
 import pydantic
 from pydantic_ai.usage import UsageLimits
 from typing import Dict, Any, List, Optional, Tuple
+from datetime import datetime
 
 
 from .helpers import (
@@ -81,7 +82,7 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
         results_dir: Path to the results directory
     """
     st.header("🤖 AI Assistant")
-    st.markdown("**🤖 Interactive AI assistant for exploring your UORCA analysis results.** Ask questions, get insights, and explore your data using natural language.")
+    st.markdown("**Ask questions and get insights from your RNA-seq data using AI.**")
 
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
@@ -97,8 +98,17 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
 @log_streamlit_function
 def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
     """Render the streamlined AI analysis workflow."""
-    st.subheader("🧬 AI-Powered Gene Analysis")
-    st.markdown("**Complete AI analysis of your RNA-seq data.** Enter your research question below and the AI will assess contrast relevance and identify key genes in one workflow.")
+
+    # Initialize caching system
+    _initialize_ai_cache()
+
+    # Check if we should restore cached results
+    if _should_restore_cached_analysis():
+        _restore_and_display_cached_analysis(ri, results_dir)
+        return
+
+    st.subheader("🧬 Gene Analysis")
+    st.markdown("Enter your research question and the AI will find relevant contrasts and identify key genes.")
 
     # Load saved query from dataset identification
     saved_query = load_query_config()
@@ -153,66 +163,71 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
         st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
         return
 
-    # Run complete analysis workflow in single spinner
-    with st.spinner("Running complete AI analysis: assessing contrast relevance and analyzing differential expression patterns..."):
-        try:
-            # Step 1: Contrast Relevance Assessment with Selection (no display)
-            if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE:
-                # Run contrast relevance assessment with intelligent selection
-                results_df, selected_contrasts = run_contrast_relevance_with_selection(
-                    ri,
-                    query=research_query,
-                    repeats=3,  # Reduced since we're doing more complex processing
-                    batch_size=100,  # Larger batch size for better selection
-                    parallel_jobs=4
-                )
+    # Run complete analysis workflow with dynamic progress
+    progress_placeholder = st.empty()
 
-                if not results_df.empty and selected_contrasts:
-                    # Store SELECTED contrasts for AI gene analysis (not all contrasts)
-                    selected_contrast_dicts = [
-                        {'analysis_id': sc.analysis_id, 'contrast_id': sc.contrast_id}
-                        for sc in selected_contrasts
-                    ]
-                    st.session_state['selected_contrasts_for_ai'] = selected_contrast_dicts
-                    st.session_state['research_query'] = research_query
+    try:
+        # Step 1: Contrast Relevance Assessment with Selection (no display)
+        with progress_placeholder:
+            with st.spinner("Selecting relevant contrasts..."):
+                if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE:
+                    # Run contrast relevance assessment with intelligent selection
+                    results_df, selected_contrasts = run_contrast_relevance_with_selection(
+                        ri,
+                        query=research_query,
+                        repeats=3,  # Reduced since we're doing more complex processing
+                        batch_size=100,  # Larger batch size for better selection
+                        parallel_jobs=4
+                    )
+
+                    if not results_df.empty and selected_contrasts:
+                        # Store SELECTED contrasts for AI gene analysis (not all contrasts)
+                        selected_contrast_dicts = [
+                            {'analysis_id': sc.analysis_id, 'contrast_id': sc.contrast_id}
+                            for sc in selected_contrasts
+                        ]
+                        st.session_state['selected_contrasts_for_ai'] = selected_contrast_dicts
+                        st.session_state['research_query'] = research_query
+                    else:
+                        st.warning("No contrasts found for assessment.")
+                        return
                 else:
-                    st.warning("No contrasts found for assessment.")
-                    return
-            else:
-                # Fall back to original approach
-                results_df = run_contrast_relevance(
-                    ri,
-                    query=research_query,
-                    repeats=3,
-                    batch_size=50,
-                    parallel_jobs=4
-                )
+                    # Fall back to original approach
+                    results_df = run_contrast_relevance(
+                        ri,
+                        query=research_query,
+                        repeats=3,
+                        batch_size=50,
+                        parallel_jobs=4
+                    )
 
-                if not results_df.empty:
-                    # Store results for AI gene analysis
-                    st.session_state['selected_contrasts_for_ai'] = \
-                        results_df[['analysis_id','contrast_id']].to_dict('records')
-                    st.session_state['research_query'] = research_query
-                    selected_contrasts = None  # No selection objects in fallback mode
-                else:
-                    st.warning("No contrasts found for assessment.")
-                    return
+                    if not results_df.empty:
+                        # Store results for AI gene analysis
+                        st.session_state['selected_contrasts_for_ai'] = \
+                            results_df[['analysis_id','contrast_id']].to_dict('records')
+                        st.session_state['research_query'] = research_query
+                        selected_contrasts = None  # No selection objects in fallback mode
+                    else:
+                        st.warning("No contrasts found for assessment.")
+                        return
 
-            # Step 2: AI Gene Analysis (using selected contrasts)
-            # Set the RESULTS_DIR environment variable for the MCP server
-            os.environ['RESULTS_DIR'] = results_dir
+        # Step 2: AI Gene Analysis (using selected contrasts)
+        with progress_placeholder:
+            with st.spinner("Analyzing differential expression patterns..."):
+                # Set the RESULTS_DIR environment variable for the MCP server
+                os.environ['RESULTS_DIR'] = results_dir
 
-            selected_contrast_dicts = st.session_state['selected_contrasts_for_ai']
+                selected_contrast_dicts = st.session_state['selected_contrasts_for_ai']
 
-            # Pass selected contrasts to MCP server for filtering
-            import json
-            os.environ['SELECTED_CONTRASTS_FOR_AI'] = json.dumps(selected_contrast_dicts)
+                # Pass selected contrasts to MCP server for filtering
+                import json
+                os.environ['SELECTED_CONTRASTS_FOR_AI'] = json.dumps(selected_contrast_dicts)
 
-            agent = create_uorca_agent()
+                agent = create_uorca_agent()
 
-            # Enhanced prompt that leverages the selection
-            if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE and len(selected_contrast_dicts) <= 20:
-                prompt = f"""
+                # Enhanced prompt that leverages the selection
+                if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE and len(selected_contrast_dicts) <= 20:
+                    prompt = f"""
 Research question: "{research_query}"
 
 I have intelligently selected the following {len(selected_contrast_dicts)} contrasts from a larger set based on relevance, diversity, and analytical value:
@@ -236,8 +251,8 @@ Choose reasonable thresholds and return:
 2. Patterns that distinguish different contrast categories
 3. A brief biological interpretation of the findings
 """
-            else:
-                prompt = f"""
+                else:
+                    prompt = f"""
 Research question: "{research_query}"
 
 Available contrasts:
@@ -248,29 +263,121 @@ Please perform the analysis using your four tools, choose all thresholds reasona
 2) A brief 2-3 sentence biological interpretation explaining your rationale and what patterns you discovered.
 """
 
-            # Run the agent analysis
-            result_output, tool_calls = _execute_ai_analysis(agent, prompt)
+                # Run the agent analysis
+                result_output, tool_calls = _execute_ai_analysis(agent, prompt)
 
-            # Get tool calls for display
-            log_file = get_current_log_file()
-            if log_file and log_file.exists():
-                display_tool_calls = get_ai_tool_logs_for_display()
-            else:
-                display_tool_calls = []
+                # Get tool calls for display
+                log_file = get_current_log_file()
+                if log_file and log_file.exists():
+                    display_tool_calls = get_ai_tool_logs_for_display()
+                else:
+                    display_tool_calls = []
 
-            # Display unified results
-            _display_unified_ai_results(
-                ri, result_output, research_query, selected_contrast_dicts,
-                results_df, selected_contrasts, display_tool_calls
-            )
+                # Cache the results
+                analysis_id = _generate_analysis_id(research_query, selected_contrast_dicts)
+                _cache_ai_analysis(
+                    analysis_id, ri, result_output, research_query, selected_contrast_dicts,
+                    results_df, selected_contrasts, display_tool_calls
+                )
 
-        except Exception as e:
-            logger.error(f"Error in AI analysis workflow: {str(e)}", exc_info=True)
-            st.error(f"❌ Analysis failed: {str(e)}")
+        # Display unified results
+        progress_placeholder.empty()
+        _display_unified_ai_results(
+            ri, result_output, research_query, selected_contrast_dicts,
+            results_df, selected_contrasts, display_tool_calls
+        )
 
-            with st.expander("🔍 Error Details", expanded=False):
-                import traceback
-                st.code(traceback.format_exc())
+    except Exception as e:
+        logger.error(f"Error in AI analysis workflow: {str(e)}", exc_info=True)
+        st.error(f"❌ Analysis failed: {str(e)}")
+
+        with st.expander("🔍 Error Details", expanded=False):
+            import traceback
+            st.code(traceback.format_exc())
+
+
+def _initialize_ai_cache():
+    """Initialize the AI analysis caching system."""
+    if 'ai_analysis_cache' not in st.session_state:
+        st.session_state['ai_analysis_cache'] = {}
+    if 'current_analysis_id' not in st.session_state:
+        st.session_state['current_analysis_id'] = None
+    if 'show_cached_results' not in st.session_state:
+        st.session_state['show_cached_results'] = False
+
+
+def _generate_analysis_id(research_question: str, selected_contrasts: List[Dict]) -> str:
+    """Generate unique ID for analysis based on question and contrasts."""
+    import hashlib
+    # Create a hashable representation of contrasts
+    contrast_keys = []
+    for contrast in selected_contrasts:
+        key = f"{contrast.get('analysis_id', '')}_{contrast.get('contrast_id', '')}"
+        contrast_keys.append(key)
+    contrast_hash = hash(str(sorted(contrast_keys)))
+    content = f"{research_question}_{len(selected_contrasts)}_{contrast_hash}"
+    return hashlib.md5(content.encode()).hexdigest()[:12]
+
+
+def _cache_ai_analysis(
+    analysis_id: str,
+    ri: ResultsIntegrator,
+    result_output: Any,
+    research_question: str,
+    selected_contrast_dicts: List[Dict],
+    results_df: pd.DataFrame,
+    selected_contrasts: Optional[List] = None,
+    tool_calls: Optional[List[Dict]] = None
+):
+    """Cache AI analysis results."""
+    st.session_state['ai_analysis_cache'][analysis_id] = {
+        'result_output': result_output,
+        'research_question': research_question,
+        'selected_contrast_dicts': selected_contrast_dicts,
+        'results_df': results_df,
+        'selected_contrasts': selected_contrasts,
+        'tool_calls': tool_calls,
+        'cached_at': datetime.now(),
+        'cache_key': analysis_id
+    }
+    st.session_state['current_analysis_id'] = analysis_id
+    st.session_state['show_cached_results'] = True
+
+
+def _should_restore_cached_analysis() -> bool:
+    """Check if we should restore a cached analysis."""
+    return (
+        st.session_state.get('show_cached_results', False) and
+        st.session_state.get('current_analysis_id') is not None and
+        st.session_state.get('current_analysis_id') in st.session_state.get('ai_analysis_cache', {})
+    )
+
+
+def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str):
+    """Restore and display cached analysis results."""
+    analysis_id = st.session_state['current_analysis_id']
+    cached_data = st.session_state['ai_analysis_cache'][analysis_id]
+
+    # Add a header to show this is cached
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.info(f"📋 Cached results from {cached_data['cached_at'].strftime('%H:%M:%S')}")
+    with col2:
+        if st.button("🔄 New Analysis", help="Start a new analysis"):
+            st.session_state['show_cached_results'] = False
+            st.session_state['current_analysis_id'] = None
+            st.rerun()
+
+    # Display the cached results
+    _display_unified_ai_results(
+        ri=ri,
+        result_output=cached_data['result_output'],
+        research_question=cached_data['research_question'],
+        selected_contrast_dicts=cached_data['selected_contrast_dicts'],
+        results_df=cached_data['results_df'],
+        selected_contrasts=cached_data['selected_contrasts'],
+        tool_calls=cached_data['tool_calls']
+    )
 
 
 @log_streamlit_function
@@ -496,7 +603,7 @@ def _display_unified_ai_results(
     contrasts = [(item['analysis_id'], item['contrast_id']) for item in selected_contrast_dicts]
 
     # --- AI Interpretation (at the very top)
-    st.subheader("🧠 AI-Driven Interpretation")
+    st.subheader("🧠 Analysis Results")
     st.markdown(parsed.interpretation)
 
     # Create tabs for organized display
@@ -539,10 +646,10 @@ def _display_unified_ai_results(
         sorted_genes = sorted(genes)
         genes_text = ', '.join(sorted_genes)
 
-        st.markdown("**Gene List (Copy-friendly format):**")
+        st.markdown("**Gene List:**")
         st.code(genes_text, language=None)
 
-        st.write(f"**Total genes:** {len(sorted_genes)}")
+        st.write(f"**Total:** {len(sorted_genes)} genes")
 
         # Download analysis report
         analysis_report = f"""
@@ -563,17 +670,21 @@ def _display_unified_ai_results(
 *Generated by UORCA Explorer AI Assistant*
 """
 
+        # Generate unique key for download button
+        download_key = f"download_report_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
+
         st.download_button(
             label="📄 Download Analysis Report",
             data=analysis_report,
             file_name="uorca_ai_gene_analysis.md",
             mime="text/markdown",
-            help="Download the complete analysis report"
+            help="Download the complete analysis report",
+            key=download_key
         )
 
     # Tab 2: Heatmap
     with heatmap_tab:
-        st.subheader("Expression Heatmap")
+        st.subheader("Heatmap")
 
         if rows and len(genes - set(missing)) > 0:
             try:
@@ -592,7 +703,7 @@ def _display_unified_ai_results(
 
     # Tab 3: Expression Table
     with table_tab:
-        st.subheader("Log Fold Change Data")
+        st.subheader("Expression Data")
 
         if rows:
             lfc_df = pd.DataFrame(rows)
@@ -612,12 +723,17 @@ def _display_unified_ai_results(
 
                 if not filtered_df.empty:
                     csv_data = filtered_df.to_csv(index=False)
+
+                    # Generate unique key for download button
+                    csv_download_key = f"download_csv_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
+
                     st.download_button(
                         label="📊 Download Filtered Dataset (CSV)",
                         data=csv_data,
                         file_name="uorca_ai_filtered_data.csv",
                         mime="text/csv",
-                        help="Download the exact dataset the AI agent analyzed"
+                        help="Download the exact dataset the AI agent analyzed",
+                        key=csv_download_key
                     )
             except ImportError:
                 st.info("Filtered dataset download not available (MCP server not loaded)")
@@ -632,11 +748,11 @@ def _display_unified_ai_results(
 
     # Tab 4: Contrast Selection
     with contrast_tab:
-        st.subheader("Selected Contrasts for Analysis")
+        st.subheader("Selected Contrasts")
 
         if selected_contrasts and hasattr(selected_contrasts[0], 'selection_justification'):
             # Show intelligent selection results
-            st.markdown("*Intelligently chosen subset for detailed analysis*")
+            st.markdown("*AI-selected contrasts for analysis*")
 
             # Create DataFrame for selected contrasts
             selected_data = []
@@ -667,7 +783,7 @@ def _display_unified_ai_results(
                 )
         else:
             # Show basic contrast list
-            st.markdown("*Contrasts used in analysis*")
+            st.markdown("*Contrasts analyzed*")
 
             # Prepare contrast display data
             contrast_display_data = []
@@ -700,22 +816,27 @@ def _display_unified_ai_results(
         # Provide download option for contrast selection data
         if not results_df.empty:
             csv = results_df.to_csv(index=False)
+
+            # Generate unique key for download button
+            relevance_download_key = f"download_relevance_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
+
             st.download_button(
                 label="📥 Download All Contrast Relevance Scores (CSV)",
                 data=csv,
                 file_name=f"contrast_relevance_scores.csv",
-                mime="text/csv"
+                mime="text/csv",
+                key=relevance_download_key
             )
 
     # Tab 5: Tool Logs
     with logs_tab:
-        st.subheader("AI Tool Call Logs")
-        st.markdown("**Detailed logs of AI agent tool usage** from the completed analysis.")
+        st.subheader("Tool Logs")
+        st.markdown("**AI tool usage details** from the analysis.")
 
         if tool_calls:
             _display_tool_calls_detailed(tool_calls)
         else:
-            st.info("🔍 No tool calls found. Logs appear after running AI analysis.")
+            st.info("🔍 No tool calls found.")
 
 
 
