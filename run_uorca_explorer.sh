@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-# Script to run UORCA Explorer using Apptainer container
-# Usage: ./run_uorca_explorer.sh [results_directory] [port]
+# Script to run UORCA Explorer using Apptainer or Docker container
+# Usage: ./run_uorca_explorer.sh [OPTIONS] [results_directory] [port]
 # Default results directory: ../UORCA_results
 # Default port: 8501
 
@@ -10,32 +10,100 @@ set -e
 # Flag to prevent double cleanup
 CLEANUP_DONE=0
 
+# Default values
+ENGINE="auto"
+DOCKER_IMAGE="kevingchen/uorca:0.1.0"
+SIF_PATH="/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/container_testing/uorca_0.1.0.sif"
+
+# Helper functions for tool detection
+have_apptainer() { command -v apptainer &>/dev/null; }
+have_docker() { command -v docker &>/dev/null; }
+
 # Function to display usage
 show_usage() {
-    echo "Usage: $0 [results_directory] [port]"
+    echo "Usage: $0 [OPTIONS] [results_directory] [port]"
+    echo ""
+    echo "Options:"
+    echo "  -e, --engine ENGINE     Container engine to use: auto|apptainer|docker (default: auto)"
+    echo "  --image IMAGE          Docker image to use (default: kevingchen/uorca:0.1.0)"
+    echo "  --sif PATH             Apptainer .sif file path (default: built-in path)"
+    echo "  -h, --help             Show this help message"
     echo ""
     echo "Arguments:"
-    echo "  results_directory    Path to UORCA results directory (default: ../UORCA_results)"
-    echo "  port                Port number for the web app (default: 8501)"
+    echo "  results_directory      Path to UORCA results directory (default: ../UORCA_results)"
+    echo "  port                   Port number for the web app (default: 8501)"
+    echo ""
+    echo "Engine selection:"
+    echo "  auto                   Prefer Apptainer if available, else Docker"
+    echo "  apptainer             Force use of Apptainer"
+    echo "  docker                Force use of Docker"
     echo ""
     echo "Examples:"
-    echo "  $0                              # Use defaults"
-    echo "  $0 /path/to/results             # Custom results directory"
-    echo "  $0 /path/to/results 8502        # Custom directory and port"
+    echo "  $0                                    # Use defaults (auto-detect engine)"
+    echo "  $0 -e docker                         # Force Docker engine"
+    echo "  $0 -e apptainer /path/to/results     # Force Apptainer with custom results"
+    echo "  $0 /path/to/results 8502             # Custom directory and port"
+    echo "  $0 --image myuser/uorca:latest       # Custom Docker image"
     echo ""
-    echo "After starting, access via SSH tunnel:"
+    echo "After starting, access via SSH tunnel (if on remote server):"
     echo "  ssh -L 8000:127.0.0.1:PORT your_username@hpc_server"
     echo "  Then open http://127.0.0.1:8000 in your browser"
+    echo ""
+    echo "For local usage, simply open http://127.0.0.1:PORT in your browser"
 }
 
-# Parse arguments
-if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
-    show_usage
-    exit 0
-fi
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            show_usage
+            exit 0
+            ;;
+        -e|--engine)
+            if [[ -z "$2" ]] || [[ "$2" =~ ^- ]]; then
+                echo "Error: --engine requires a value (auto|apptainer|docker)"
+                exit 1
+            fi
+            ENGINE="$2"
+            shift 2
+            ;;
+        --image)
+            if [[ -z "$2" ]] || [[ "$2" =~ ^- ]]; then
+                echo "Error: --image requires a value"
+                exit 1
+            fi
+            DOCKER_IMAGE="$2"
+            shift 2
+            ;;
+        --sif)
+            if [[ -z "$2" ]] || [[ "$2" =~ ^- ]]; then
+                echo "Error: --sif requires a value"
+                exit 1
+            fi
+            SIF_PATH="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Error: Unknown option $1"
+            show_usage
+            exit 1
+            ;;
+        *)
+            # First positional argument is results directory
+            break
+            ;;
+    esac
+done
 
+# Parse positional arguments
 RESULTS_DIR=${1:-"../UORCA_results"}
 PORT=${2:-8501}
+
+# Validate engine selection
+if [[ "$ENGINE" != "auto" && "$ENGINE" != "apptainer" && "$ENGINE" != "docker" ]]; then
+    echo "Error: Invalid engine '$ENGINE'. Must be one of: auto, apptainer, docker"
+    exit 1
+fi
 
 # Validate port number
 if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ]; then
@@ -43,11 +111,44 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1024 ] || [ "$PORT" -gt 65535 ];
     exit 1
 fi
 
+# Resolve container engine
+if [[ "$ENGINE" == "auto" ]]; then
+    if have_apptainer; then
+        ENGINE="apptainer"
+        echo "Auto-detected: Using Apptainer"
+    elif have_docker; then
+        ENGINE="docker"
+        echo "Auto-detected: Using Docker"
+    else
+        echo "Error: Neither Apptainer nor Docker is available on this system."
+        echo "Please install one of these container engines or specify a different engine."
+        exit 1
+    fi
+else
+    # User explicitly chose an engine - validate it exists
+    if [[ "$ENGINE" == "apptainer" ]] && ! have_apptainer; then
+        echo "Error: Apptainer not found but was explicitly requested."
+        echo "Please install Apptainer or use --engine docker"
+        exit 1
+    fi
+    if [[ "$ENGINE" == "docker" ]] && ! have_docker; then
+        echo "Error: Docker not found but was explicitly requested."
+        echo "Please install Docker or use --engine apptainer"
+        exit 1
+    fi
+fi
+
 echo "=========================================="
 echo "UORCA Explorer Container Launcher"
 echo "=========================================="
+echo "Container engine: $ENGINE"
 echo "Results directory: $RESULTS_DIR"
 echo "Port: $PORT"
+if [[ "$ENGINE" == "docker" ]]; then
+    echo "Docker image: $DOCKER_IMAGE"
+else
+    echo "Apptainer SIF: $SIF_PATH"
+fi
 echo "=========================================="
 
 # Check if running in SLURM environment
@@ -56,27 +157,38 @@ if [[ -n "$SLURM_JOB_ID" ]]; then
     echo "Consider running this script outside of SLURM for better interactivity."
 fi
 
-# Load apptainer module
-echo "Loading Apptainer module..."
-if ! module load apptainer 2>/dev/null; then
-    echo "Error: Failed to load Apptainer module. Please ensure it's available on your system."
-    exit 1
+# Engine-specific setup
+if [[ "$ENGINE" == "apptainer" ]]; then
+    # Load apptainer module
+    echo "Loading Apptainer module..."
+    if ! module load apptainer 2>/dev/null; then
+        echo "Error: Failed to load Apptainer module. Please ensure it's available on your system."
+        exit 1
+    fi
+
+    # Verify SIF exists
+    if [ ! -f "$SIF_PATH" ]; then
+        echo "Error: Container file not found at $SIF_PATH"
+        echo "Please ensure the container is built and accessible."
+        echo "You may need to update the SIF path using --sif option."
+        exit 1
+    fi
+else
+    # Docker setup
+    echo "Checking Docker image availability..."
+    if ! docker image inspect "$DOCKER_IMAGE" &>/dev/null; then
+        echo "Docker image $DOCKER_IMAGE not found locally. Attempting to pull..."
+        if ! docker pull "$DOCKER_IMAGE"; then
+            echo "Error: Failed to pull Docker image $DOCKER_IMAGE"
+            echo "Please check the image name and your internet connection."
+            exit 1
+        fi
+    fi
 fi
 
 # Create temporary directory
-TEMP_DIR=$(pwd)/tmp_apptainer_explorer
+TEMP_DIR=$(pwd)/tmp_container_explorer
 mkdir -p ${TEMP_DIR}
-
-# Path to your .sif
-SIF=/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/container_testing/uorca_0.1.0.sif
-
-# Verify SIF exists
-if [ ! -f "$SIF" ]; then
-    echo "Error: Container file not found at $SIF"
-    echo "Please ensure the container is built and accessible."
-    echo "You may need to update the SIF path in this script to match your container location."
-    exit 1
-fi
 
 # Verify results directory exists
 if [ ! -d "$RESULTS_DIR" ]; then
@@ -98,7 +210,6 @@ RESULTS_DIR=$(realpath "$RESULTS_DIR")
 PROJECT_ROOT=$(pwd)
 
 echo "Using temporary directory: ${TEMP_DIR}"
-echo "Container: $SIF"
 echo "Project root: $PROJECT_ROOT"
 echo "Results directory: $RESULTS_DIR"
 echo ""
@@ -108,15 +219,8 @@ echo "  → Container path: /UORCA_results"
 echo ""
 echo "NOTE: When using the app, enter '/UORCA_results' in the results directory field."
 
-# Bind-mounts:
-#  - your repo → /workspace
-#  - the host's results directory → /UORCA_results in the container
-BIND="-B ${PROJECT_ROOT}:/workspace \
-      -B ${RESULTS_DIR}:/UORCA_results \
-      -B ${TEMP_DIR}:/tmp"
-
 # Check if port is already in use
-if ss -tuln 2>/dev/null | grep -q ":${PORT} "; then
+if ss -tuln 2>/dev/null | grep -q ":${PORT} " || netstat -tuln 2>/dev/null | grep -q ":${PORT} "; then
     echo "Warning: Port $PORT appears to be in use. The app may fail to start."
     echo "Consider using a different port or stopping other services on this port."
 fi
@@ -126,13 +230,22 @@ echo "=========================================="
 echo "Starting UORCA Explorer..."
 echo "Container will start momentarily."
 echo ""
-echo "ACCESS INSTRUCTIONS:"
-echo "1. On your laptop, run: ssh -L 8000:127.0.0.1:${PORT} $(whoami)@$(hostname)"
-echo "2. Open http://127.0.0.1:8000 in your browser"
+if [[ -n "$SSH_CONNECTION" ]] || [[ -n "$SSH_CLIENT" ]]; then
+    echo "ACCESS INSTRUCTIONS (SSH/Remote):"
+    echo "1. On your laptop, run: ssh -L 8000:127.0.0.1:${PORT} $(whoami)@$(hostname)"
+    echo "2. Open http://127.0.0.1:8000 in your browser"
+else
+    echo "ACCESS INSTRUCTIONS (Local):"
+    echo "Open http://127.0.0.1:${PORT} in your browser"
+fi
 echo ""
 echo "IMPORTANT NOTES:"
-echo "- The app will show a URL like 'http://0.0.0.0:8501' - IGNORE THIS"
-echo "- Use your SSH tunnel URL (http://127.0.0.1:8000) instead"
+if [[ "$ENGINE" == "docker" ]]; then
+    echo "- Docker will map container port 8501 to host port ${PORT}"
+    echo "- The app URL shown by Streamlit (http://0.0.0.0:8501) maps to http://127.0.0.1:${PORT}"
+else
+    echo "- The app will show a URL like 'http://0.0.0.0:${PORT}' - use your access URL instead"
+fi
 echo "- Enter '/UORCA_results' as the results directory path in the app"
 echo ""
 echo "Press Ctrl+C to stop the application"
@@ -156,24 +269,49 @@ cleanup() {
 # Set trap to cleanup on exit and common signals
 trap cleanup EXIT INT TERM
 
-# Run the container with Streamlit
+# Launch container based on engine
 echo "Launching Streamlit app in container..."
 echo "This may take a moment to initialize..."
 
-if ! apptainer exec \
-  $BIND \
-  --tmpdir=${TEMP_DIR} \
-  --cleanenv \
-  $SIF \
-  bash -lc "\
-    cd /workspace && \
-    echo 'Container started successfully. Initializing Streamlit...' && \
-    export STREAMLIT_BROWSER_GATHER_USAGE_STATS=false && \
-    export STREAMLIT_SERVER_HEADLESS=true && \
-    uv run streamlit run main_workflow/reporting/uorca_explorer.py --server.port ${PORT} --server.address 0.0.0.0 --server.headless true
-  "; then
-    echo ""
-    echo "Error: Failed to start UORCA Explorer."
-    echo "Check the error messages above for troubleshooting information."
-    exit 1
+if [[ "$ENGINE" == "apptainer" ]]; then
+    # Apptainer execution (existing logic)
+    if ! apptainer exec \
+        -B ${PROJECT_ROOT}:/workspace \
+        -B ${RESULTS_DIR}:/UORCA_results \
+        -B ${TEMP_DIR}:/tmp \
+        --tmpdir=${TEMP_DIR} \
+        --cleanenv \
+        $SIF_PATH \
+        bash -lc "\
+            cd /workspace && \
+            echo 'Container started successfully. Initializing Streamlit...' && \
+            export STREAMLIT_BROWSER_GATHER_USAGE_STATS=false && \
+            export STREAMLIT_SERVER_HEADLESS=true && \
+            uv run streamlit run main_workflow/reporting/uorca_explorer.py --server.port ${PORT} --server.address 0.0.0.0 --server.headless true
+        "; then
+        echo ""
+        echo "Error: Failed to start UORCA Explorer with Apptainer."
+        echo "Check the error messages above for troubleshooting information."
+        exit 1
+    fi
+else
+    # Docker execution
+    if ! docker run --rm -it --init \
+        -p ${PORT}:8501 \
+        -v ${PROJECT_ROOT}:/workspace:ro \
+        -v ${RESULTS_DIR}:/UORCA_results:ro \
+        -v ${TEMP_DIR}:/tmp \
+        -e STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
+        -e STREAMLIT_SERVER_HEADLESS=true \
+        -w /workspace \
+        "${DOCKER_IMAGE}" \
+        bash -c "\
+            echo 'Container started successfully. Initializing Streamlit...' && \
+            uv run streamlit run main_workflow/reporting/uorca_explorer.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+        "; then
+        echo ""
+        echo "Error: Failed to start UORCA Explorer with Docker."
+        echo "Check the error messages above for troubleshooting information."
+        exit 1
+    fi
 fi
