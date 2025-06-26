@@ -14,6 +14,7 @@ CLEANUP_DONE=0
 ENGINE="auto"
 DOCKER_IMAGE="kevingchen/uorca:0.1.0"
 SIF_PATH="/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/container_testing/uorca_0.1.0.sif"
+ENV_FILE=""
 
 # Helper functions for tool detection
 have_apptainer() { command -v apptainer &>/dev/null; }
@@ -27,6 +28,7 @@ show_usage() {
     echo "  -e, --engine ENGINE     Container engine to use: auto|apptainer|docker (default: auto)"
     echo "  --image IMAGE          Docker image to use (default: kevingchen/uorca:0.1.0)"
     echo "  --sif PATH             Apptainer .sif file path (default: built-in path)"
+    echo "  --env-file FILE        Path to .env file for Docker (default: auto-detect)"
     echo "  -h, --help             Show this help message"
     echo ""
     echo "Arguments:"
@@ -44,6 +46,13 @@ show_usage() {
     echo "  $0 -e apptainer /path/to/results     # Force Apptainer with custom results"
     echo "  $0 /path/to/results 8502             # Custom directory and port"
     echo "  $0 --image myuser/uorca:latest       # Custom Docker image"
+    echo "  $0 --env-file /path/to/.env          # Custom .env file location"
+    echo ""
+    echo "Environment Variables:"
+    echo "  For Docker: OPENAI_API_KEY and other environment variables can be set via:"
+    echo "  - .env file in project root (auto-detected)"
+    echo "  - Custom .env file with --env-file option"
+    echo "  - System environment variables (automatically passed)"
     echo ""
     echo "After starting, access via SSH tunnel (if on remote server):"
     echo "  ssh -L 8000:127.0.0.1:PORT your_username@hpc_server"
@@ -81,6 +90,14 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             SIF_PATH="$2"
+            shift 2
+            ;;
+        --env-file)
+            if [[ -z "$2" ]] || [[ "$2" =~ ^- ]]; then
+                echo "Error: --env-file requires a value"
+                exit 1
+            fi
+            ENV_FILE="$2"
             shift 2
             ;;
         -*)
@@ -183,6 +200,38 @@ else
             echo "Please check the image name and your internet connection."
             exit 1
         fi
+    fi
+fi
+
+# Handle environment variables for Docker
+if [[ "$ENGINE" == "docker" ]]; then
+    # Auto-detect .env file if not specified
+    if [[ -z "$ENV_FILE" ]]; then
+        if [[ -f "$(pwd)/.env" ]]; then
+            ENV_FILE="$(pwd)/.env"
+            echo "Auto-detected .env file: $ENV_FILE"
+        fi
+    fi
+
+    # Validate custom .env file if specified
+    if [[ -n "$ENV_FILE" ]] && [[ ! -f "$ENV_FILE" ]]; then
+        echo "Error: Specified .env file not found: $ENV_FILE"
+        exit 1
+    fi
+
+    # Check for required environment variables
+    if [[ -z "$OPENAI_API_KEY" ]] && [[ -n "$ENV_FILE" ]]; then
+        # Try to source the .env file to check for OPENAI_API_KEY
+        if grep -q "OPENAI_API_KEY" "$ENV_FILE" 2>/dev/null; then
+            echo "Found OPENAI_API_KEY in .env file"
+        else
+            echo "Warning: OPENAI_API_KEY not found in .env file or environment"
+            echo "The AI features may not work without this API key"
+        fi
+    elif [[ -z "$OPENAI_API_KEY" ]]; then
+        echo "Warning: OPENAI_API_KEY not set in environment"
+        echo "The AI features may not work without this API key"
+        echo "Consider setting it in a .env file or as an environment variable"
     fi
 fi
 
@@ -296,10 +345,26 @@ if [[ "$ENGINE" == "apptainer" ]]; then
     fi
 else
     # Docker execution
+    # Build environment variable arguments
+    ENV_ARGS=""
+
+    # Add .env file if available
+    if [[ -n "$ENV_FILE" ]]; then
+        ENV_ARGS="--env-file $ENV_FILE"
+    fi
+
+    # Pass through important environment variables if they exist
+    for var in OPENAI_API_KEY ANTHROPIC_API_KEY HUGGINGFACE_API_TOKEN; do
+        if [[ -n "${!var}" ]]; then
+            ENV_ARGS="$ENV_ARGS -e $var=${!var}"
+        fi
+    done
+
     if ! docker run --rm -it --init \
         -p ${PORT}:8501 \
         -v ${RESULTS_DIR}:/UORCA_results:ro \
         -v ${TEMP_DIR}:/tmp \
+        $ENV_ARGS \
         -e STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
         -e STREAMLIT_SERVER_HEADLESS=true \
         -w /workspace \
