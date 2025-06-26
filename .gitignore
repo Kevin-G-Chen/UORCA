@@ -94,3 +94,6 @@ poetry.lock
 notebooks/.Trash-*/
 notebooks/2_extract_data/GSE*_data/
 notebooks/2_extract_data/GSE*_FASTQs/
+
+# Streamlit config
+main_workflow/reporting/.config/
