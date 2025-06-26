@@ -1,370 +1,504 @@
 #!/usr/bin/env python3
 """
-UORCA Dataset Identification - AI-powered discovery of relevant RNA-seq datasets
+Dataset Identification Script
+============================
 
-This script intelligently identifies RNA-seq datasets from GEO that are relevant to your biological
-research question. It combines multiple AI techniques for comprehensive dataset discovery:
+This script identifies relevant RNA-seq datasets from GEO based on research queries.
+Key features:
+- Automatic API rate limiting based on API key presence
+- Parallel processing for efficient data retrieval
+- Dataset-level validation with RNA-seq criteria
+- AI-powered clustering and relevance scoring (enabled by default)
+- Multi-dataset CSV output for batch analysis (enabled by default)
 
-Key Features:
- • AI-powered relevance scoring using GPT-4 with multiple evaluation rounds
- • Optional dataset clustering for diverse, representative selection
- • Fast dataset size calculation using existing NCBI metadata
- • Comprehensive output with dataset validation and batch analysis preparation
+Requirements:
+- ENTREZ_EMAIL environment variable (required by NCBI guidelines)
+- OPENAI_API_KEY environment variable for AI features
+- Optional: ENTREZ_API_KEY for faster processing
 
-Main Workflow:
- 1. Extract biological terms from your research query and search GEO
- 2. Score dataset relevance using AI with detailed biological justification
- 3. Optionally cluster datasets by similarity to ensure diverse representation
- 4. Fetch SRA metadata and calculate dataset sizes for selected datasets
- 5. Generate comprehensive results with validity flags for downstream analysis
+Workflow:
+1. Extract search terms and query GEO database
+2. Fetch complete dataset information using esummary v2.0
+3. Retrieve SRA metadata for validation
+4. Validate datasets based on RNA-seq criteria (>3 paired-end transcriptomic samples)
+5. Cluster valid datasets and assess relevance using AI
+6. Generate results CSV and batch analysis input
 
-Usage Examples:
-  # Basic usage - find neuroblastoma datasets
-  python DatasetIdentification.py -q "neuroblastoma tumor vs normal tissue"
-
-  # Use clustering for diverse selection with batch analysis output
-  python DatasetIdentification.py -q "cardiac development mouse" --use-clustering --multi-dataset-csv
-
-  # Lower threshold for broader discovery
-  python DatasetIdentification.py -q "MYCN amplification" --threshold 6.0
-
-Output Files:
- • Dataset_identification_result.csv: Complete results with relevance scores and metadata
- • batch_analysis_input.csv: Filtered datasets ready for UORCA batch analysis (optional)
- • dataset_clusters.csv: Clustering details (if --save-clustering-details used)
-
-Technical Improvements:
- • Fast dataset size calculation using existing runinfo metadata (no subprocess calls)
- • Robust fetching with retmax=100,000 to get all UIDs in one call
- • Support for multiple BioProjects per GEO series (common in complex studies)
- • Improved retry logic and error handling for reliable NCBI API interactions
- • Optimized performance: 10-100x faster than previous vdb-dump approach
+Usage:
+    python DatasetIdentification.py --query "research query"
 """
-from __future__ import annotations
+
 import argparse
 import asyncio
-import datetime
+import io
 import json
+import logging
 import os
 import statistics
 import sys
+import threading
 import time
-import logging
+import warnings
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Optional
-from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
+from functools import partial
+from tqdm import tqdm
 
-import pandas as pd
 import numpy as np
-from pandas._libs.algos import Infinity
+import pandas as pd
+import requests
 from Bio import Entrez
 from dotenv import load_dotenv
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
-import xml.etree.ElementTree as ET
-import hdbscan
-from sklearn.preprocessing import normalize
 
-
-
-# ----------------------
-# Environment & prompts
-# ----------------------
+# Load environment variables
 load_dotenv()
-Entrez.email = os.getenv("ENTREZ_EMAIL")
-Entrez.api_key = os.getenv("ENTREZ_API_KEY")
-openai_api_key = os.getenv("OPENAI_API_KEY")
-if not openai_api_key:
-    raise RuntimeError("OPENAI_API_KEY not set")
-client = OpenAI(api_key=openai_api_key)
-PROMPT_DIR = os.getenv("PROMPT_DIR", "./main_workflow/prompts/dataset_identification")
 
-# Set up logging
-logger = logging.getLogger(__name__)
+# Configure Entrez
+if os.getenv("ENTREZ_EMAIL"):
+    Entrez.email = os.getenv("ENTREZ_EMAIL")
+if os.getenv("ENTREZ_API_KEY"):
+    Entrez.api_key = os.getenv("ENTREZ_API_KEY")
 
-def setup_logging(output_dir=None):
-    """Configure logging to both console and file if output_dir is provided."""
-    log_format = "%(asctime)s - %(levelname)s - %(message)s"
-    handlers = [logging.StreamHandler()]
+# OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    # Add file handler if output directory is provided
-    if output_dir:
-        log_dir = Path(output_dir)
-        log_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = log_dir / f"dataset_identification_{timestamp}.log"
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setFormatter(logging.Formatter(log_format))
-        handlers.append(file_handler)
-        print(f"Logging to file: {log_file}")
+# Rate limiting for API calls
+class APIRateLimiter:
+    """Thread-safe rate limiter for API calls with dynamic rates based on API key."""
+    def __init__(self, base_delay: float = None):
+        # Auto-detect optimal delay based on API key presence
+        if base_delay is None:
+            if os.getenv("ENTREZ_API_KEY"):
+                # With API key: up to 10 requests/second = 0.1 second delay
+                self.min_delay = 0.11  # Slightly conservative
+            else:
+                # Without API key: up to 3 requests/second = 0.33 second delay
+                self.min_delay = 0.34  # Slightly conservative
+        else:
+            self.min_delay = base_delay
 
-    # Configure root logger
+        self.last_call_time = 0
+        self.lock = threading.Lock()
+
+    def wait(self):
+        """Wait if necessary to respect rate limits."""
+        with self.lock:
+            current_time = time.time()
+            time_since_last_call = current_time - self.last_call_time
+            if time_since_last_call < self.min_delay:
+                sleep_time = self.min_delay - time_since_last_call
+                time.sleep(sleep_time)
+            self.last_call_time = time.time()
+
+# Global rate limiter instance with auto-detection
+api_rate_limiter = APIRateLimiter()
+
+# Constants
+MAX_RETRIES = 3
+EMBEDDING_MODEL = "text-embedding-3-small"
+
+# Configure logging
+def setup_logging(verbose: bool = False) -> None:
+    """Setup logging configuration."""
+    level = logging.DEBUG if verbose else logging.INFO
+    format_str = "%(asctime)s - %(levelname)s - %(message)s"
+
+    # Create logs directory if it doesn't exist
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
+
+    # Clear any existing handlers to avoid conflicts
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Configure logging to both file and console with forced configuration
+    file_handler = logging.FileHandler(logs_dir / "dataset_identification.log")
+    console_handler = logging.StreamHandler(sys.stdout)
+
     logging.basicConfig(
-        level=logging.WARNING,
-        format=log_format,
-        handlers=handlers,
-        force=True
+        level=level,
+        format=format_str,
+        handlers=[file_handler, console_handler],
+        force=True  # Force reconfiguration even if logging was already configured
     )
 
-    return logger
+    # Also configure warnings to use the same format
+    logging.captureWarnings(True)
+    warnings_logger = logging.getLogger('py.warnings')
+    warnings_logger.setLevel(level)
 
-def load_prompt(fname: str) -> str:
-    path = Path(PROMPT_DIR) / fname
-    return path.read_text().strip()
+for name in ("openai", "openai._base_client", "httpx"):
+    logging.getLogger(name).setLevel(logging.WARNING)
 
-# ----------------------
-# Pydantic models
-# ----------------------
+def load_prompt(file_path: str) -> str:
+    """Load prompt from file."""
+    return Path(file_path).read_text().strip()
+
+# Query config management for Streamlit integration
+def save_query_config(query: str) -> None:
+    """Save the dataset identification query to a config file for Streamlit app."""
+    config_dir = Path("main_workflow/reporting/.config")
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    config_file = config_dir / "dataset_query.json"
+    config_data = {
+        "query": query,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    with open(config_file, 'w') as f:
+        json.dump(config_data, f, indent=2)
+
+def load_query_config() -> Optional[str]:
+    """Load the dataset identification query from config file."""
+    config_file = Path("main_workflow/reporting/.config/dataset_query.json")
+
+    if config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                config_data = json.load(f)
+                return config_data.get("query")
+        except (json.JSONDecodeError, KeyError):
+            return None
+    return None
+
+# Pydantic models for structured output
 class ExtractedTerms(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     extracted_terms: List[str]
     expanded_terms: List[str]
 
 class Assessment(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     ID: str
-    RelevanceScore: float
+    RelevanceScore: int
     Justification: str
 
 class Assessments(BaseModel):
-    model_config = ConfigDict(extra="forbid")
     assessments: List[Assessment]
 
-TERMS_SCHEMA = ExtractedTerms.model_json_schema()
-ASSESS_SCHEMA = Assessments.model_json_schema()
-
-# ----------------------
-# OpenAI JSON helper
-# ----------------------
-def call_openai_json(prompt: str, schema: Dict[str, Any], name: str) -> dict:
-    resp = client.responses.create(
-        model="gpt-4.1-mini",
-        input=prompt,
-        text={"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}},
+def call_openai_json(prompt: str, user_input: str, response_format: BaseModel) -> Any:
+    """Make OpenAI API call with JSON response format."""
+    response = client.beta.chat.completions.parse(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": user_input}
+        ],
+        response_format=response_format
     )
-    return json.loads(resp.output_text)
+    return response.choices[0].message.parsed
 
-# ----------------------
-# Step 1 & 2: GEO search
-# ----------------------
-def extract_terms(query: str) -> ExtractedTerms:
-    sys_prompt = load_prompt("extract_terms.txt")
-    prompt = f"{sys_prompt}\nQuery: {query}"
-    data = call_openai_json(prompt, TERMS_SCHEMA, "extracted_terms")
-    return ExtractedTerms.model_validate(data)
+def extract_terms(research_query: str) -> ExtractedTerms:
+    """Extract search terms from research query."""
+    prompt = load_prompt("./main_workflow/prompts/dataset_identification/extract_terms.txt")
+    return call_openai_json(prompt, research_query, ExtractedTerms)
 
-def perform_search(term: str, retmax: int = 10000) -> List[str]:
+def perform_search(term: str, max_results: int = 2000) -> List[str]:
+    """Search GEO database for a single term with RNA-seq filter."""
     search = f"{term} AND (\"Expression profiling by high throughput sequencing\"[Filter])"
-    with Entrez.esearch(db="gds", term=search, retmode="xml", retmax=retmax) as h:
-        out = Entrez.read(h)
-    return out.get("IdList", [])
-
-
-def fetch_geo_summaries(ids: List[str]) -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
-    unique_ids = list(dict.fromkeys(ids))  # Ensure unique IDs to avoid redundant requests
-    print(f"⬇️ Fetching GEO summaries for {len(unique_ids)} unique datasets...")
-
-    # Split into batches of 10 for efficient fetching and to follow NCBI guidelines
-    batches = [unique_ids[i:i+10] for i in range(0, len(unique_ids), 10)]
-    logger.info(f"Processing {len(batches)} batches of GEO summaries")
-
-    for batch in tqdm(batches, desc="GEO summaries"):
-        with Entrez.esummary(db="gds", id=','.join(batch), retmode="xml") as h:
-            summaries = Entrez.read(h)
-        for rec in summaries:
-            # Safely extract PubMed IDs if available
-            pmids = []
-            try:
-                if 'PubMedIds' in rec and rec['PubMedIds']:
-                    pmids = [int(pmid) for pmid in rec['PubMedIds']]
-            except (ValueError, TypeError) as e:
-                logger.warning(f"Error extracting PubMed IDs for {rec.get('Accession', '')}: {e}")
-
-            # Build row with optional PubMed data
-            row_data = {
-                'ID': rec.get('Accession', ''),
-                'Title': rec.get('title', ''),
-                'Summary': rec.get('summary', ''),
-                'Accession': rec.get('Accession', ''),
-                'Species': rec.get('taxon', ''),
-                'Date': rec.get('PDAT', '')
-            }
-
-            # Determine number of samples if available
-            samples = rec.get('Samples', [])
-            if isinstance(samples, list):
-                row_data['NumSamples'] = len(samples)
-            else:
-                row_data['NumSamples'] = 0
-
-            # Add PubMed information when available
-            if pmids:
-                row_data['PrimaryPubMedID'] = pmids[0]
-                row_data['AllPubMedIDs'] = ','.join(str(pid) for pid in pmids)
-            else:
-                row_data['PrimaryPubMedID'] = None
-                row_data['AllPubMedIDs'] = None
-
-            rows.append(row_data)
-
-        # NCBI recommends no more than 3 requests per second without an API key
-        # With an API key, 10 requests per second are allowed
-        # We'll use 0.4s sleep (conservative for ~2.5 requests/second)
-        time.sleep(0.4)
-
-    result_df = pd.DataFrame(rows)
-    if 'NumSamples' not in result_df.columns:
-        result_df['NumSamples'] = 0
-    logger.info(f"Successfully fetched {len(result_df)} GEO summaries")
-    return result_df
-
-# ----------------------
-# Step 2.5: Dataset Clustering
-# ----------------------
-def embed_datasets(df: pd.DataFrame, max_workers: int = 4) -> np.ndarray:
-    """
-    Create embeddings for each dataset based on its title and summary.
-    Uses parallel processing to speed up embedding generation.
-
-    Args:
-        df: DataFrame containing GEO datasets with 'Title' and 'Summary' columns
-        max_workers: Maximum number of parallel workers for embedding
-
-    Returns:
-        numpy array of embeddings with shape (n_datasets, embedding_dim)
-    """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    texts = []
-    for _, row in df.iterrows():
-        # Combine title and summary for a richer embedding
-        text = f"{row['Title']}. {row['Summary']}"
-        if pd.notna(text) and len(text.strip()) > 0:
-            texts.append(text)
-        else:
-            texts.append("No information available")
-
-    def get_embedding(text, idx):
-        """Get embedding for a single text"""
-        try:
-            response = client.embeddings.create(
-                model="text-embedding-3-small",
-                input=text
-            )
-            embedding = response.data[0].embedding
-            return idx, embedding
-        except Exception as e:
-            logger.warning(f"Error creating embedding at index {idx}: {e}")
-            # Add a zero vector as fallback
-            return idx, [0.0] * 1536  # Default dimension for embedding models
-
-    # Initialize an array to store embeddings in the correct order
-    embeddings = [None] * len(texts)
-
-    # Use ThreadPoolExecutor for parallel processing
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all embedding tasks
-        future_to_idx = {
-            executor.submit(get_embedding, text, idx): idx
-            for idx, text in enumerate(texts)
-        }
-
-        # Process results as they complete
-        for future in tqdm(as_completed(future_to_idx), total=len(texts), desc=f"Creating embeddings (using {max_workers} workers)"):
-            idx, embedding = future.result()
-            embeddings[idx] = embedding
-
-    # Stack embeddings into a matrix
-    embedding_matrix = np.vstack(embeddings)
-
-    # Normalize embeddings for better clustering
-    normalized_embeddings = normalize(embedding_matrix)
-
-    return normalized_embeddings
-
-def cluster_datasets(embeddings: np.ndarray, min_cluster_size: int = 2, min_samples: int = None) -> Tuple[List[int], Dict[int, List[int]]]:
-    """
-    Cluster dataset embeddings using HDBSCAN.
-
-    Args:
-        embeddings: Matrix of dataset embeddings
-        min_cluster_size: Minimum size of clusters (replaces eps parameter)
-        min_samples: Optional minimum number of samples required for a core point
-
-    Returns:
-        Tuple of (cluster labels, dict mapping cluster labels to indices)
-    """
-    # Apply HDBSCAN clustering
-    clusterer = hdbscan.HDBSCAN(
-        min_cluster_size=min_cluster_size,
-        min_samples=min_samples if min_samples is not None else min_cluster_size,
-        metric="euclidean"
+    handle = Entrez.esearch(
+        db="gds",
+        term=search,
+        retmode="xml",
+        retmax=max_results
     )
-    labels = clusterer.fit_predict(embeddings)
+    search_results = Entrez.read(handle)
+    handle.close()
 
-    # Group indices by cluster
-    clusters = defaultdict(list)
-    for idx, label in enumerate(labels):
-        clusters[int(label)].append(idx)
+    geo_ids = search_results.get("IdList", [])
 
-    return labels.tolist(), clusters
+    return geo_ids
 
-def select_representative_datasets(df: pd.DataFrame, clusters: Dict[int, List[int]],
-                                  max_per_cluster: int = 3) -> pd.DataFrame:
+def get_basic_dataset_info(
+    geo_ids: List[str],
+    api_delay: float = 0.4,
+) -> pd.DataFrame:
+    """Get complete dataset information in parallel using esummary v2.0."""
+
+    unique_ids = list(dict.fromkeys(geo_ids))
+    workers = 6 if os.getenv("ENTREZ_API_KEY") else 2
+
+    logging.info(f"Fetching complete dataset information for {len(unique_ids)} unique datasets...")
+
+    datasets = []
+
+    def fetch_info(geo_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch esummary information for a single GEO ID."""
+        try:
+            # Get UID for this GEO ID
+            api_rate_limiter.wait()
+            handle = Entrez.esearch(db="gds", term=geo_id)
+            search_result = Entrez.read(handle)
+            handle.close()
+            uids = search_result.get("IdList", [])
+
+            if not uids:
+                logging.warning(f"No UID found for {geo_id}")
+                return None
+
+            uid = uids[0]
+
+            api_rate_limiter.wait()
+            handle = Entrez.esummary(db="gds", id=uid, version="2.0", retmode="xml")
+            doc = Entrez.read(handle)["DocumentSummarySet"]["DocumentSummary"][0]
+            handle.close()
+
+            accession = doc["Accession"]
+            if accession and accession.startswith("GSE"):
+                return {
+                    "ID": accession,
+                    "Title": doc["title"],
+                    "Summary": doc["summary"],
+                    "Accession": accession,
+                    "BioProject": doc["BioProject"],
+                    "Species": doc["taxon"],
+                    "Date": doc["PDAT"],
+                    "NumSamples": doc["n_samples"],
+                    "PrimaryPubMedID": (
+                        doc["PubMedIds"][0] if doc.get("PubMedIds") else None
+                    ),
+                }
+            else:
+                logging.warning(f"Invalid accession for {geo_id}")
+                return None
+
+        except Exception as e:
+            logging.warning(f"Error processing GEO ID {geo_id}: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=workers) as executor, \
+         tqdm(total=len(unique_ids), desc="Fetching GEO summaries", unit="dataset") as pbar:
+
+        futures = {executor.submit(fetch_info, gid): gid for gid in unique_ids}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                datasets.append(result)
+            pbar.update(1)
+
+    df = pd.DataFrame(datasets)
+    if not df.empty:
+        df = df.drop_duplicates(subset=["ID"]).reset_index(drop=True)
+
+    tqdm.write(f"Found {len(df)} unique GSE datasets with complete information")
+    return df
+
+# Streamlined SRA processing functions (old XML parsing functions removed)
+def fetch_runinfo_from_bioproject(bioproject: str, api_delay: float = 0.4) -> pd.DataFrame:
+    """Fetch RunInfo data using streamlined BioProject approach."""
+    try:
+        # 1. Search SRA and keep the server-side history
+        srch = Entrez.read(Entrez.esearch(db="sra",
+                                        term=f"{bioproject}[BioProject]",
+                                        usehistory="y"))
+        count, webenv, qk = int(srch["Count"]), srch["WebEnv"], srch["QueryKey"]
+
+        if count == 0:
+            logging.warning(f"No SRA records found for BioProject {bioproject}")
+            return pd.DataFrame()
+
+        time.sleep(api_delay)
+
+        # 2. Fetch run-level metadata
+        handle = Entrez.efetch(db="sra",
+                               rettype="runinfo",
+                               retmode="text",
+                               WebEnv=webenv,
+                               query_key=qk,
+                               retmax=count)
+
+        # 3. Convert bytes → str → DataFrame
+        csv_bytes = handle.read()                # bytes
+        csv_text = csv_bytes.decode('utf-8')    # str
+        runs = pd.read_csv(io.StringIO(csv_text))
+        handle.close()
+        return runs
+
+    except Exception as e:
+        logging.warning(f"Error fetching RunInfo for BioProject {bioproject}: {e}")
+        return pd.DataFrame()
+
+
+
+def calculate_dataset_sizes_from_runinfo(sra_df: pd.DataFrame) -> Dict[str, int]:
     """
-    Select representative datasets from each cluster for relevance assessment.
-
-    Args:
-        df: DataFrame containing GEO datasets
-        clusters: Dict mapping cluster labels to lists of indices
-        max_per_cluster: Maximum number of datasets to select from each cluster
+    Calculate dataset sizes using only valid RNA-seq samples (TRANSCRIPTOMIC, RNA-Seq, PAIRED).
 
     Returns:
-        DataFrame with selected representative datasets
+        Dictionary mapping GEO_Accession to total size in bytes (valid samples only)
     """
-    selected_indices = []
+    if sra_df.empty or 'size_MB' not in sra_df.columns or 'GEO_Accession' not in sra_df.columns:
+        logging.warning("Cannot calculate dataset sizes: missing required columns in runinfo data")
+        return {}
 
-    # For each cluster, select up to max_per_cluster representatives
-    for cluster_label, indices in clusters.items():
-        # Always include at least one dataset from each cluster
-        # For larger clusters, select more representatives up to max_per_cluster
-        n_select = min(max_per_cluster, len(indices))
+    # Filter to only valid RNA-seq samples
+    valid_samples = sra_df[
+        (sra_df['LibrarySource'] == 'TRANSCRIPTOMIC') &
+        (sra_df['LibraryStrategy'] == 'RNA-Seq') &
+        (sra_df['LibraryLayout'] == 'PAIRED')
+    ].copy()
 
-        # For now, just take the first n_select items
-        # In a more sophisticated implementation, we could select the most central items
-        selected_indices.extend(indices[:n_select])
+    if valid_samples.empty:
+        logging.info("No valid RNA-seq samples found for size calculation")
+        return {}
 
-    # Get the selected datasets
-    selected_df = df.iloc[selected_indices].copy()
+    # Convert size_MB to bytes and group by GEO accession
+    valid_samples['size_MB'] = pd.to_numeric(valid_samples['size_MB'], errors='coerce').fillna(0)
+    valid_samples['size_bytes'] = (valid_samples['size_MB'] * 1024 * 1024).astype(int)
 
-    logger.info(f"Selected {len(selected_df)} representative datasets from {len(clusters)} clusters")
+    dataset_sizes = valid_samples.groupby('GEO_Accession')['size_bytes'].sum().to_dict()
 
-    return selected_df
+    # Log results
+    total_datasets = len(dataset_sizes)
+    total_size_gb = sum(dataset_sizes.values()) / (1024**3)
+    logging.info(f"Dataset size calculation (valid samples only): {total_datasets} datasets, total: {total_size_gb:.2f} GB")
 
-# ----------------------
-# Step 3: Relevance scoring
-# ----------------------
-async def assess_subbatch(sub_df: pd.DataFrame, query: str, schema: Dict[str, Any], name: str, rep: int, batch_idx: int, total_batches: int, sem: asyncio.Semaphore) -> List[Assessment]:
+    return dataset_sizes
+
+
+
+
+def get_embedding(text: str) -> List[float]:
+    """Get embedding for text using OpenAI API."""
+    try:
+        response = client.embeddings.create(
+            model=EMBEDDING_MODEL,
+            input=text
+        )
+        return response.data[0].embedding
+    except Exception as e:
+        logging.warning(f"Error getting embedding: {e}")
+        return [0.0] * 1536  # Default embedding size
+
+def embed_datasets(datasets_df: pd.DataFrame) -> pd.DataFrame:
+    """Generate embeddings for datasets."""
+    embeddings = []
+
+    # Use progress bar for embedding generation
+    for _, row in tqdm(datasets_df.iterrows(), total=len(datasets_df), desc="Generating embeddings", unit="dataset"):
+        # Combine title and summary for embedding
+        text = f"{row.get('Title', '')} {row.get('Summary', '')}"
+        embedding = get_embedding(text)
+        embeddings.append(embedding)
+
+        time.sleep(0.1)  # Small delay for API rate limiting
+
+    # Add embeddings to dataframe
+    datasets_df = datasets_df.copy()
+    datasets_df['embedding'] = embeddings
+
+    return datasets_df
+
+def cluster_datasets(datasets_df: pd.DataFrame, n_clusters: int = None) -> pd.DataFrame:
+    """Cluster datasets based on embeddings."""
+    if len(datasets_df) <= 1:
+        datasets_df = datasets_df.copy()
+        datasets_df['Cluster'] = 0
+        return datasets_df
+
+    if n_clusters is None:
+        n_clusters = min(len(datasets_df) // 3, 10)  # Heuristic for cluster count
+        n_clusters = max(n_clusters, 1)
+
+    tqdm.write(f"Clustering {len(datasets_df)} datasets into {n_clusters} clusters...")
+
+    # Prepare embeddings
+    embeddings = np.array(datasets_df['embedding'].tolist())
+
+    # Standardize embeddings
+    scaler = StandardScaler()
+    embeddings_scaled = scaler.fit_transform(embeddings)
+
+    # Perform clustering
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+    clusters = kmeans.fit_predict(embeddings_scaled)
+
+    # Add cluster labels
+    datasets_df = datasets_df.copy()
+    datasets_df['Cluster'] = clusters
+
+    return datasets_df
+
+def select_representative_datasets(datasets_df: pd.DataFrame, max_datasets: int) -> pd.DataFrame:
+    """Select representative datasets from clusters."""
+    if len(datasets_df) <= max_datasets:
+        return datasets_df
+
+    logging.info(f"Selecting {max_datasets} representative datasets from clusters...")
+
+    representatives = []
+
+    # Get representatives from each cluster
+    for cluster_id in datasets_df['Cluster'].unique():
+        cluster_datasets = datasets_df[datasets_df['Cluster'] == cluster_id]
+
+        # For now, just take the first dataset from each cluster
+        # Could implement more sophisticated selection logic here
+        representatives.append(cluster_datasets.iloc[0])
+
+    representatives_df = pd.DataFrame(representatives)
+
+    # If we still have too many, take the top ones by some criteria
+    if len(representatives_df) > max_datasets:
+        # For now, just take the first max_datasets
+        representatives_df = representatives_df.head(max_datasets)
+
+    return representatives_df.reset_index(drop=True)
+
+# ==================== OPTIONAL: REPEATED ASSESSMENT FUNCTIONS ====================
+# The following functions implement repeated assessment with averaging
+# Remove both assess_subbatch and repeated_relevance if you want single assessment only
+async def assess_subbatch(df: pd.DataFrame, query: str, schema, key: str, rep: int, idx: int, total_batches: int, sem: asyncio.Semaphore) -> List[Assessment]:
+    """Assess a sub-batch of datasets."""
     async with sem:
-        print(f"⏳ Relevance rep {rep+1}, batch {batch_idx+1}/{total_batches}")
-        sys_prompt = load_prompt("assess_relevance.txt")
-        prompt = f"{sys_prompt}\nResearch query: \"{query}\"\nDatasets to assess (batch {batch_idx+1}):\n" + sub_df.to_json(orient='records')
-        data = await asyncio.to_thread(call_openai_json, prompt, schema, name)
-        return [Assessment.model_validate(a) for a in data['assessments']]
+        try:
+            # Prepare data for assessment
+            assessment_data = []
+            for _, row in df.iterrows():
+                assessment_data.append({
+                    "ID": row['ID'],
+                    "Species": row.get('Species', 'Unknown'),
+                    "Tissue": "Unknown",
+                    "Technique": row.get('Technique', 'RNA-seq'),
+                    "Summary": row.get('Summary', '')
+                })
 
-async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int, batch_size: int, openai_api_jobs: int) -> pd.DataFrame:
+            prompt = load_prompt("./main_workflow/prompts/dataset_identification/assess_relevance.txt")
+            user_input = f"Research Query: {query}\n\nDatasets:\n{json.dumps(assessment_data, indent=2)}"
+
+            assessments = call_openai_json(prompt, user_input, Assessments)
+            logging.info(f"Completed assessment batch {idx+1}/{total_batches} (repetition {rep+1})")
+            return assessments.assessments
+        except Exception as e:
+            logging.warning(f"Error in assessment batch {idx+1}/{total_batches} (rep {rep+1}): {e}")
+            # Return default assessments
+            return [Assessment(ID=row['ID'], RelevanceScore=5, Justification="Assessment failed") for _, row in df.iterrows()]
+
+async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, batch_size: int = 10, openai_api_jobs: int = 3) -> pd.DataFrame:
+    """Perform repeated relevance assessment with averaging."""
     print(f"📊 Starting relevance scoring: {repeats} repetitions, batch size {batch_size}, parallel API jobs: {openai_api_jobs}")
     sem = asyncio.Semaphore(openai_api_jobs)
     tasks = []
+
     # create sub-batches
     batches = [df.iloc[i:i+batch_size] for i in range(0, len(df), batch_size)]
     total_batches = len(batches)
+
     for rep in range(repeats):
         for idx, sub in enumerate(batches):
-            tasks.append(assess_subbatch(sub, query, ASSESS_SCHEMA, "assessments", rep, idx, total_batches, sem))
+            tasks.append(assess_subbatch(sub, query, None, "assessments", rep, idx, total_batches, sem))
+
     all_results = await asyncio.gather(*tasks)
+
     # flatten and aggregate
     coll: Dict[str, Dict[str, Any]] = {}
     for result in all_results:
@@ -372,6 +506,7 @@ async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int, batch_s
             entry = coll.setdefault(a.ID, {'scores': [], 'justifications': []})
             entry['scores'].append(a.RelevanceScore)
             entry['justifications'].append(a.Justification)
+
     records: List[Dict[str, Any]] = []
     for id_, v in coll.items():
         rec = {'ID': id_, 'RelevanceScore': round(statistics.mean(v['scores']), 2)}
@@ -379,155 +514,12 @@ async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int, batch_s
             rec[f'Run{i}Score'] = score
             rec[f'Run{i}Justification'] = just
         records.append(rec)
+
     return pd.DataFrame(records)
+# ===============================================================================
 
-# ----------------------
-# SRA extraction utils
-# ----------------------
-def strip_ns(root: ET.Element):
-    for e in root.iter():
-        if isinstance(e.tag, str) and '}' in e.tag:
-            e.tag = e.tag.split('}', 1)[1]
-
-
-def get_geo_uid(acc: str) -> str:
-    with Entrez.esearch(db="gds", term=acc) as h:
-        rec = Entrez.read(h)
-    # Apply rate limiting to follow NCBI guidelines
-    time.sleep(args.api_delay)
-    return rec['IdList'][0]
-
-
-def get_sra_uid(geo_uid: str) -> str:
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            with Entrez.elink(dbfrom="gds", db="sra", id=geo_uid) as h:
-                rec = Entrez.read(h)
-            # Apply rate limiting to follow NCBI guidelines
-            time.sleep(args.api_delay)
-            return rec[0]['LinkSetDb'][0]['Link'][0]['Id']
-        except Exception as e:
-            if attempt < max_retries - 1:
-                logger.warning(f"Failed to get SRA UID for {geo_uid}, attempt {attempt + 1}/{max_retries}: {e}")
-                time.sleep(10)  # Wait 10 seconds before retry
-            else:
-                raise
-
-
-def fetch_sra_xml(uid: str) -> str:
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            with Entrez.efetch(db="sra", id=uid, rettype="xml", retmode="text") as h:
-                xml_data = h.read()
-            # Apply rate limiting to follow NCBI guidelines
-            time.sleep(args.api_delay)
-            return xml_data
-        except Exception as e:
-            if attempt < max_retries - 1:
-                logger.warning(f"Failed to fetch SRA XML for {uid}, attempt {attempt + 1}/{max_retries}: {e}")
-                time.sleep(10)  # Wait 10 seconds before retry
-            else:
-                raise
-
-
-def parse_bioprojects(xml_str: str) -> List[str]:
-    """
-    Return ALL BioProject accessions found in the SRA XML, because a single
-    GEO series can map to multiple studies.
-    """
-    root = ET.fromstring(xml_str)
-    strip_ns(root)
-    nodes = root.findall('.//STUDY') + root.findall('.//PROJECT')
-    bioprojects = sorted({
-        n.attrib['accession'] for n in nodes if 'accession' in n.attrib
-    })
-    if not bioprojects:
-        raise ValueError('No BioProject accession found')
-    return bioprojects
-
-
-def fetch_runinfo(proj_acc: str, api_delay: float = 0.4, retmax: int = 100_000) -> pd.DataFrame:
-    """
-    BioProject → DataFrame containing *all* runs in that project.
-
-    Uses retmax=100_000 to grab every UID in one call (safe upper bound for
-    almost all projects). Concatenates the RunInfo CSV from every UID.
-    """
-    max_retries = 3
-    last_err: Optional[Exception] = None
-
-    for attempt in range(max_retries):
-        try:
-            # 1. Find *all* SRA UIDs linked to this BioProject
-            with Entrez.esearch(
-                db="sra",
-                term=f"{proj_acc}[BioProject]",
-                retmax=retmax
-            ) as h:
-                rec = Entrez.read(h)
-            time.sleep(api_delay)
-
-            uid_list = rec["IdList"]
-            if not uid_list:
-                logger.warning(f"No UIDs found for BioProject {proj_acc}")
-                return pd.DataFrame()  # empty result
-
-            # 2. Fetch RunInfo for every UID and concatenate
-            frames = []
-            for uid in uid_list:
-                with Entrez.efetch(db="sra", id=uid, rettype="runinfo", retmode="text") as h:
-                    frames.append(pd.read_csv(h, low_memory=False))
-                time.sleep(api_delay)
-
-            df = pd.concat(frames, ignore_index=True)
-            logger.info(f"Fetched {len(df)} SRA runs for {proj_acc} from {len(uid_list)} UIDs")
-            return df
-
-        except Exception as e:
-            last_err = e
-            if attempt < max_retries - 1:
-                logger.warning(f"Failed to fetch runinfo for {proj_acc}, attempt {attempt + 1}/{max_retries}: {e}")
-                time.sleep(10)  # Wait 10 seconds before retry
-            else:
-                raise last_err
-
-def calculate_dataset_sizes_from_runinfo(sra_df: pd.DataFrame) -> Dict[str, int]:
-    """
-    Calculate dataset sizes using the size_MB column already present in runinfo data.
-
-    This is much faster than calling vdb-dump for each SRR individually.
-
-    Returns:
-        Dictionary mapping GEO_Accession to total size in bytes
-    """
-    if sra_df.empty or 'size_MB' not in sra_df.columns or 'GEO_Accession' not in sra_df.columns:
-        logger.warning("Cannot calculate dataset sizes: missing required columns in runinfo data")
-        return {}
-
-    # Convert size_MB to bytes and group by GEO accession
-    sra_df_copy = sra_df.copy()
-    sra_df_copy['size_MB'] = pd.to_numeric(sra_df_copy['size_MB'], errors='coerce').fillna(0)
-    sra_df_copy['size_bytes'] = (sra_df_copy['size_MB'] * 1024 * 1024).astype(int)
-
-    # Group by GEO accession and sum sizes
-    dataset_sizes = sra_df_copy.groupby('GEO_Accession')['size_bytes'].sum().to_dict()
-
-    # Log results
-    total_datasets = len(dataset_sizes)
-    total_size_gb = sum(dataset_sizes.values()) / (1024**3)
-    logger.info(f"Dataset size calculation complete: {total_datasets} datasets, total: {total_size_gb:.2f} GB")
-
-    for geo_acc, size_bytes in dataset_sizes.items():
-        logger.info(f"Dataset {geo_acc}: {size_bytes:,} bytes ({size_bytes/(1024**3):.2f} GB)")
-
-    return dataset_sizes
-
-# ----------------------
-# Main
-# ----------------------
 def main():
+    """Main function."""
     parser = argparse.ArgumentParser(
         description='Identify and evaluate relevant RNA-seq datasets from GEO for a biological research query',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -546,17 +538,6 @@ def main():
     search_group = parser.add_argument_group('Search Options', 'Control dataset search and evaluation')
     search_group.add_argument('--max-datasets', type=int, default=2000,
                              help='Maximum datasets to retrieve per search term')
-    search_group.add_argument('--max-evaluate', type=int, default=None,
-                             help='Limit number of datasets to evaluate (useful for testing)')
-    search_group.add_argument('--use-clustering', action='store_true',
-                             help='Use AI clustering to select diverse, representative datasets')
-
-    # === Output Options ===
-    output_group = parser.add_argument_group('Output Options', 'Control output format and content')
-    output_group.add_argument('--multi-dataset-csv', action='store_true',
-                             help='Generate CSV formatted for multi-dataset batch analysis')
-    output_group.add_argument('--save-clustering-details', action='store_true',
-                             help='Save detailed clustering information to separate files')
 
     # === Advanced Parameters ===
     advanced_group = parser.add_argument_group('Advanced Options', 'Fine-tune algorithm behavior (expert users)')
@@ -564,337 +545,393 @@ def main():
                                help='Number of independent relevance scoring rounds for reliability')
     advanced_group.add_argument('--batch-size', type=int, default=20,
                                help='Datasets per AI evaluation batch (affects memory usage)')
-    advanced_group.add_argument('--parallel-ai-jobs', type=int, default=4,
-                               help='Concurrent AI evaluation jobs (limited by API rate limits)')
-    advanced_group.add_argument('--parallel-embedding-jobs', type=int, default=4,
-                               help='Concurrent embedding generation jobs for clustering')
-    advanced_group.add_argument('--min-cluster-size', type=int, default=2,
-                               help='Minimum cluster size for HDBSCAN clustering algorithm')
-    advanced_group.add_argument('--max-per-cluster', type=int, default=3,
-                               help='Maximum datasets to select from each cluster')
-    advanced_group.add_argument('--api-delay', type=float, default=0.4,
-                               help='Delay between NCBI API calls (seconds) to respect rate limits')
-    advanced_group.add_argument('--min-samples', type=int, default=None,
-                                help='Minimum number of samples in a neighbourhood for HDBSCAN (None lets HDBSCAN default to min_cluster_size)')
+    advanced_group.add_argument('--verbose', action='store_true',
+                                help='Enable verbose logging (DEBUG level)')
 
-
-    global args
     args = parser.parse_args()
 
+    # Check for required email (Entrez guidelines)
+    if not os.getenv("ENTREZ_EMAIL"):
+        logging.error("Email is required for NCBI Entrez API access. Please set ENTREZ_EMAIL environment variable.")
+        print("ERROR: Email is required for NCBI Entrez API access.")
+        print("Please set the ENTREZ_EMAIL environment variable with your email address.")
+        print("This is required by NCBI guidelines for API usage.")
+        return
+
+    # Auto-determine API delay based on API key presence
+    api_delay = 0.11 if os.getenv("ENTREZ_API_KEY") else 0.34
+
     # Set up logging in the output directory
+    from pathlib import Path
     output_path = Path(args.output)
     # Ensure output directory exists
     output_path.mkdir(parents=True, exist_ok=True)
-    setup_logging(output_path)
+    setup_logging(verbose=args.verbose)
 
-    message = "🧠 Extracting terms …"
-    print(message)
-    logger.info(message)
+    research_query = args.query
+    logging.info(f"Starting dataset identification for query: {research_query}")
 
-    terms = extract_terms(args.query)
-    search_terms = set(terms.extracted_terms + terms.expanded_terms)
-    log_message = f"Extracted {len(terms.extracted_terms)} direct terms and {len(terms.expanded_terms)} expanded terms"
-    logger.info(log_message)
-    log_message = f"Using {len(search_terms)} unique search terms: {', '.join(search_terms)}"
-    logger.info(log_message)
+    # Save query to config file for Streamlit app
+    save_query_config(research_query)
 
-    message = "🔍 Searching GEO …"
-    print(message)
-    logger.info(message)
-    geo_ids: List[str] = []
-    for term in search_terms:
-        message = f"Searching for: {term}"
-        print(message)
-        logger.info(message)
-        term_ids = perform_search(term, args.max_datasets)
-        geo_ids.extend(term_ids)
-        logger.info(f"Found {len(term_ids)} results for term: {term}")
-        # Apply rate limiting between searches to follow NCBI guidelines
-        time.sleep(args.api_delay)
+    try:
+        # Step 1: Extract terms from research query
+        logging.info("Extracting search terms...")
+        terms = extract_terms(research_query)
+        logging.info(f"Extracted terms: {terms.extracted_terms}")
+        logging.info(f"Expanded terms: {terms.expanded_terms}")
 
-    unique_geo_ids = list(dict.fromkeys(geo_ids))
-    logger.info(f"Found {len(geo_ids)} total GEO IDs, {len(unique_geo_ids)} unique IDs")
+        # Step 2: Search GEO database
+        logging.info("Searching GEO database...")
+        search_terms = set(terms.extracted_terms + terms.expanded_terms)
+        logging.info(f"Using {len(search_terms)} unique search terms: {', '.join(search_terms)}")
 
-    if not unique_geo_ids:
-        message = 'No GEO IDs found'
-        print(message)
-        logger.info(message)
-        sys.exit(0)
+        geo_ids = []
+        for term in tqdm(search_terms, desc="Searching GEO database", unit="term"):
+            term_ids = perform_search(term, args.max_datasets)
+            geo_ids.extend(term_ids)
+            # Apply rate limiting between searches to follow NCBI guidelines
+            time.sleep(api_delay)
 
-    geo_df = fetch_geo_summaries(unique_geo_ids)
-    logger.info(f"Fetched metadata for {len(geo_df)} GEO datasets")
+        unique_geo_ids = list(dict.fromkeys(geo_ids))
+        logging.info(f"Found {len(geo_ids)} total GEO IDs, {len(unique_geo_ids)} unique IDs")
 
-    # Filter out datasets with 3 or fewer samples
-    before_filter = len(geo_df)
-    geo_df = geo_df[geo_df['NumSamples'] > 3].reset_index(drop=True)
-    filtered = before_filter - len(geo_df)
-    if filtered:
-        message = f"🚮 Filtered out {filtered} dataset(s) with 3 or fewer samples"
-        print(message)
-        logger.info(message)
+        if not unique_geo_ids:
+            logging.error("No datasets found in search")
+            return
 
-    # Store original dataframe before any filtering for later reference
-    original_geo_df = geo_df.copy()
-
-    # Log some basic dataset statistics
-    species_counts = geo_df['Species'].value_counts()
-    logger.info(f"Species distribution: {', '.join([f'{s}({c})' for s, c in species_counts.head(5).items()])}")
-    if len(species_counts) > 5:
-        logger.info(f"... and {len(species_counts)-5} more species")
-
-    if args.use_clustering:
-        message = "🔬 Clustering datasets by similarity..."
-        print(message)
-        logger.info(message)
-        logger.info(f"Starting embedding and clustering for {len(geo_df)} datasets")
-
-        # Create embeddings
-        embeddings = embed_datasets(geo_df, max_workers=args.parallel_embedding_jobs)
-        logger.info(f"Created embeddings with shape {embeddings.shape}")
-
-        # Cluster the datasets
-        labels, clusters = cluster_datasets(embeddings, min_cluster_size=args.min_cluster_size, min_samples=args.min_samples)
-
-        # Count datasets per cluster
-        cluster_counts = {}
-        for label, indices in clusters.items():
-            cluster_counts[label] = len(indices)
-
-        # Log cluster distribution
-        logger.info(f"HDBSCAN clustering results: {len(clusters)} clusters formed")
-        for label, count in sorted(cluster_counts.items()):
-            logger.info(f"Cluster {label}: {count} datasets")
-
-        # Add cluster labels to the dataframe
-        geo_df['ClusterLabel'] = labels
-
-        # Select representative datasets from each cluster
-        representative_df = select_representative_datasets(
-            geo_df, clusters, max_per_cluster=args.max_per_cluster
+        # Step 3: Get basic dataset information
+        basic_datasets_df = get_basic_dataset_info(
+            unique_geo_ids,
+            api_delay,
         )
-        logger.info(f"Selected {len(representative_df)} representative datasets from {len(clusters)} clusters")
 
-        # Save clustering information if requested
-        if args.save_clustering_details:
-            cluster_info = geo_df[['ID', 'Accession', 'Title', 'ClusterLabel']].copy()
-            cluster_path = Path(args.output) / 'dataset_clusters.csv'
-            cluster_info.to_csv(cluster_path, index=False)
-            print(f"💾 Saved clustering information to {cluster_path}")
+        if basic_datasets_df.empty:
+            logging.error("No valid GSE datasets found")
+            return
 
-        # Use the representative datasets for relevance assessment
-        assess_df = representative_df
-        message = f"📊 Selected {len(representative_df)} representative datasets for relevance assessment"
-        print(message)
-        logger.info(message)
-    else:
-        # Use all datasets (or max_evaluate limit) for relevance assessment
-        if args.max_evaluate is not None:
-            assess_df = geo_df.head(args.max_evaluate)
+        # Step 4: Use complete dataset information from esummary v2.0
+        logging.info("Using complete dataset information from esummary v2.0...")
+        enriched_datasets_df = basic_datasets_df
+
+        # Step 5: Fetch SRA data for ALL datasets to determine validity (optimal workflow)
+        logging.info(f"🔗 Fetching SRA metadata for ALL {len(enriched_datasets_df)} datasets to determine validity...")
+        to_fetch = enriched_datasets_df  # Fetch SRA data for ALL datasets
+
+        def fetch_sra_for_dataset(row, api_delay):
+            """Fetch SRA data for a single dataset with rate limiting using streamlined approach."""
+            acc = row['ID']
+            bioproject = row.get('BioProject', '')
+
+            try:
+                # Apply rate limiting before making API calls
+                api_rate_limiter.wait()
+
+                if bioproject:
+                    df_run = fetch_runinfo_from_bioproject(bioproject, api_delay)
+                    if not df_run.empty:
+                        df_run.insert(0, 'GEO_Accession', acc)
+                        return df_run, True
+                    else:
+                        return pd.DataFrame(), False
+                else:
+                    logging.warning(f"No BioProject found for {acc}")
+                    return pd.DataFrame(), False
+
+            except Exception as e:
+                tqdm.write(f'Warning: Error processing {acc}: {e}')
+                return pd.DataFrame(), False
+
+        runs = []
+        successful_datasets = 0
+        total_runs_fetched = 0
+
+        # Auto-determine optimal SRA worker count based on API key
+        if os.getenv("ENTREZ_API_KEY"):
+            sra_workers = 6  # More aggressive with API key
         else:
-            assess_df = geo_df
+            sra_workers = 2  # Conservative without API key
+        api_rate_limiter = APIRateLimiter()
+        with ThreadPoolExecutor(max_workers=sra_workers) as executor:
+            fetch_func = partial(fetch_sra_for_dataset, api_delay=api_delay)
+            future_to_row = {executor.submit(fetch_func, row): row for _, row in to_fetch.iterrows()}
 
-    rel_df = asyncio.run(repeated_relevance(assess_df, args.query, args.scoring_rounds, args.batch_size, args.parallel_ai_jobs))
+            # Use tqdm progress bar for SRA fetching
+            with tqdm(total=len(future_to_row), desc="Fetching SRA data", unit="dataset") as pbar:
+                for future in as_completed(future_to_row):
+                    df_result, success = future.result()
+                    pbar.update(1)
 
-    # Merge relevance scores back to the original dataset
-    if args.use_clustering:
-        # Merge with the full dataset to include all datasets
-        geo_full = original_geo_df.merge(rel_df, on='ID', how='left')
-    else:
-        geo_full = geo_df.merge(rel_df, on='ID', how='left')
-
-    # Filter for SRA fetch
-    to_fetch = geo_full[geo_full['RelevanceScore'] >= args.threshold]
-    message = f"🔗 Fetching SRA metadata for {len(to_fetch)} datasets (threshold >= {args.threshold}) …"
-    print(message)
-    logger.info(message)
-    logger.info(f"Selected {len(to_fetch)}/{len(geo_full)} datasets above relevance threshold {args.threshold}")
-
-    runs: List[pd.DataFrame] = []
-    successful_datasets = 0
-    total_runs_fetched = 0
-
-    for acc in tqdm(to_fetch['Accession'].unique(), desc='Processing SRA'):
-        try:
-            g_uid = get_geo_uid(acc)
-            s_uid = get_sra_uid(g_uid)
-            xml = fetch_sra_xml(s_uid)
-            bioprojects = parse_bioprojects(xml)
-
-            # Handle multiple BioProjects for a single GEO accession
-            acc_frames = []
-            for bp in bioprojects:
-                df_run = fetch_runinfo(bp, args.api_delay)
-                if not df_run.empty:
-                    df_run.insert(0, 'GEO_Accession', acc)
-                    acc_frames.append(df_run)
-
-            if acc_frames:
-                combined_df = pd.concat(acc_frames, ignore_index=True)
-                runs.append(combined_df)
-                successful_datasets += 1
-                total_runs_fetched += len(combined_df)
-                logger.info(f"Fetched {len(combined_df)} runs for {acc} from {len(bioprojects)} BioProject(s)")
-            else:
-                logger.warning(f"No runs found for {acc}")
-
-        except Exception as e:
-            logger.info(f'Warning, skipping {acc}: {e}')
+                    if success and not df_result.empty:
+                        runs.append(df_result)
+                        successful_datasets += 1
+                        total_runs_fetched += len(df_result)
+                        pbar.set_postfix(successful=successful_datasets)
 
         if runs:
             sra_df = pd.concat(runs, ignore_index=True)
-            logger.info(f"Successfully processed {successful_datasets}/{len(to_fetch['Accession'].unique())} GEO datasets")
-            logger.info(f"Retrieved metadata for {total_runs_fetched} total SRA runs")
         else:
             sra_df = pd.DataFrame(columns=['GEO_Accession'])
-            logger.warning("No SRA runs were successfully fetched")
+            tqdm.write("Warning: No SRA runs were successfully fetched")
 
-        # Calculate dataset sizes using runinfo data (much faster than vdb-dump)
+        # Calculate dataset sizes using runinfo data
         dataset_sizes = {}
         if not sra_df.empty:
-            logger.info("🔍 Calculating dataset sizes from runinfo data...")
+            logging.info("🔍 Calculating dataset sizes from runinfo data...")
             dataset_sizes = calculate_dataset_sizes_from_runinfo(sra_df)
 
-    # Add dataset sizes to geo_full before merging
-    if dataset_sizes:
-        geo_full['DatasetSizeBytes'] = geo_full['Accession'].map(dataset_sizes)
-        geo_full['DatasetSizeGB'] = geo_full['DatasetSizeBytes'] / (1024**3)
-        # Fill NaN values with 0 for datasets where size couldn't be calculated
-        geo_full['DatasetSizeBytes'] = geo_full['DatasetSizeBytes'].fillna(0)
-        geo_full['DatasetSizeGB'] = geo_full['DatasetSizeGB'].fillna(0.0)
-    else:
-        geo_full['DatasetSizeBytes'] = 0
-        geo_full['DatasetSizeGB'] = 0.0
+        # Add dataset sizes to enriched datasets before merging
+        if dataset_sizes:
+            enriched_datasets_df['DatasetSizeBytes'] = enriched_datasets_df['ID'].map(dataset_sizes)
+            enriched_datasets_df['DatasetSizeGB'] = enriched_datasets_df['DatasetSizeBytes'] / (1024**3)
+            # Fill NaN values with 0 for datasets where size couldn't be calculated
+            enriched_datasets_df['DatasetSizeBytes'] = enriched_datasets_df['DatasetSizeBytes'].fillna(0)
+            enriched_datasets_df['DatasetSizeGB'] = enriched_datasets_df['DatasetSizeGB'].fillna(0.0)
+        else:
+            enriched_datasets_df['DatasetSizeBytes'] = 0
+            enriched_datasets_df['DatasetSizeGB'] = 0.0
 
-    # Merge all GEO datasets with fetched SRA info
-    merged = geo_full.merge(
-        sra_df,
-        left_on='Accession',
-        right_on='GEO_Accession',
-        how='left'
-    )
-    logger.info(f"Merged GEO and SRA data for {len(merged)} total records")
+        # Merge all GEO datasets with fetched SRA info
+        final_results = enriched_datasets_df.merge(
+            sra_df,
+            left_on='ID',
+            right_on='GEO_Accession',
+            how='left'
+        )
+        logging.info(f"Merged GEO and SRA data for {len(final_results)} total records")
 
-    # Select and flag validity
-    cols_to_keep = list(geo_full.columns) + ['LibrarySource', 'LibraryLayout', 'LibraryStrategy']
-    final = merged[cols_to_keep].copy()
+        # Step 6: Validate ALL datasets based on complete SRA criteria (dataset-level validation)
+        validation_data = []
 
-    # Count non-null values for SRA fields
-    sra_fields_present = final[['LibrarySource', 'LibraryLayout', 'LibraryStrategy']].notna().sum()
-    logger.info(f"Records with SRA fields: LibrarySource={sra_fields_present['LibrarySource']}, "
-                f"LibraryLayout={sra_fields_present['LibraryLayout']}, "
-                f"LibraryStrategy={sra_fields_present['LibraryStrategy']}")
+        # Group by dataset (GSE ID) for proper dataset-level validation
+        grouped_datasets = list(final_results.groupby('ID'))
+        for gse_id, group in tqdm(grouped_datasets, desc="Validating datasets", unit="dataset"):
+            # Count samples that meet RNA-seq criteria
+            rnaseq_samples = 0
+            total_samples = len(group)
 
-    final['Valid'] = final.apply(
-        lambda row: 'Yes' if (row.get('LibraryLayout') == 'PAIRED' \
-                              and row.get('LibrarySource') == 'TRANSCRIPTOMIC') else 'No',
-        axis=1
-    )
+            # Track all library types present in this dataset
+            lib_sources = set()
+            lib_layouts = set()
+            lib_strategies = set()
 
-    # Log detailed distribution of LibraryLayout and LibrarySource values
-    summary_message = "\n📊 Distribution of Library properties:"
-    print(summary_message)
-    logger.info(summary_message)
+            # Check each sample in the dataset
+            for _, row in group.iterrows():
+                lib_source = row.get('LibrarySource')
+                lib_layout = row.get('LibraryLayout')
+                lib_strategy = row.get('LibraryStrategy')
 
-    # Calculate the number of samples with SRA metadata
-    samples_with_sra = final['LibraryLayout'].notna().sum()
+                # Track all library types (for reporting)
+                if pd.notna(lib_source):
+                    lib_sources.add(lib_source)
+                if pd.notna(lib_layout):
+                    lib_layouts.add(lib_layout)
+                if pd.notna(lib_strategy):
+                    lib_strategies.add(lib_strategy)
 
-    # Count LibraryLayout values
-    layout_counts = final['LibraryLayout'].value_counts().to_dict()
-    summary_message = "\nLibraryLayout distribution:"
-    logger.info(summary_message)
-    print(summary_message)
-    for layout, count in layout_counts.items():
-        percentage = count/samples_with_sra*100 if samples_with_sra > 0 else 0
-        message = f"  - {layout if pd.notna(layout) else 'NA'}: {count} samples ({percentage:.1f}% of SRA samples)"
-        logger.info(message)
+                # Check if this sample meets RNA-seq criteria
+                if (pd.notna(lib_source) and lib_source == 'TRANSCRIPTOMIC' and
+                    pd.notna(lib_strategy) and lib_strategy == 'RNA-Seq' and
+                    pd.notna(lib_layout) and lib_layout == 'PAIRED'):
+                    rnaseq_samples += 1
+
+            # Dataset-level validation: need >3 samples meeting RNA-seq criteria
+            if total_samples == 0:
+                valid = False
+                reason = "No SRA metadata available"
+            elif rnaseq_samples == 0:
+                reason_parts = []
+                if 'TRANSCRIPTOMIC' not in lib_sources:
+                    reason_parts.append(f"LibrarySource: {'/'.join(lib_sources) if lib_sources else 'None'}")
+                if 'RNA-Seq' not in lib_strategies:
+                    reason_parts.append(f"LibraryStrategy: {'/'.join(lib_strategies) if lib_strategies else 'None'}")
+                if 'PAIRED' not in lib_layouts:
+                    reason_parts.append(f"LibraryLayout: {'/'.join(lib_layouts) if lib_layouts else 'None'}")
+                valid = False
+                reason = f"No RNA-seq samples found ({'; '.join(reason_parts)})"
+            elif rnaseq_samples <= 3:
+                valid = False
+                reason = f"Insufficient RNA-seq samples: {rnaseq_samples} (need >3)"
+            else:
+                valid = True
+                # Include info about mixed library types if present
+                mixed_info = []
+                if len(lib_sources) > 1:
+                    mixed_info.append(f"Sources: {'/'.join(lib_sources)}")
+                if len(lib_strategies) > 1:
+                    mixed_info.append(f"Strategies: {'/'.join(lib_strategies)}")
+                if len(lib_layouts) > 1:
+                    mixed_info.append(f"Layouts: {'/'.join(lib_layouts)}")
+
+                if mixed_info:
+                    reason = f"Valid: {rnaseq_samples}/{total_samples} RNA-seq samples (mixed types: {'; '.join(mixed_info)})"
+                else:
+                    reason = f"Valid: {rnaseq_samples}/{total_samples} RNA-seq samples"
+
+            validation_data.append({
+                'ID': gse_id,
+                'valid_dataset': valid,
+                'validation_reason': reason,
+                'rnaseq_samples': rnaseq_samples,
+                'total_samples': total_samples
+            })
+
+        validation_df = pd.DataFrame(validation_data)
+
+        # Merge validation results back to final_results
+        final_results = final_results.merge(validation_df, on='ID', how='left', validate='many_to_one')
+
+        # Step 7: Create dataset-level summary
+        # Create one row per dataset (remove duplicates from multiple samples)
+        dataset_summary = final_results.groupby('ID').agg({
+            'Title': 'first',
+            'Summary': 'first',
+            'Accession': 'first',
+            'Species': 'first',
+            'Date': 'first',
+            'NumSamples': 'first',
+            'PrimaryPubMedID': 'first',
+            'DatasetSizeBytes': 'first',
+            'DatasetSizeGB': 'first',
+            'valid_dataset': 'first',
+            'validation_reason': 'first',
+            'rnaseq_samples': 'first',
+            'total_samples': 'first'
+        }).reset_index()
+
+        # Filter to valid and invalid datasets for processing
+        valid_datasets_df = dataset_summary[dataset_summary['valid_dataset'] == True].copy()
+        invalid_datasets_df = dataset_summary[dataset_summary['valid_dataset'] == False].copy()
+
+        logging.info(f"Found {len(valid_datasets_df)} valid datasets and {len(invalid_datasets_df)} invalid datasets")
+
+        if len(valid_datasets_df) == 0:
+            logging.error("No valid datasets found - cannot proceed with clustering/relevance assessment")
+            # Still output all datasets for transparency
+            final_results = pd.concat([valid_datasets_df, invalid_datasets_df], ignore_index=True)
+        else:
+            # Step 8: Embed and cluster valid datasets
+            tqdm.write(f"Embedding {len(valid_datasets_df)} valid datasets...")
+            embedded_df = embed_datasets(valid_datasets_df)
+
+            tqdm.write("Clustering valid datasets...")
+            clustered_df = cluster_datasets(embedded_df)
+
+            # Step 9: Select representative datasets
+            tqdm.write("Selecting representative datasets for assessment...")
+            representatives_df = select_representative_datasets(clustered_df, 10)
+
+            # Step 10: Assess relevance of representatives
+            tqdm.write(f"Assessing relevance of {len(representatives_df)} representative datasets...")
+            assessed_df = asyncio.run(repeated_relevance(representatives_df, research_query, repeats=args.scoring_rounds, batch_size=args.batch_size, openai_api_jobs=4))
+
+            # Step 11: Merge assessment results back to valid datasets
+            valid_with_scores = valid_datasets_df.merge(assessed_df, on='ID', how='left')
+
+            # Combine valid (with scores) and invalid datasets for final output
+            final_results = pd.concat([
+                valid_with_scores,
+                invalid_datasets_df
+            ], ignore_index=True)
+
+        # Apply relevance score threshold
+        if args.threshold > 0:
+            pre_threshold_count = len(final_results)
+            # Keep datasets that either don't have a relevance score (invalid) or meet the threshold
+            final_results = final_results[
+                (final_results['RelevanceScore'].isna()) |
+                (final_results['RelevanceScore'] >= args.threshold)
+            ]
+            post_threshold_count = len(final_results)
+            filtered_count = pre_threshold_count - post_threshold_count
+            if filtered_count > 0:
+                logging.info(f"Applied relevance threshold {args.threshold}: filtered out {filtered_count} datasets")
+
+        # Remove embedding column to prevent CSV malformation
+        if 'embedding' in final_results.columns:
+            final_results = final_results.drop('embedding', axis=1)
+
+        # Create simplified final dataframe with only requested columns
+        final = pd.DataFrame()
+
+        # Helper functions for URLs
+        def create_pubmed_url(pmid):
+            if pd.notna(pmid):
+                return f"https://pubmed.ncbi.nlm.nih.gov/{int(pmid)}/"
+            return None
+
+        def create_geo_url(accession):
+            if pd.notna(accession):
+                return f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={accession}"
+            return None
+
+        # Create the simplified output columns
+        final['GEO_Accession'] = final_results['ID']
+        final['Title'] = final_results.get('Title', '')
+        final['Summary'] = final_results.get('Summary', '')
+        final['Species'] = final_results.get('Species', 'Unknown')
+        final['Date'] = final_results.get('Date', '')
+        final['Samples'] = final_results.get('rnaseq_samples', 0)  # Number of valid RNA-seq samples
+        final['Valid'] = final_results.get('valid_dataset', False).apply(lambda x: 'Yes' if x else 'No')
+        final['Validation_Result'] = final_results.get('validation_reason', 'Unknown')
+        final['DatasetSizeGB'] = final_results.get('DatasetSizeGB', 0.0)
+        final['RelevanceScore'] = final_results.get('RelevanceScore', None)
+        final['Justification'] = final_results.get('Run1Justification', None)
+        final['PubMed_URL'] = final_results.get('PrimaryPubMedID').apply(create_pubmed_url)
+        final['GEO_URL'] = final_results['ID'].apply(create_geo_url)
+
+        final = final.drop_duplicates(subset=['GEO_Accession'])
+
+        # Save to output directory
+        main_output_file = output_path / "Dataset_identification_result.csv"
+
+        final.to_csv(main_output_file, index=False)
+        message = f'Saved combined table to {main_output_file}'
+        logging.info(message)
         print(message)
 
-    # Count LibrarySource values
-    source_counts = final['LibrarySource'].value_counts().to_dict()
-    summary_message = "\nLibrarySource distribution:"
-    logger.info(summary_message)
-    print(summary_message)
-    for source, count in source_counts.items():
-        percentage = count/samples_with_sra*100 if samples_with_sra > 0 else 0
-        message = f"  - {source if pd.notna(source) else 'NA'}: {count} samples ({percentage:.1f}% of SRA samples)"
-        logger.info(message)
-        print(message)
-
-    # Count LibraryStrategy values
-    strategy_counts = final['LibraryStrategy'].value_counts().to_dict()
-    summary_message = "\nLibraryStrategy distribution:"
-    logger.info(summary_message)
-    print(summary_message)
-    for strategy, count in strategy_counts.items():
-        percentage = count/samples_with_sra*100 if samples_with_sra > 0 else 0
-        message = f"  - {strategy if pd.notna(strategy) else 'NA'}: {count} samples ({percentage:.1f}% of SRA samples)"
-        logger.info(message)
-        print(message)
-
-    # Print validity summary
-    valid_counts = final['Valid'].value_counts().to_dict()
-    summary_message = "\nValidity summary:"
-    logger.info(summary_message)
-    print(summary_message)
-    yes_count = valid_counts.get('Yes', 0)
-    message = f"  - Valid samples (PAIRED + TRANSCRIPTOMIC): {yes_count} ({yes_count/len(final)*100:.1f}% of total)"
-    logger.info(message)
-    print(message)
-    no_count = valid_counts.get('No', 0)
-    message = f"  - Invalid samples: {no_count} ({no_count/len(final)*100:.1f}% of total)"
-    logger.info(message)
-    print(message)
-    print()
-
-    # For convenience, generate URLs to PubMed and GEO
-    def create_pubmed_url(pmid):
-        if pd.notna(pmid):
-            return f"https://pubmed.ncbi.nlm.nih.gov/{int(pmid)}/"
-        return None
-
-    def create_geo_url(accession):
-        if pd.notna(accession):
-            return f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={accession}"
-        return None
-
-    final['PubMedURL'] = final['PrimaryPubMedID'].apply(create_pubmed_url)
-    final['GEOURL'] = final['Accession'].apply(create_geo_url)
-
-    final = final.drop_duplicates(subset=['Accession'])
-
-
-    # Save to output directory
-    main_output_file = output_path / "Dataset_identification_result.csv"
-
-    final.to_csv(main_output_file, index=False)
-    message = f'Saved combined table to {main_output_file}'
-    logger.info(message)
-    print(message)
-
-    # Save a separate file with the selected datasets and their clusters if clustering was used
-    if args.use_clustering and 'ClusterLabel' in geo_full.columns:
-        selected_path = output_path / 'selected_datasets.csv'
-
-        selected_cols = ['ID', 'Accession', 'Title', 'ClusterLabel', 'RelevanceScore']
-        selected_df = geo_full[selected_cols].sort_values(['ClusterLabel', 'RelevanceScore'], ascending=[True, False])
-        selected_df.to_csv(selected_path, index=False)
-        message = f'Saved selected datasets with cluster information to {selected_path}'
-        logger.info(message)
-        print(message)
-
-    if args.multi_dataset_csv:
-        multi_df = final[['Accession', 'Species', 'PrimaryPubMedID', 'RelevanceScore', 'Valid', 'DatasetSizeBytes', 'DatasetSizeGB']].copy()
+        # Generate multi-dataset CSV for batch analysis (default behavior)
+        multi_df = final[['GEO_Accession', 'Species', 'RelevanceScore', 'Valid', 'DatasetSizeGB']].copy()
         multi_df = multi_df[multi_df['Valid'] == 'Yes']
+        multi_df = multi_df.dropna(subset=['RelevanceScore'])  # Only include assessed datasets
+        multi_df = multi_df[multi_df['RelevanceScore'] >= args.threshold]  # Apply threshold to batch CSV
         multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
-        multi_df = multi_df.rename(columns={'Species': 'organism'})
+        multi_df = multi_df.rename(columns={'Species': 'organism', 'GEO_Accession': 'Accession'})
 
         # Set path for the multi-dataset CSV in the output directory
         multi_csv_path = output_path / 'batch_analysis_input.csv'
 
         multi_df.to_csv(multi_csv_path, index=False)
-        message = f"Generated batch analysis input CSV at {multi_csv_path}"
-        logger.info(message)
+        message = f"Generated batch analysis input CSV at {multi_csv_path} (threshold {args.threshold} applied)"
+        logging.info(message)
         print(message)
 
-if __name__ == '__main__':
+        # Print summary results
+        print(f"\n{'='*80}")
+        print("DATASET IDENTIFICATION RESULTS")
+        print(f"{'='*80}")
+        print(f"Research Query: {research_query}")
+        print(f"Total datasets found: {len(final)}")
+        print(f"Valid datasets: {len(final[final['Valid'] == 'Yes'])}")
+        print(f"Invalid datasets: {len(final[final['Valid'] == 'No'])}")
+        print(f"Assessed datasets: {len(final.dropna(subset=['RelevanceScore']))}")
+
+        if args.threshold > 0:
+            above_threshold = len(final[final['RelevanceScore'].notna() & (final['RelevanceScore'] >= args.threshold)])
+            print(f"Above threshold ({args.threshold}): {above_threshold}")
+
+        assessed_final = final.dropna(subset=['RelevanceScore']).sort_values('RelevanceScore', ascending=False)
+        if not assessed_final.empty:
+            print(f"\nTop assessed datasets:")
+            for i, (_, row) in enumerate(assessed_final.head(5).iterrows()):
+                print(f"{i+1}. {row['GEO_Accession']}: {row['RelevanceScore']}/10 - {row['Title'][:80]}...")
+
+        print(f"\nClustering enabled: Yes (default)")
+        print(f"Multi-dataset CSV generated: Yes (default)")
+
+    except Exception as e:
+        logging.error(f"Error in main execution: {e}")
+        raise
+
+if __name__ == "__main__":
     main()
