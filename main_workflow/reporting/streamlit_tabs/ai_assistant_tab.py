@@ -153,10 +153,10 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
         st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
         return
 
-    # Step 1: Contrast Relevance Assessment with Selection
-    with st.spinner("Step 1/2: Assessing contrast relevance and selecting optimal subset..."):
+    # Run complete analysis workflow in single spinner
+    with st.spinner("Running complete AI analysis: assessing contrast relevance and analyzing differential expression patterns..."):
         try:
-            # Try to use intelligent selection if available
+            # Step 1: Contrast Relevance Assessment with Selection (no display)
             if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE:
                 # Run contrast relevance assessment with intelligent selection
                 results_df, selected_contrasts = run_contrast_relevance_with_selection(
@@ -168,10 +168,6 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                 )
 
                 if not results_df.empty and selected_contrasts:
-                    _display_relevance_and_selection_results(
-                        ri, results_df, selected_contrasts, research_query
-                    )
-
                     # Store SELECTED contrasts for AI gene analysis (not all contrasts)
                     selected_contrast_dicts = [
                         {'analysis_id': sc.analysis_id, 'contrast_id': sc.contrast_id}
@@ -179,10 +175,6 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                     ]
                     st.session_state['selected_contrasts_for_ai'] = selected_contrast_dicts
                     st.session_state['research_query'] = research_query
-
-                    # Show selection summary
-                    st.success(f"✅ Selected {len(selected_contrasts)} optimal contrasts from {len(results_df)} total contrasts for detailed analysis!")
-
                 else:
                     st.warning("No contrasts found for assessment.")
                     return
@@ -197,29 +189,16 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                 )
 
                 if not results_df.empty:
-                    _display_relevance_results(ri, results_df, research_query)
-
                     # Store results for AI gene analysis
                     st.session_state['selected_contrasts_for_ai'] = \
                         results_df[['analysis_id','contrast_id']].to_dict('records')
                     st.session_state['research_query'] = research_query
+                    selected_contrasts = None  # No selection objects in fallback mode
                 else:
                     st.warning("No contrasts found for assessment.")
                     return
 
-        except Exception as e:
-            st.error(f"Error during contrast relevance assessment: {str(e)}")
-            with st.expander("🔍 Error Details", expanded=False):
-                import traceback
-                st.code(traceback.format_exc())
-            return
-
-
-
-    # Step 2: AI Gene Analysis (now using SELECTED contrasts only)
-    st.markdown("---")
-    with st.spinner("Step 2/2: AI is analyzing differential expression patterns in selected contrasts..."):
-        try:
+            # Step 2: AI Gene Analysis (using selected contrasts)
             # Set the RESULTS_DIR environment variable for the MCP server
             os.environ['RESULTS_DIR'] = results_dir
 
@@ -272,46 +251,26 @@ Please perform the analysis using your four tools, choose all thresholds reasona
             # Run the agent analysis
             result_output, tool_calls = _execute_ai_analysis(agent, prompt)
 
-            # Display results
-            _display_ai_analysis_results(result_output, research_query, selected_contrast_dicts, tool_calls)
+            # Get tool calls for display
+            log_file = get_current_log_file()
+            if log_file and log_file.exists():
+                display_tool_calls = get_ai_tool_logs_for_display()
+            else:
+                display_tool_calls = []
+
+            # Display unified results
+            _display_unified_ai_results(
+                ri, result_output, research_query, selected_contrast_dicts,
+                results_df, selected_contrasts, display_tool_calls
+            )
 
         except Exception as e:
-            logger.error(f"Error in AI gene analysis: {str(e)}", exc_info=True)
+            logger.error(f"Error in AI analysis workflow: {str(e)}", exc_info=True)
             st.error(f"❌ Analysis failed: {str(e)}")
 
             with st.expander("🔍 Error Details", expanded=False):
                 import traceback
                 st.code(traceback.format_exc())
-
-    # Display Tool Logs (at the end after analysis is complete)
-    st.markdown("---")
-    st.subheader("🔧 AI Tool Call Logs")
-    st.markdown("**Detailed logs of AI agent tool usage** from the completed analysis.")
-
-    # Get current log file with debugging
-    log_file = get_current_log_file()
-
-
-
-    if log_file and log_file.exists():
-        # Get tool calls for display
-        tool_calls = get_ai_tool_logs_for_display()
-
-        if tool_calls:
-            st.success(f"✅ Found {len(tool_calls)} tool calls in log file")
-
-            # Create tabs for different views
-            detailed_tab, raw_tab = st.tabs(["📊 Detailed View", "📄 Raw Log"])
-
-            with detailed_tab:
-                _display_tool_calls_detailed(tool_calls)
-
-            with raw_tab:
-                _display_raw_log_file()
-        else:
-            st.warning("⚠️ Log file exists but no tool calls found")
-    else:
-        st.info("🔍 No tool log file found. Logs appear after running AI analysis.")
 
 
 @log_streamlit_function
@@ -512,12 +471,17 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
 
 
 @log_streamlit_function
-def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_question: str, selected_contrasts: List[Dict], tool_calls: List[Dict] = None):
-    """Display the AI gene analysis results with structured output."""
-    log_streamlit_event("AI gene analysis completed successfully")
-    st.success("✅ Analysis completed successfully!")
-
-
+def _display_unified_ai_results(
+    ri: ResultsIntegrator,
+    result_output: GeneAnalysisOutput,
+    research_question: str,
+    selected_contrast_dicts: List[Dict],
+    results_df: pd.DataFrame,
+    selected_contrasts: Optional[List] = None,
+    tool_calls: Optional[List[Dict]] = None
+):
+    """Display unified AI analysis results with tabbed interface."""
+    log_streamlit_event("AI analysis completed successfully")
 
     # Use the structured output directly
     try:
@@ -528,26 +492,21 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
         st.markdown(str(result_output))
         return
 
-    # Get ResultsIntegrator from session state or create one
-    ri = st.session_state.get('results_integrator')
-    if not ri:
-        try:
-            from .helpers import get_integrator
-            results_dir = st.session_state.get('results_dir', '/UORCA_results')
-            ri, _ = get_integrator(results_dir)
-        except ImportError:
-            st.warning("Could not load data integrator. Some visualizations may not be available.")
-            ri = None
-
     genes = set(parsed.genes)  # normalize + dedupe
-    contrasts = [(item['analysis_id'], item['contrast_id']) for item in selected_contrasts]
+    contrasts = [(item['analysis_id'], item['contrast_id']) for item in selected_contrast_dicts]
 
-    # --- AI Interpretation (at the start)
+    # --- AI Interpretation (at the very top)
     st.subheader("🧠 AI-Driven Interpretation")
     st.markdown(parsed.interpretation)
 
     # Create tabs for organized display
-    gene_tab, table_tab, heatmap_tab = st.tabs(["🧬 Selected Genes", "📊 Expression Data", "🌡️ Heatmap"])
+    gene_tab, heatmap_tab, table_tab, contrast_tab, logs_tab = st.tabs([
+        "🧬 Selected Genes",
+        "🌡️ Heatmap",
+        "📊 Expression Data",
+        "🎯 Contrast Selection",
+        "🔧 Tool Logs"
+    ])
 
     # Prepare data for all tabs
     if ri and ri.deg_data:
@@ -585,83 +544,13 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
 
         st.write(f"**Total genes:** {len(sorted_genes)}")
 
-    # Tab 2: Expression Table
-    with table_tab:
-        st.subheader("Log Fold Change Data")
-
-        if rows:
-            lfc_df = pd.DataFrame(rows)
-            st.dataframe(
-                lfc_df,
-                use_container_width=True,
-                column_config={
-                    "logFC": st.column_config.NumberColumn("Log2FC", format="%.2f"),
-                    "P-value": st.column_config.NumberColumn("P-value", format="%.2e")
-                }
-            )
-        else:
-            st.info("No expression data found for the selected genes in the chosen contrasts.")
-
-        if missing:
-            st.info(f"ℹ️ {len(missing)} gene(s) not present in the selected contrasts: {', '.join(missing)}")
-
-    # Tab 3: Heatmap
-    with heatmap_tab:
-        st.subheader("Expression Heatmap")
-
-        if rows and len(genes - set(missing)) > 0:
-            try:
-                fig = ri.create_lfc_heatmap(
-                    genes=list(genes - set(missing)),
-                    contrasts=contrasts
-                )
-                if fig:
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("Could not generate heatmap for the selected genes.")
-            except Exception as e:
-                st.warning(f"Error generating heatmap: {str(e)}")
-        else:
-            st.warning("No expression data available for heatmap visualization.")
-
-    # --- Download Options
-    st.subheader("📥 Download Options")
-
-    # Create columns for download buttons
-    col1, col2 = st.columns(2)
-
-    with col1:
-        # Download filtered dataframe CSV
-        try:
-            # Try to get the filtered dataframe that the AI agent worked with
-            try:
-                from mcp_server_core import get_filtered_dataframe
-                filtered_df = get_filtered_dataframe()
-
-                if not filtered_df.empty:
-                    csv_data = filtered_df.to_csv(index=False)
-                    st.download_button(
-                        label="📊 Download Filtered Dataset (CSV)",
-                        data=csv_data,
-                        file_name="uorca_ai_filtered_data.csv",
-                        mime="text/csv",
-                        help="Download the exact dataset the AI agent analyzed"
-                    )
-                else:
-                    st.info("No filtered data available for download")
-            except ImportError:
-                st.info("Filtered dataset download not available (MCP server not loaded)")
-        except Exception as e:
-            st.warning(f"Could not prepare filtered dataset: {e}")
-
-    with col2:
         # Download analysis report
         analysis_report = f"""
 # AI Gene Analysis Report
 
 **Research Question:** {research_question}
 
-**Contrasts Analyzed:** {len(selected_contrasts)}
+**Contrasts Analyzed:** {len(selected_contrast_dicts)}
 
 ## Selected Genes
 {', '.join(sorted(genes))}
@@ -681,6 +570,152 @@ def _display_ai_analysis_results(result_output: GeneAnalysisOutput, research_que
             mime="text/markdown",
             help="Download the complete analysis report"
         )
+
+    # Tab 2: Heatmap
+    with heatmap_tab:
+        st.subheader("Expression Heatmap")
+
+        if rows and len(genes - set(missing)) > 0:
+            try:
+                fig = ri.create_lfc_heatmap(
+                    genes=list(genes - set(missing)),
+                    contrasts=contrasts
+                )
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Could not generate heatmap for the selected genes.")
+            except Exception as e:
+                st.warning(f"Error generating heatmap: {str(e)}")
+        else:
+            st.warning("No expression data available for heatmap visualization.")
+
+    # Tab 3: Expression Table
+    with table_tab:
+        st.subheader("Log Fold Change Data")
+
+        if rows:
+            lfc_df = pd.DataFrame(rows)
+            st.dataframe(
+                lfc_df,
+                use_container_width=True,
+                column_config={
+                    "logFC": st.column_config.NumberColumn("Log2FC", format="%.2f"),
+                    "P-value": st.column_config.NumberColumn("P-value", format="%.2e")
+                }
+            )
+
+            # Download filtered dataframe CSV
+            try:
+                from mcp_server_core import get_filtered_dataframe
+                filtered_df = get_filtered_dataframe()
+
+                if not filtered_df.empty:
+                    csv_data = filtered_df.to_csv(index=False)
+                    st.download_button(
+                        label="📊 Download Filtered Dataset (CSV)",
+                        data=csv_data,
+                        file_name="uorca_ai_filtered_data.csv",
+                        mime="text/csv",
+                        help="Download the exact dataset the AI agent analyzed"
+                    )
+            except ImportError:
+                st.info("Filtered dataset download not available (MCP server not loaded)")
+            except Exception as e:
+                st.warning(f"Could not prepare filtered dataset: {e}")
+
+        else:
+            st.info("No expression data found for the selected genes in the chosen contrasts.")
+
+        if missing:
+            st.info(f"ℹ️ {len(missing)} gene(s) not present in the selected contrasts: {', '.join(missing)}")
+
+    # Tab 4: Contrast Selection
+    with contrast_tab:
+        st.subheader("Selected Contrasts for Analysis")
+
+        if selected_contrasts and hasattr(selected_contrasts[0], 'selection_justification'):
+            # Show intelligent selection results
+            st.markdown("*Intelligently chosen subset for detailed analysis*")
+
+            # Create DataFrame for selected contrasts
+            selected_data = []
+            for sc in selected_contrasts:
+                # Find the relevance info
+                relevance_row = results_df[
+                    (results_df['analysis_id'] == sc.analysis_id) &
+                    (results_df['contrast_id'] == sc.contrast_id)
+                ]
+
+                if not relevance_row.empty:
+                    selected_data.append({
+                        'Dataset': relevance_row.iloc[0].get('Accession', sc.analysis_id),
+                        'Contrast': sc.contrast_id,
+                        'Justification': sc.selection_justification
+                    })
+
+            if selected_data:
+                selected_df = pd.DataFrame(selected_data)
+                st.dataframe(
+                    selected_df,
+                    use_container_width=True,
+                    column_config={
+                        "Dataset": st.column_config.TextColumn("Dataset", help="Dataset accession (GSE)"),
+                        "Contrast": st.column_config.TextColumn("Contrast", help="Contrast identifier"),
+                        "Justification": st.column_config.TextColumn("Justification", help="Why selected for analysis")
+                    }
+                )
+        else:
+            # Show basic contrast list
+            st.markdown("*Contrasts used in analysis*")
+
+            # Prepare contrast display data
+            contrast_display_data = []
+            for item in selected_contrast_dicts:
+                aid = item['analysis_id']
+                cid = item['contrast_id']
+
+                # Get additional info if available
+                accession = ri.analysis_info.get(aid, {}).get('accession', aid) if ri else aid
+                description = ri._get_contrast_description(aid, cid) if ri else ''
+
+                contrast_display_data.append({
+                    'Dataset': accession,
+                    'Contrast': cid,
+                    'Description': description
+                })
+
+            if contrast_display_data:
+                contrast_df = pd.DataFrame(contrast_display_data)
+                st.dataframe(
+                    contrast_df,
+                    use_container_width=True,
+                    column_config={
+                        "Dataset": st.column_config.TextColumn("Dataset", help="Dataset accession (GSE)"),
+                        "Contrast": st.column_config.TextColumn("Contrast", help="Contrast identifier"),
+                        "Description": st.column_config.TextColumn("Description", help="Contrast description")
+                    }
+                )
+
+        # Provide download option for contrast selection data
+        if not results_df.empty:
+            csv = results_df.to_csv(index=False)
+            st.download_button(
+                label="📥 Download All Contrast Relevance Scores (CSV)",
+                data=csv,
+                file_name=f"contrast_relevance_scores.csv",
+                mime="text/csv"
+            )
+
+    # Tab 5: Tool Logs
+    with logs_tab:
+        st.subheader("AI Tool Call Logs")
+        st.markdown("**Detailed logs of AI agent tool usage** from the completed analysis.")
+
+        if tool_calls:
+            _display_tool_calls_detailed(tool_calls)
+        else:
+            st.info("🔍 No tool calls found. Logs appear after running AI analysis.")
 
 
 
