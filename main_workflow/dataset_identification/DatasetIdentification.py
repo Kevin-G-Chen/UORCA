@@ -225,7 +225,7 @@ def get_basic_dataset_info(
     """Get complete dataset information in parallel using esummary v2.0."""
 
     unique_ids = list(dict.fromkeys(geo_ids))
-    workers = 6 if os.getenv("ENTREZ_API_KEY") else 2
+    workers = 8 if os.getenv("ENTREZ_API_KEY") else 2
 
     logging.info(f"Fetching complete dataset information for {len(unique_ids)} unique datasets...")
 
@@ -648,7 +648,7 @@ def main():
 
         # Auto-determine optimal SRA worker count based on API key
         if os.getenv("ENTREZ_API_KEY"):
-            sra_workers = 6  # More aggressive with API key
+            sra_workers = 8  # More aggressive with API key
         else:
             sra_workers = 2  # Conservative without API key
         api_rate_limiter = APIRateLimiter()
