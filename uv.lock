@@ -2325,6 +2325,7 @@ dependencies = [
     { name = "tabulate" },
     { name = "tiktoken" },
     { name = "toml" },
+    { name = "tqdm" },
     { name = "unidecode" },
 ]
 
@@ -2356,6 +2357,7 @@ requires-dist = [
     { name = "tabulate", specifier = ">=0.9.0" },
     { name = "tiktoken", specifier = ">=0.9.0" },
     { name = "toml", specifier = ">=0.10.2" },
+    { name = "tqdm", specifier = ">=4.67.1" },
     { name = "unidecode", specifier = ">=1.3.8" },
 ]
 
