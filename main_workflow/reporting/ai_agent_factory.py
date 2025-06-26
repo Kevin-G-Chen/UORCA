@@ -89,29 +89,7 @@ def create_uorca_agent() -> Agent:
         logger.error(f"Failed to create UORCA MCP agent: {e}")
         raise RuntimeError(f"Agent creation failed: {e}")
 
-@log_streamlit_function
-def validate_agent_setup(agent: Agent) -> bool:
-    """Run a simple query to ensure the agent and server work."""
-    async def _run_test():
-        async with agent.run_mcp_servers():
-            # Start validation analysis session
-            start_ai_analysis_session("validation")
 
-            result = await agent.run("Test the get_most_common_genes tool with lfc_thresh=1.0, p_thresh=0.05, top_n=5")
-            return result.output if hasattr(result, "output") else result
-
-    try:
-        import asyncio
-        output = asyncio.run(_run_test())
-        logger.info(f"Agent validation successful: {output}")
-
-        # Clear validation tool calls
-        clear_ai_tool_logs()
-
-        return True
-    except Exception as e:
-        logger.error(f"Agent validation failed: {e}")
-        return False
 
 # Convenience function for Streamlit apps
 def get_uorca_agent() -> Agent:
