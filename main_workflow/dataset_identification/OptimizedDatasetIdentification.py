@@ -11,10 +11,11 @@ Key features:
 - Enhanced reporting with validation reasons
 
 Workflow (optimal efficiency):
-1. Fetch ALL dataset information including SRA metadata
-2. Validate ALL datasets based on complete criteria
-3. Only perform expensive operations (clustering, relevance) on valid datasets
-4. Include ALL datasets in final output for transparency
+1. Streamlined dataset info fetch using esummary v2.0 (title, summary, BioProject, etc.)
+2. Fetch SRA metadata for ALL datasets using BioProject directly
+3. Validate ALL datasets based on complete SRA criteria
+4. Only perform expensive operations (clustering, relevance) on valid datasets
+5. Include ALL datasets in final output for transparency
 
 Usage:
     python OptimizedDatasetIdentification.py "research query" --max-datasets 10
@@ -22,6 +23,7 @@ Usage:
 
 import argparse
 import asyncio
+import io
 import json
 import logging
 import os
@@ -168,11 +170,11 @@ def perform_search(term: str, max_results: int = 2000) -> List[str]:
     return geo_ids
 
 def get_basic_dataset_info(geo_ids: List[str], api_delay: float = 0.4) -> pd.DataFrame:
-    """Get basic dataset information without full summaries."""
+    """Get complete dataset information using streamlined esummary v2.0 approach."""
     datasets = []
     unique_ids = list(dict.fromkeys(geo_ids))  # Ensure unique IDs to avoid redundant requests
 
-    logging.info(f"Fetching basic dataset information for {len(unique_ids)} unique datasets...")
+    logging.info(f"Fetching complete dataset information for {len(unique_ids)} unique datasets...")
 
     # Split into batches of 10 for efficient fetching and to follow NCBI guidelines
     batches = [unique_ids[i:i+10] for i in range(0, len(unique_ids), 10)]
@@ -180,22 +182,49 @@ def get_basic_dataset_info(geo_ids: List[str], api_delay: float = 0.4) -> pd.Dat
 
     for batch in batches:
         try:
-            handle = Entrez.esummary(db="gds", id=','.join(batch), retmode="xml")
-            summaries = Entrez.read(handle)
+            # Get the GEO UIDs first
+            handle = Entrez.esearch(db="gds", term=' OR '.join(batch))
+            search_result = Entrez.read(handle)
+            handle.close()
+            uids = search_result.get("IdList", [])
+
+            if not uids:
+                logging.warning(f"No UIDs found for batch {batch}")
+                continue
+
+            time.sleep(api_delay)
+
+            # Use streamlined esummary v2.0 approach
+            handle = Entrez.esummary(db="gds", id=','.join(uids), retmode="xml", version="2.0")
+            result = Entrez.read(handle)
             handle.close()
 
-            for i, rec in enumerate(summaries):
-                # Build basic dataset info using same approach as original script
-                accession = rec.get('Accession', '')
+            # Extract using correct DocumentSummarySet structure
+            if "DocumentSummarySet" in result and "DocumentSummary" in result["DocumentSummarySet"]:
+                summaries = result["DocumentSummarySet"]["DocumentSummary"]
 
-                # Only include datasets with valid accession
-                if accession:
-                    datasets.append({
-                        "ID": accession,  # Use accession directly as ID like original script
-                        "GEO_ID": batch[i] if i < len(batch) else batch[0],  # Map to corresponding batch ID
-                        "Title": rec.get('title', ''),
-                        "Accession": accession
-                    })
+                # Handle both single document and list of documents
+                if not isinstance(summaries, list):
+                    summaries = [summaries]
+
+                for doc in summaries:
+                    # Extract comprehensive information using streamlined approach
+                    accession = doc.get('Accession', '')
+
+                    # Only include datasets with valid GSE accession
+                    if accession and accession.startswith('GSE'):
+                        datasets.append({
+                            "ID": accession,
+                            "Title": doc.get('title', ''),
+                            "Summary": doc.get('summary', ''),
+                            "Accession": accession,
+                            "BioProject": doc.get('BioProject', ''),
+                            "Species": doc.get('taxon', ''),
+                            "Date": doc.get('PDAT', ''),
+                            "NumSamples": doc.get('n_samples', 0),
+                            "PrimaryPubMedID": doc.get('PubMedIds', {}).get('int', [None])[0] if doc.get('PubMedIds') else None,
+                            "AllPubMedIDs": doc.get('PubMedIds', {}).get('int', []) if doc.get('PubMedIds') else None
+                        })
 
             time.sleep(api_delay)
 
@@ -208,93 +237,44 @@ def get_basic_dataset_info(geo_ids: List[str], api_delay: float = 0.4) -> pd.Dat
     if not df.empty:
         df = df.drop_duplicates(subset=['ID']).reset_index(drop=True)
 
-    logging.info(f"Found {len(df)} unique GSE datasets")
+    logging.info(f"Found {len(df)} unique GSE datasets with complete information")
     return df
 
-# XML and SRA processing functions
-def strip_ns(root: ET.Element) -> None:
-    """Remove XML namespaces for easier XPath."""
-    for el in root.iter():
-        if isinstance(el.tag, str) and "}" in el.tag:
-            el.tag = el.tag.split("}", 1)[1]
-
-def get_geo_uid(gse: str) -> str:
-    """Get GEO UID from GSE accession."""
-    handle = Entrez.esearch(db="gds", term=gse)
-    result = Entrez.read(handle)
-    handle.close()
-    if result["IdList"]:
-        return result["IdList"][0]
-    raise ValueError(f"No GEO UID found for {gse}")
-
-def get_sra_uid(geo_uid: str) -> str:
-    """Get SRA UID from GEO UID."""
-    handle = Entrez.elink(dbfrom="gds", db="sra", id=geo_uid)
-    result = Entrez.read(handle)
-    handle.close()
-
-    if result and result[0].get("LinkSetDb"):
-        links = result[0]["LinkSetDb"]
-        for link_set in links:
-            if link_set.get("Link"):
-                return link_set["Link"][0]["Id"]
-
-    raise ValueError(f"No SRA UID found for GEO UID {geo_uid}")
-
-def fetch_sra_xml(sra_uid: str) -> str:
-    """Fetch SRA XML data."""
-    handle = Entrez.efetch(db="sra", id=sra_uid, rettype="xml", retmode="text")
-    xml_data = handle.read()
-    handle.close()
-    return xml_data
-
-def parse_bioprojects(xml_str: str) -> List[str]:
-    """Parse BioProject accessions from SRA XML."""
-    root = ET.fromstring(xml_str)
-    strip_ns(root)
-    nodes = root.findall(".//STUDY") + root.findall(".//PROJECT")
-    accs = {n.attrib["accession"] for n in nodes if "accession" in n.attrib}
-    if not accs:
-        raise ValueError("No BioProject accession found in SRA XML")
-    return sorted(accs)
-
-def fetch_runinfo(gse: str, api_delay: float = 0.4, retmax: int = 100_000) -> pd.DataFrame:
-    """Fetch RunInfo data for a GSE accession with no retries for faster processing."""
+# Streamlined SRA processing functions (old XML parsing functions removed)
+def fetch_runinfo_from_bioproject(bioproject: str, api_delay: float = 0.4) -> pd.DataFrame:
+    """Fetch RunInfo data using streamlined BioProject approach."""
     try:
-        # GSE -> GEO UID
-        geo_uid = get_geo_uid(gse)
+        # 1. Search SRA and keep the server-side history
+        srch = Entrez.read(Entrez.esearch(db="sra",
+                                        term=f"{bioproject}[BioProject]",
+                                        usehistory="y"))
+        count, webenv, qk = int(srch["Count"]), srch["WebEnv"], srch["QueryKey"]
+
+        if count == 0:
+            logging.warning(f"No SRA records found for BioProject {bioproject}")
+            return pd.DataFrame()
+
         time.sleep(api_delay)
 
-        # GEO UID -> SRA UID
-        sra_uid = get_sra_uid(geo_uid)
-        time.sleep(api_delay)
+        # 2. Fetch run-level metadata
+        handle = Entrez.efetch(db="sra",
+                               rettype="runinfo",
+                               retmode="text",
+                               WebEnv=webenv,
+                               query_key=qk,
+                               retmax=count)
 
-        # SRA UID -> XML -> BioProjects
-        xml_data = fetch_sra_xml(sra_uid)
-        bioprojects = parse_bioprojects(xml_data)
-        time.sleep(api_delay)
+        # 3. Convert bytes → str → DataFrame
+        csv_bytes = handle.read()                # bytes
+        csv_text = csv_bytes.decode('utf-8')    # str
+        runs = pd.read_csv(io.StringIO(csv_text))
+        handle.close()
 
-        # BioProjects -> RunInfo
-        frames = []
-        for bp in bioprojects:
-            handle = Entrez.esearch(db="sra", term=f"{bp}[BioProject]", retmax=retmax)
-            uid_list = Entrez.read(handle)["IdList"]
-            handle.close()
-
-            for uid in uid_list:
-                handle = Entrez.efetch(db="sra", id=uid, rettype="runinfo", retmode="text")
-                try:
-                    df = pd.read_csv(handle, low_memory=False)
-                    frames.append(df)
-                except Exception as e:
-                    logging.warning(f"Error reading RunInfo for {uid}: {e}")
-                handle.close()
-                time.sleep(api_delay)
-
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        logging.info(f"Fetched {len(runs)} runs for BioProject {bioproject}")
+        return runs
 
     except Exception as e:
-        logging.warning(f"Error fetching RunInfo for {gse}: {e}")
+        logging.warning(f"Error fetching RunInfo for BioProject {bioproject}: {e}")
         return pd.DataFrame()
 
 
@@ -334,51 +314,10 @@ def calculate_dataset_sizes_from_runinfo(sra_df: pd.DataFrame) -> Dict[str, int]
 # =====================================================================================
 
 
-# validate_and_size_datasets function removed - validation now happens after SRA merge
-# to match original implementation workflow
-
-def fetch_geo_summaries_for_valid(valid_datasets_df: pd.DataFrame, api_delay: float = 0.4) -> pd.DataFrame:
-    """Fetch detailed GEO summaries only for valid datasets."""
-    logging.info(f"Fetching GEO summaries for {len(valid_datasets_df)} valid datasets...")
-
-    enriched_datasets = []
-
-    for _, row in valid_datasets_df.iterrows():
-        gse_id = row['ID']
-        geo_id = row['GEO_ID']
-
-        try:
-            # Fetch detailed summary
-            handle = Entrez.esummary(db="gds", id=geo_id)
-            summary = Entrez.read(handle)[0]
-            handle.close()
-
-            # Extract relevant information
-            title = summary.get("title", "")
-            summary_text = summary.get("summary", "")
-            organism = summary.get("taxon", "")
-
-            enriched_datasets.append({
-                **row.to_dict(),
-                "Title": title,
-                "Summary": summary_text,
-                "Species": organism,
-                "Technique": "RNA-seq"  # We know this from filtering
-            })
-
-            time.sleep(api_delay)
-
-        except Exception as e:
-            logging.warning(f"Error fetching summary for {gse_id}: {e}")
-            # Keep the dataset but with limited info
-            enriched_datasets.append({
-                **row.to_dict(),
-                "Summary": "Summary not available",
-                "Species": "Unknown",
-                "Technique": "RNA-seq"
-            })
-
-    return pd.DataFrame(enriched_datasets)
+# Removed functions for streamlined workflow:
+# - validate_and_size_datasets: validation now happens after SRA merge
+# - fetch_geo_summaries_for_valid: all info now fetched via esummary v2.0
+# - get_geo_uid, get_sra_uid, fetch_sra_xml, parse_bioprojects: replaced with direct BioProject approach
 
 def get_embedding(text: str) -> List[float]:
     """Get embedding for text using OpenAI API."""
@@ -632,41 +571,35 @@ def main():
             logging.error("No valid GSE datasets found")
             return
 
-        # Step 4: Fetch detailed summaries for all datasets
-        logging.info("Fetching detailed GEO summaries for all datasets...")
-        enriched_datasets_df = fetch_geo_summaries_for_valid(basic_datasets_df, args.api_delay)
+        # Step 4: Complete dataset info already fetched via streamlined esummary v2.0
+        logging.info("Using complete dataset information from streamlined esummary v2.0...")
+        enriched_datasets_df = basic_datasets_df  # Already has title, summary, BioProject, species, etc.
 
         # Step 5: Fetch SRA data for ALL datasets to determine validity (optimal workflow)
         logging.info(f"🔗 Fetching SRA metadata for ALL {len(enriched_datasets_df)} datasets to determine validity...")
         to_fetch = enriched_datasets_df  # Fetch SRA data for ALL datasets
 
         def fetch_sra_for_dataset(row, api_delay):
-            """Fetch SRA data for a single dataset with rate limiting."""
+            """Fetch SRA data for a single dataset with rate limiting using streamlined approach."""
             acc = row['ID']
+            bioproject = row.get('BioProject', '')
+
             try:
                 # Apply rate limiting before making API calls
                 api_rate_limiter.wait()
-                g_uid = get_geo_uid(acc)
-                api_rate_limiter.wait()
-                s_uid = get_sra_uid(g_uid)
-                api_rate_limiter.wait()
-                xml = fetch_sra_xml(s_uid)
-                bioprojects = parse_bioprojects(xml)
 
-                # Handle multiple BioProjects for a single GEO accession
-                acc_frames = []
-                for bp in bioprojects:
-                    df_run = fetch_runinfo(bp, api_delay)
+                if bioproject:
+                    # Use BioProject directly from esummary (streamlined approach)
+                    df_run = fetch_runinfo_from_bioproject(bioproject, api_delay)
                     if not df_run.empty:
                         df_run.insert(0, 'GEO_Accession', acc)
-                        acc_frames.append(df_run)
-
-                if acc_frames:
-                    combined_df = pd.concat(acc_frames, ignore_index=True)
-                    logging.info(f"Fetched {len(combined_df)} runs for {acc} from {len(bioprojects)} BioProject(s)")
-                    return combined_df, True
+                        logging.info(f"Fetched {len(df_run)} runs for {acc} using BioProject {bioproject}")
+                        return df_run, True
+                    else:
+                        logging.warning(f"No runs found for {acc} with BioProject {bioproject}")
+                        return pd.DataFrame(), False
                 else:
-                    logging.warning(f"No runs found for {acc}")
+                    logging.warning(f"No BioProject found for {acc}")
                     return pd.DataFrame(), False
 
             except Exception as e:
