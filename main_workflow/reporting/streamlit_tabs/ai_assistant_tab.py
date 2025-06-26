@@ -37,6 +37,21 @@ setup_fragment_decorator()
 
 logger = logging.getLogger(__name__)
 
+
+def load_query_config() -> Optional[str]:
+    """Load the dataset identification query from config file."""
+    config_file_path = "main_workflow/reporting/.config/dataset_query.json"
+
+    try:
+        if os.path.exists(config_file_path):
+            with open(config_file_path, 'r') as f:
+                config_data = json.load(f)
+                return config_data.get("query")
+    except (json.JSONDecodeError, KeyError, FileNotFoundError):
+        pass
+    return None
+
+
 # Check for AI functionality availability
 
 try:
@@ -85,11 +100,24 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
     st.subheader("🧬 AI-Powered Gene Analysis")
     st.markdown("**Complete AI analysis of your RNA-seq data.** Enter your research question below and the AI will assess contrast relevance and identify key genes in one workflow.")
 
+    # Load saved query from dataset identification
+    saved_query = load_query_config()
+    default_placeholder = "e.g., What contrasts are most relevant to T cell activation and differentiation?"
+
+    # Use saved query as placeholder if available
+    if saved_query:
+        placeholder_text = f"Dataset query: {saved_query}"
+        help_text = "Using the research question from your dataset identification. You can modify this or enter a new question focusing on specific aspects of your data."
+    else:
+        placeholder_text = default_placeholder
+        help_text = "Describe your research question or area of interest. The AI will score each contrast based on how relevant it is to this query, then analyze key genes."
+
     # Research query input
     research_query = st.text_input(
         "Research Question",
-        placeholder="e.g., What contrasts are most relevant to T cell activation and differentiation?",
-        help="Describe your research question or area of interest. The AI will score each contrast based on how relevant it is to this query, then analyze key genes."
+        value=saved_query if saved_query else "",
+        placeholder=placeholder_text,
+        help=help_text
     )
 
     # Single workflow button
