@@ -6,12 +6,12 @@ Optimized Dataset Identification Script
 This script performs dataset identification with optimal workflow and parallelization.
 Key features:
 - API key-based dynamic rate limiting (9 req/sec with key, 3 req/sec without)
-- Parallel processing for SRA fetching and dataset validation
+- Parallel processing for GEO summary retrieval, SRA fetching, and dataset validation
 - Optimal workflow: get all info → validate → cluster/score only valid datasets
 - Enhanced reporting with validation reasons
 
 Workflow (optimal efficiency):
-1. Streamlined dataset info fetch using esummary v2.0 (title, summary, BioProject, etc.)
+1. Parallel dataset info fetch using esummary v2.0 (title, summary, BioProject, etc.)
 2. Fetch SRA metadata for ALL datasets using BioProject directly
 3. Validate ALL datasets based on complete SRA criteria
 4. Only perform expensive operations (clustering, relevance) on valid datasets
@@ -190,17 +190,28 @@ def perform_search(term: str, max_results: int = 2000) -> List[str]:
 
     return geo_ids
 
-def get_basic_dataset_info(geo_ids: List[str], api_delay: float = 0.4) -> pd.DataFrame:
-    """Get complete dataset information using streamlined esummary v2.0 approach."""
+def get_basic_dataset_info(
+    geo_ids: List[str],
+    api_delay: float = 0.4,
+    workers: Optional[int] = None,
+) -> pd.DataFrame:
+    """Get complete dataset information in parallel using esummary v2.0."""
+
+    unique_ids = list(dict.fromkeys(geo_ids))
+    if workers is None:
+        workers = 6 if os.getenv("ENTREZ_API_KEY") else 2
+
+    logging.info(
+        f"Fetching complete dataset information for {len(unique_ids)} unique datasets using {workers} workers..."
+    )
+
     datasets = []
-    unique_ids = list(dict.fromkeys(geo_ids))  # Ensure unique IDs to avoid redundant requests
 
-    logging.info(f"Fetching complete dataset information for {len(unique_ids)} unique datasets...")
-
-    # Process each GEO ID individually
-    for geo_id in unique_ids:
+    def fetch_info(geo_id: str) -> Optional[Dict[str, Any]]:
+        """Fetch esummary information for a single GEO ID."""
         try:
-            # Get the UID for this specific GEO ID
+            # Get UID for this GEO ID
+            api_rate_limiter.wait()
             handle = Entrez.esearch(db="gds", term=geo_id)
             search_result = Entrez.read(handle)
             handle.close()
@@ -208,45 +219,49 @@ def get_basic_dataset_info(geo_ids: List[str], api_delay: float = 0.4) -> pd.Dat
 
             if not uids:
                 logging.warning(f"No UID found for {geo_id}")
-                continue
+                return None
 
-            # Use the first UID (should typically be only one)
             uid = uids[0]
-            time.sleep(api_delay)
 
-            # Get dataset information using esummary v2.0
+            api_rate_limiter.wait()
             handle = Entrez.esummary(db="gds", id=uid, version="2.0", retmode="xml")
             doc = Entrez.read(handle)["DocumentSummarySet"]["DocumentSummary"][0]
             handle.close()
 
-            # Extract comprehensive information using streamlined approach
-            accession = doc['Accession']
-
-            # Only include datasets with valid GSE accession
-            if accession and accession.startswith('GSE'):
-                datasets.append({
+            accession = doc["Accession"]
+            if accession and accession.startswith("GSE"):
+                logging.info(f"Fetched dataset {accession} with UID {uid}")
+                return {
                     "ID": accession,
-                    "Title": doc['title'],
-                    "Summary": doc['summary'],
+                    "Title": doc["title"],
+                    "Summary": doc["summary"],
                     "Accession": accession,
-                    "BioProject": doc['BioProject'],
-                    "Species": doc['taxon'],
-                    "Date": doc['PDAT'],
-                    "NumSamples": doc['n_samples'],
-                    "PrimaryPubMedID": (doc["PubMedIds"][0] if doc.get("PubMedIds") else None),
-                })
-            logging.info(f"Fetched dataset {accession} with UID {uid}")
-
-            time.sleep(api_delay)
+                    "BioProject": doc["BioProject"],
+                    "Species": doc["taxon"],
+                    "Date": doc["PDAT"],
+                    "NumSamples": doc["n_samples"],
+                    "PrimaryPubMedID": (
+                        doc["PubMedIds"][0] if doc.get("PubMedIds") else None
+                    ),
+                }
+            else:
+                logging.warning(f"Invalid accession for {geo_id}")
+                return None
 
         except Exception as e:
             logging.warning(f"Error processing GEO ID {geo_id}: {e}")
-            continue
+            return None
 
-    # Remove duplicates by ID (accession)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(fetch_info, gid): gid for gid in unique_ids}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                datasets.append(result)
+
     df = pd.DataFrame(datasets)
     if not df.empty:
-        df = df.drop_duplicates(subset=['ID']).reset_index(drop=True)
+        df = df.drop_duplicates(subset=["ID"]).reset_index(drop=True)
 
     logging.info(f"Found {len(df)} unique GSE datasets with complete information")
     return df
@@ -529,6 +544,8 @@ def main():
                                help='Maximum datasets to select from each cluster')
     advanced_group.add_argument('--api-delay', type=float, default=0.4,
                                help='Delay between API calls (seconds) to respect rate limits')
+    advanced_group.add_argument('--info-workers', type=int, default=None,
+                               help='Parallel workers for GEO summary fetching (auto-detects based on API key)')
     advanced_group.add_argument('--validation-workers', type=int, default=None,
                                help='Number of parallel workers for dataset validation (auto-detects based on API key)')
     advanced_group.add_argument('--sra-workers', type=int, default=None,
@@ -585,7 +602,11 @@ def main():
             return
 
         # Step 3: Get basic dataset information
-        basic_datasets_df = get_basic_dataset_info(unique_geo_ids, args.api_delay)
+        basic_datasets_df = get_basic_dataset_info(
+            unique_geo_ids,
+            args.api_delay,
+            workers=args.info_workers,
+        )
 
         if basic_datasets_df.empty:
             logging.error("No valid GSE datasets found")
