@@ -31,6 +31,7 @@ import statistics
 import sys
 import threading
 import time
+import warnings
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -108,15 +109,35 @@ def setup_logging(verbose: bool = False) -> None:
     logs_dir = Path("logs")
     logs_dir.mkdir(exist_ok=True)
 
-    # Configure logging to both file and console
+    # Clear any existing handlers to avoid conflicts
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Configure logging to both file and console with forced configuration
+    file_handler = logging.FileHandler(logs_dir / "dataset_identification.log")
+    console_handler = logging.StreamHandler(sys.stdout)
+
     logging.basicConfig(
         level=level,
         format=format_str,
-        handlers=[
-            logging.FileHandler(logs_dir / "dataset_identification.log"),
-            logging.StreamHandler(sys.stdout)
-        ]
+        handlers=[file_handler, console_handler],
+        force=True  # Force reconfiguration even if logging was already configured
     )
+
+    # Also configure warnings to use the same format
+    logging.captureWarnings(True)
+    warnings_logger = logging.getLogger('py.warnings')
+    warnings_logger.setLevel(level)
+
+    # Debug: Print configuration info to stderr to ensure it's visible
+    print(f"🔧 LOGGING SETUP DEBUG:", file=sys.stderr)
+    print(f"   - Level: {logging.getLevelName(level)}", file=sys.stderr)
+    print(f"   - Format: {format_str}", file=sys.stderr)
+    print(f"   - Handlers count: {len(logging.getLogger().handlers)}", file=sys.stderr)
+    print(f"   - File handler: {logs_dir / 'dataset_identification.log'}", file=sys.stderr)
+    print(f"   - Console handler: stdout", file=sys.stderr)
+    print("🔧 LOGGING SETUP COMPLETE", file=sys.stderr)
 
 def load_prompt(file_path: str) -> str:
     """Load prompt from file."""
@@ -176,60 +197,50 @@ def get_basic_dataset_info(geo_ids: List[str], api_delay: float = 0.4) -> pd.Dat
 
     logging.info(f"Fetching complete dataset information for {len(unique_ids)} unique datasets...")
 
-    # Split into batches of 10 for efficient fetching and to follow NCBI guidelines
-    batches = [unique_ids[i:i+10] for i in range(0, len(unique_ids), 10)]
-    logging.info(f"Processing {len(batches)} batches of GEO summaries")
-
-    for batch in batches:
+    # Process each GEO ID individually
+    for geo_id in unique_ids:
         try:
-            # Get the GEO UIDs first
-            handle = Entrez.esearch(db="gds", term=' OR '.join(batch))
+            # Get the UID for this specific GEO ID
+            handle = Entrez.esearch(db="gds", term=geo_id)
             search_result = Entrez.read(handle)
             handle.close()
             uids = search_result.get("IdList", [])
 
             if not uids:
-                logging.warning(f"No UIDs found for batch {batch}")
+                logging.warning(f"No UID found for {geo_id}")
                 continue
 
+            # Use the first UID (should typically be only one)
+            uid = uids[0]
             time.sleep(api_delay)
 
-            # Use streamlined esummary v2.0 approach
-            handle = Entrez.esummary(db="gds", id=','.join(uids), retmode="xml", version="2.0")
-            result = Entrez.read(handle)
+            # Get dataset information using esummary v2.0
+            handle = Entrez.esummary(db="gds", id=uid, version="2.0", retmode="xml")
+            doc = Entrez.read(handle)["DocumentSummarySet"]["DocumentSummary"][0]
             handle.close()
 
-            # Extract using correct DocumentSummarySet structure
-            if "DocumentSummarySet" in result and "DocumentSummary" in result["DocumentSummarySet"]:
-                summaries = result["DocumentSummarySet"]["DocumentSummary"]
+            # Extract comprehensive information using streamlined approach
+            accession = doc['Accession']
 
-                # Handle both single document and list of documents
-                if not isinstance(summaries, list):
-                    summaries = [summaries]
-
-                for doc in summaries:
-                    # Extract comprehensive information using streamlined approach
-                    accession = doc.get('Accession', '')
-
-                    # Only include datasets with valid GSE accession
-                    if accession and accession.startswith('GSE'):
-                        datasets.append({
-                            "ID": accession,
-                            "Title": doc.get('title', ''),
-                            "Summary": doc.get('summary', ''),
-                            "Accession": accession,
-                            "BioProject": doc.get('BioProject', ''),
-                            "Species": doc.get('taxon', ''),
-                            "Date": doc.get('PDAT', ''),
-                            "NumSamples": doc.get('n_samples', 0),
-                            "PrimaryPubMedID": doc.get('PubMedIds', {}).get('int', [None])[0] if doc.get('PubMedIds') else None,
-                            "AllPubMedIDs": doc.get('PubMedIds', {}).get('int', []) if doc.get('PubMedIds') else None
-                        })
+            # Only include datasets with valid GSE accession
+            if accession and accession.startswith('GSE'):
+                datasets.append({
+                    "ID": accession,
+                    "Title": doc['title'],
+                    "Summary": doc['summary'],
+                    "Accession": accession,
+                    "BioProject": doc['BioProject'],
+                    "Species": doc['taxon'],
+                    "Date": doc['PDAT'],
+                    "NumSamples": doc['n_samples'],
+                    "PrimaryPubMedID": (doc["PubMedIds"][0] if doc.get("PubMedIds") else None),
+                })
+            logging.info(f"Fetched dataset {accession} with UID {uid}")
 
             time.sleep(api_delay)
 
         except Exception as e:
-            logging.warning(f"Error processing batch {batch}: {e}")
+            logging.warning(f"Error processing GEO ID {geo_id}: {e}")
             continue
 
     # Remove duplicates by ID (accession)
@@ -524,6 +535,8 @@ def main():
                                help='Number of parallel workers for SRA data fetching (auto-detects based on API key)')
     advanced_group.add_argument('--min-samples', type=int, default=None,
                                 help='Minimum number of samples in a neighbourhood for HDBSCAN (None lets HDBSCAN default to min_cluster_size)')
+    advanced_group.add_argument('--verbose', action='store_true',
+                                help='Enable verbose logging (DEBUG level)')
 
     args = parser.parse_args()
 
@@ -532,7 +545,14 @@ def main():
     output_path = Path(args.output)
     # Ensure output directory exists
     output_path.mkdir(parents=True, exist_ok=True)
-    setup_logging(verbose=False)  # Use consistent logging setup
+    setup_logging(verbose=args.verbose)  # Use consistent logging setup
+
+    # Test logging configuration
+    logging.info("=" * 60)
+    logging.info("🔧 LOGGING CONFIGURATION TEST")
+    logging.info(f"📝 Log level: {'DEBUG' if args.verbose else 'INFO'}")
+    logging.info(f"⏰ Timestamp test: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    logging.info("=" * 60)
 
     research_query = args.query
     logging.info(f"Starting optimized dataset identification for query: {research_query}")
@@ -714,8 +734,9 @@ def main():
                 'validation_reason': reason
             })
 
-        validation_df = pd.DataFrame(validation_data)
-        final_results = final_results.merge(validation_df, on='ID', how='left')
+        validation_df = pd.DataFrame(validation_data).drop_duplicates(subset='ID')
+        print(validation_df)
+        final_results = final_results.merge(validation_df, on='ID', how='left', validate = 'many_to_one')
 
         # Step 7: Filter to ONLY valid datasets for expensive operations (clustering & relevance)
         valid_datasets_df = final_results[final_results['valid_dataset'] == True].copy()
