@@ -57,6 +57,8 @@ Icon
 *.log
 results.txt
 **/results/*.txt
+temp_logs/*
+tmp_container_explorer/*
 
 # Docker
 *.dockerignore
