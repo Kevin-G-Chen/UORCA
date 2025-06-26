@@ -298,7 +298,6 @@ else
     # Docker execution
     if ! docker run --rm -it --init \
         -p ${PORT}:8501 \
-        -v ${PROJECT_ROOT}:/workspace:ro \
         -v ${RESULTS_DIR}:/UORCA_results:ro \
         -v ${TEMP_DIR}:/tmp \
         -e STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
