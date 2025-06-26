@@ -16,6 +16,7 @@ except ImportError:
         pass
 
 from streamlit_tabs.helpers import log_streamlit_agent
+from config_loader import get_contrast_relevance_config
 
 
 # Load environment variables
@@ -32,8 +33,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "dataset_identification"))
 
 def call_openai_json(prompt: str, schema: Dict[str, Any], name: str) -> dict:
     """Call OpenAI API with JSON schema enforcement."""
+    config = get_contrast_relevance_config()
     response = client.chat.completions.create(
-        model="gpt-4.1-mini",
+        model=config.model,
         messages=[
             {"role": "user", "content": prompt}
         ],
@@ -45,7 +47,7 @@ def call_openai_json(prompt: str, schema: Dict[str, Any], name: str) -> dict:
                 "strict": True
             }
         },
-        temperature=0.1
+        temperature=config.temperature
     )
     content = response.choices[0].message.content
     if content is None:

@@ -172,14 +172,14 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
 def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_params: Dict[str, Any]):
     """Render the main tabbed interface."""
     # Create main tabs
-    tab_sel, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab_ai, tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "🤖 AI Assistant",
         "☑️ Select Data & Contrasts",
         "🌡️ Explore DEG Heatmap",
         "📈 Plot Gene Expression",
         "🧑‍🔬 Analyze Experiments",
         "📋 View Dataset Info",
-        "🔍 View Contrast Info",
-        "🤖 AI Assistant"
+        "🔍 View Contrast Info"
     ])
 
     # Get current selections from session state
@@ -189,7 +189,14 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
 
     log_streamlit_event(f"Rendering interface: {len(selected_datasets)} datasets, {len(selected_contrasts)} contrasts, {len(gene_sel)} genes")
 
-    # Tab 1: Data Selection
+    # Tab 1: AI Assistant
+    with tab_ai:
+        render_ai_assistant_tab(
+            ri=ri,
+            results_dir=results_dir
+        )
+
+    # Tab 2: Data Selection
     with tab_sel:
         render_data_selection_tab(
             ri=ri,
@@ -197,7 +204,7 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             lfc_thresh=sidebar_params['lfc_thresh']
         )
 
-    # Tab 2: Heatmap
+    # Tab 3: Heatmap
     with tab1:
         render_heatmap_tab(
             ri=ri,
@@ -209,7 +216,7 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             hide_empty_rows_cols=sidebar_params['hide_empty_rows_cols']
         )
 
-    # Tab 3: Expression Plots
+    # Tab 4: Expression Plots
     with tab2:
         render_expression_plots_tab(
             ri=ri,
@@ -218,30 +225,23 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             hide_x_labels=sidebar_params['hide_x_labels']
         )
 
-    # Tab 4: Analysis Plots
+    # Tab 5: Analysis Plots
     with tab3:
         render_analysis_plots_tab(
             ri=ri,
             results_dir=results_dir
         )
 
-    # Tab 5: Dataset Info
+    # Tab 6: Dataset Info
     with tab4:
         render_datasets_info_tab(ri=ri)
 
-    # Tab 6: Contrast Info
+    # Tab 7: Contrast Info
     with tab5:
         render_contrasts_info_tab(
             ri=ri,
             pvalue_thresh=sidebar_params['pvalue_thresh'],
             lfc_thresh=sidebar_params['lfc_thresh']
-        )
-
-    # Tab 7: AI Assistant
-    with tab6:
-        render_ai_assistant_tab(
-            ri=ri,
-            results_dir=results_dir
         )
 
 

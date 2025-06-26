@@ -20,6 +20,7 @@ from streamlit_tabs.helpers.ai_agent_tool_logger import (
     get_ai_tool_logger
 )
 from ai_gene_schema import GeneAnalysisOutput
+from config_loader import get_ai_agent_config, get_mcp_server_config
 
 
 from pydantic_ai import Agent
@@ -61,6 +62,10 @@ def create_uorca_agent() -> Agent:
             "OpenAI API key not found. Please set the OPENAI_API_KEY environment variable."
         )
 
+    # Load configuration
+    ai_config = get_ai_agent_config()
+    mcp_config = get_mcp_server_config()
+
     try:
         server_script = Path(__file__).parent / "mcp_server_core.py"
 
@@ -68,16 +73,16 @@ def create_uorca_agent() -> Agent:
             command="uv",
             args=["run", str(server_script), "server"],
             env=os.environ.copy(),
-            timeout=180
+            timeout=mcp_config.timeout
         )
 
         agent = Agent(
-            model="openai:gpt-4.1-mini",
-            model_settings={"temperature": 0.1},
+            model=ai_config.model,
+            model_settings={"temperature": ai_config.temperature},
             mcp_servers=[server],
             system_prompt=UORCA_SYSTEM_PROMPT,
             output_type=GeneAnalysisOutput,
-            request_limit = 100
+            request_limit=ai_config.request_limit
         )
 
         # Initialize file-based tool logging system
