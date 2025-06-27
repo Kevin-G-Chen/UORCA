@@ -59,13 +59,13 @@ class AIAgentToolLogger:
         # Delete existing log file if it exists
         if self.log_file.exists():
             self.log_file.unlink()
-            logger.info("🧹 Cleared previous AI tool log file")
+            logger.info("Cleared previous AI tool log file")
 
         # Initialize with empty list
         with open(self.log_file, 'w', encoding='utf-8') as f:
             json.dump([], f, indent=2)
 
-        logger.info("🤖 AI Agent analysis started: %s (log: %s)",
+        logger.info("AI Agent analysis started: %s (log: %s)",
                    self.current_analysis_id, self.log_file)
 
     def _truncate_output(self, output: Any, max_length: int = 500) -> str:
@@ -124,10 +124,10 @@ class AIAgentToolLogger:
 
             # Terminal logging
             if success:
-                logger.info("✅ AI Agent tool %s finished with %d chars output",
+                logger.info("AI Agent tool %s finished with %d chars output",
                            tool_name, len(str(output)) if output else 0)
             else:
-                logger.error("❌ AI Agent tool %s failed: %s", tool_name, error)
+                logger.error("AI Agent tool %s failed: %s", tool_name, error)
 
         except Exception as e:
             logger.error("Failed to log tool call to file %s: %s", self.log_file, e)
@@ -138,7 +138,7 @@ class AIAgentToolLogger:
         log_file_to_use = self.get_log_file_path()
 
         if not log_file_to_use or not log_file_to_use.exists():
-            logger.info(f"🔍 DEBUG: No log file found. log_file_to_use={log_file_to_use}")
+            logger.info(f"DEBUG: No log file found. log_file_to_use={log_file_to_use}")
             return []
 
         try:
@@ -208,7 +208,7 @@ class AIAgentToolLogger:
         if self.log_file and self.log_file.exists():
             with open(self.log_file, 'w', encoding='utf-8') as f:
                 json.dump([], f, indent=2)
-            logger.info("🧹 AI Agent tool calls cleared from %s", self.log_file)
+            logger.info("AI Agent tool calls cleared from %s", self.log_file)
 
 
 # Global instance for the Streamlit app
@@ -246,7 +246,7 @@ def log_ai_agent_tool(func):
                  if k not in {'ctx', 'self'}}
 
         # Terminal logging at start
-        logger.info("🛠️ AI Agent tool %s called – params=%s", tool_name, params)
+        logger.info("AI Agent tool %s called – params=%s", tool_name, params)
 
         try:
             # Execute the tool
@@ -281,7 +281,7 @@ def log_ai_agent_tool(func):
             )
 
             # Terminal logging for error
-            logger.exception("❌ AI Agent tool %s crashed", tool_name)
+            logger.exception("AI Agent tool %s crashed", tool_name)
             raise
 
     return wrapper
