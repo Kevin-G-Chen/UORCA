@@ -23,8 +23,8 @@ __all__ = [
     "log_streamlit_tab",
 ]
 
-# Streamlit-specific log format with clear indicators
-STREAMLIT_FMT = "%(asctime)s  🌊 STREAMLIT  %(levelname)-8s  %(name)s ▶  %(message)s"
+# Standard log format (not the STREAMLIT format)
+STANDARD_FMT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # Global logger for streamlit app
 _streamlit_logger = None
@@ -53,22 +53,34 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"streamlit_app_{ts}.log"
 
+    # First, clean up any existing handlers on the root logger that might cause duplicates
+    root_logger = logging.getLogger()
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Configure root logger to use our standard format
+    root_handler = logging.FileHandler(log_file, encoding="utf-8")
+    root_formatter = logging.Formatter(
+        fmt=STANDARD_FMT,
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    root_handler.setFormatter(root_formatter)
+    root_logger.addHandler(root_handler)
+    root_logger.setLevel(level)
+
     # Create streamlit-specific logger
     _streamlit_logger = logging.getLogger("streamlit_app")
     _streamlit_logger.setLevel(level)
 
-    # Create handler with streamlit-specific format
-    handler = logging.FileHandler(log_file, encoding="utf-8")
-    formatter = logging.Formatter(
-        fmt=STREAMLIT_FMT,
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
-    handler.setFormatter(formatter)
-    _streamlit_logger.addHandler(handler)
+    # Add the same handler directly to streamlit logger to avoid propagation issues
+    streamlit_handler = logging.FileHandler(log_file, encoding="utf-8")
+    streamlit_handler.setFormatter(root_formatter)
+    _streamlit_logger.addHandler(streamlit_handler)
 
-    # Only use file handler to avoid duplicate console logs
+    # Prevent inheriting handlers from root logger to avoid duplicates
+    _streamlit_logger.propagate = False
 
-    _streamlit_logger.info("🚀 Streamlit app logging initialized")
+    _streamlit_logger.info("Streamlit app logging initialized")
 
     return log_file
 
@@ -116,13 +128,13 @@ def log_streamlit_function(func: Callable) -> Callable:
             bound = inspect.signature(func).bind_partial(*args, **kwargs)
             args_dict = _extract_args_for_logging(bound)
 
-            logger.info("📋 %s called", func.__name__)
+            logger.info("%s called", func.__name__)
             try:
                 result = await func(*args, **kwargs)
-                logger.info("✅ %s completed successfully", func.__name__)
+                logger.info("%s completed successfully", func.__name__)
                 return result
             except Exception as e:
-                logger.error("❌ %s failed: %s", func.__name__, str(e))
+                logger.error("%s failed: %s", func.__name__, str(e))
                 raise
         return async_wrapper
 
@@ -132,13 +144,13 @@ def log_streamlit_function(func: Callable) -> Callable:
             bound = inspect.signature(func).bind_partial(*args, **kwargs)
             args_dict = _extract_args_for_logging(bound)
 
-            logger.info("📋 %s called", func.__name__)
+            logger.info("%s called", func.__name__)
             try:
                 result = func(*args, **kwargs)
-                logger.info("✅ %s completed successfully", func.__name__)
+                logger.info("%s completed successfully", func.__name__)
                 return result
             except Exception as e:
-                logger.error("❌ %s failed: %s", func.__name__, str(e))
+                logger.error("%s failed: %s", func.__name__, str(e))
                 raise
         return sync_wrapper
 
@@ -156,13 +168,13 @@ def log_streamlit_agent(func: Callable) -> Callable:
         @functools.wraps(func)
         async def async_wrapper(*args, **kwargs):
             # Don't log detailed args for agent functions (can be very large)
-            logger.info("🤖 AGENT CALL: %s started", func.__name__)
+            logger.info("AGENT CALL: %s started", func.__name__)
             try:
                 result = await func(*args, **kwargs)
-                logger.info("🤖 AGENT CALL: %s completed successfully", func.__name__)
+                logger.info("AGENT CALL: %s completed successfully", func.__name__)
                 return result
             except Exception as e:
-                logger.error("🤖 AGENT CALL: %s failed: %s", func.__name__, str(e))
+                logger.error("AGENT CALL: %s failed: %s", func.__name__, str(e))
                 raise
         return async_wrapper
 
@@ -170,13 +182,13 @@ def log_streamlit_agent(func: Callable) -> Callable:
         @functools.wraps(func)
         def sync_wrapper(*args, **kwargs):
             # Don't log detailed args for agent functions (can be very large)
-            logger.info("🤖 AGENT CALL: %s started", func.__name__)
+            logger.info("AGENT CALL: %s started", func.__name__)
             try:
                 result = func(*args, **kwargs)
-                logger.info("🤖 AGENT CALL: %s completed successfully", func.__name__)
+                logger.info("AGENT CALL: %s completed successfully", func.__name__)
                 return result
             except Exception as e:
-                logger.error("🤖 AGENT CALL: %s failed: %s", func.__name__, str(e))
+                logger.error("AGENT CALL: %s failed: %s", func.__name__, str(e))
                 raise
         return sync_wrapper
 
@@ -200,13 +212,13 @@ def log_streamlit_tab(tab_name: str):
             bound = inspect.signature(func).bind_partial(*args, **kwargs)
             args_dict = _extract_args_for_logging(bound)
 
-            logger.info("🎯 TAB RENDER: %s (%s) called", tab_name, func.__name__)
+            logger.info("TAB RENDER: %s (%s) called", tab_name, func.__name__)
             try:
                 result = func(*args, **kwargs)
-                logger.info("🎯 TAB RENDER: %s (%s) completed", tab_name, func.__name__)
+                logger.info("TAB RENDER: %s (%s) completed", tab_name, func.__name__)
                 return result
             except Exception as e:
-                logger.error("🎯 TAB RENDER: %s (%s) failed: %s", tab_name, func.__name__, str(e))
+                logger.error("TAB RENDER: %s (%s) failed: %s", tab_name, func.__name__, str(e))
                 raise
         return wrapper
     return decorator
@@ -216,22 +228,22 @@ def log_streamlit_tab(tab_name: str):
 def log_streamlit_event(message: str, level: int = logging.INFO):
     """Log a general Streamlit app event."""
     logger = _get_streamlit_logger()
-    logger.log(level, "📌 EVENT: %s", message)
+    logger.log(level, "EVENT: %s", message)
 
 
 def log_streamlit_data_load(data_type: str, count: int = None):
     """Log data loading events."""
     logger = _get_streamlit_logger()
     if count is not None:
-        logger.info("📊 DATA LOAD: %s (%d items)", data_type, count)
+        logger.info("DATA LOAD: %s (%d items)", data_type, count)
     else:
-        logger.info("📊 DATA LOAD: %s", data_type)
+        logger.info("DATA LOAD: %s", data_type)
 
 
 def log_streamlit_user_action(action: str, details: str = None):
     """Log user interactions."""
     logger = _get_streamlit_logger()
     if details:
-        logger.info("👤 USER ACTION: %s – %s", action, details)
+        logger.info("USER ACTION: %s – %s", action, details)
     else:
-        logger.info("👤 USER ACTION: %s", action)
+        logger.info("USER ACTION: %s", action)
