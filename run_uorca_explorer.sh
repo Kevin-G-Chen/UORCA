@@ -362,16 +362,19 @@ else
 
     if ! docker run --rm -it --init \
         -p ${PORT}:8501 \
+        -v ${PROJECT_ROOT}:/workspace \
         -v ${RESULTS_DIR}:/UORCA_results:ro \
         -v ${TEMP_DIR}:/tmp \
         $ENV_ARGS \
         -e STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
         -e STREAMLIT_SERVER_HEADLESS=true \
+        -e STREAMLIT_SERVER_FILE_WATCHER_TYPE=poll \
+        -e PYTHONUNBUFFERED=1 \
         -w /workspace \
         "${DOCKER_IMAGE}" \
         bash -c "\
             echo 'Container started successfully. Initializing Streamlit...' && \
-            uv run streamlit run main_workflow/reporting/uorca_explorer.py --server.port 8501 --server.address 0.0.0.0 --server.headless true
+            uv run streamlit run main_workflow/reporting/uorca_explorer.py --server.port 8501 --server.address 0.0.0.0 --server.headless true --server.fileWatcherType poll
         "; then
         echo ""
         echo "Error: Failed to start UORCA Explorer with Docker."
