@@ -66,10 +66,7 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
     handler.setFormatter(formatter)
     _streamlit_logger.addHandler(handler)
 
-    # Also add console handler for immediate feedback
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    _streamlit_logger.addHandler(console_handler)
+    # Only use file handler to avoid duplicate console logs
 
     _streamlit_logger.info("🚀 Streamlit app logging initialized")
 
