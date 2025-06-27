@@ -948,6 +948,196 @@ def _get_tool_description(tool_name: str) -> str:
     }
     return descriptions.get(tool_name, "This tool analyzes your gene expression data to provide insights.")
 
+def _get_tool_code_snippets(tool_name: str, parameters: dict) -> tuple:
+    """Get R and Python code snippets to reproduce tool functionality."""
+
+    if tool_name == 'get_most_common_genes':
+        lfc_thresh = parameters.get('lfc_thresh', 1.0)
+        p_thresh = parameters.get('p_thresh', 0.05)
+        top_n = parameters.get('top_n', 10)
+
+        r_code = f'''# Load data (download "AI Agent's Working Dataset" from Downloads tab)
+data <- read.csv("ai_agent_working_dataset.csv")
+
+# Filter for significant genes
+significant_genes <- data[abs(data$logFC) >= {lfc_thresh} & data$pvalue < {p_thresh}, ]
+
+# Count occurrences of each gene
+gene_counts <- table(significant_genes$Gene)
+
+# Get top {top_n} most common genes
+top_genes <- sort(gene_counts, decreasing = TRUE)[1:{top_n}]
+print(top_genes)'''
+
+        python_code = f'''# Load data (download "AI Agent's Working Dataset" from Downloads tab)
+import pandas as pd
+
+data = pd.read_csv("ai_agent_working_dataset.csv")
+
+# Filter for significant genes
+significant_genes = data[
+    (abs(data['logFC']) >= {lfc_thresh}) &
+    (data['pvalue'] < {p_thresh})
+]
+
+# Count occurrences of each gene
+gene_counts = significant_genes['Gene'].value_counts()
+
+# Get top {top_n} most common genes
+top_genes = gene_counts.head({top_n})
+print(top_genes)'''
+
+    elif tool_name == 'filter_genes_by_contrast_sets':
+        set_a = parameters.get('set_a', [])
+        set_b = parameters.get('set_b', [])
+        lfc_thresh = parameters.get('lfc_thresh', 1.0)
+        p_thresh = parameters.get('p_thresh', 0.05)
+
+        set_a_str = "c(" + ", ".join([f'"{x}"' for x in set_a]) + ")"
+        set_b_str = "c(" + ", ".join([f'"{x}"' for x in set_b]) + ")"
+        set_a_py = str(set_a)
+        set_b_py = str(set_b)
+
+        r_code = f'''# Load data
+data <- read.csv("ai_agent_working_dataset.csv")
+
+# Define contrast sets
+set_a <- {set_a_str}
+set_b <- {set_b_str}
+
+# Filter for significant genes in set A
+genes_a <- data[data$contrast_id %in% set_a &
+                abs(data$logFC) >= {lfc_thresh} &
+                data$pvalue < {p_thresh}, "Gene"]
+
+# Filter for significant genes in set B
+genes_b <- data[data$contrast_id %in% set_b &
+                abs(data$logFC) >= {lfc_thresh} &
+                data$pvalue < {p_thresh}, "Gene"]
+
+# Find genes unique to set A
+unique_to_a <- setdiff(unique(genes_a), unique(genes_b))
+print(paste("Genes unique to set A:", length(unique_to_a)))
+print(unique_to_a)'''
+
+        python_code = f'''# Load data
+import pandas as pd
+
+data = pd.read_csv("ai_agent_working_dataset.csv")
+
+# Define contrast sets
+set_a = {set_a_py}
+set_b = {set_b_py}
+
+# Filter for significant genes in set A
+genes_a = set(data[
+    (data['contrast_id'].isin(set_a)) &
+    (abs(data['logFC']) >= {lfc_thresh}) &
+    (data['pvalue'] < {p_thresh})
+]['Gene'])
+
+# Filter for significant genes in set B
+genes_b = set(data[
+    (data['contrast_id'].isin(set_b)) &
+    (abs(data['logFC']) >= {lfc_thresh}) &
+    (data['pvalue'] < {p_thresh})
+]['Gene'])
+
+# Find genes unique to set A
+unique_to_a = genes_a - genes_b
+print(f"Genes unique to set A: {{len(unique_to_a)}}")
+print(list(unique_to_a))'''
+
+    elif tool_name == 'get_gene_contrast_stats':
+        gene = parameters.get('gene', 'GENE1')
+        contrast_id = parameters.get('contrast_id', None)
+
+        if contrast_id:
+            r_filter = f'data$Gene == "{gene}" & data$contrast_id == "{contrast_id}"'
+            py_filter = f'(data["Gene"] == "{gene}") & (data["contrast_id"] == "{contrast_id}")'
+        else:
+            r_filter = f'data$Gene == "{gene}"'
+            py_filter = f'data["Gene"] == "{gene}"'
+
+        r_code = f'''# Load data
+data <- read.csv("ai_agent_working_dataset.csv")
+
+# Filter for specific gene{f' and contrast' if contrast_id else ''}
+gene_stats <- data[{r_filter}, c("contrast_id", "logFC", "pvalue")]
+print(gene_stats)'''
+
+        python_code = f'''# Load data
+import pandas as pd
+
+data = pd.read_csv("ai_agent_working_dataset.csv")
+
+# Filter for specific gene{f' and contrast' if contrast_id else ''}
+gene_stats = data[{py_filter}][["contrast_id", "logFC", "pvalue"]]
+print(gene_stats)'''
+
+    elif tool_name == 'summarize_contrast':
+        contrast_id = parameters.get('contrast_id', 'contrast1')
+        lfc_thresh = parameters.get('lfc_thresh', 1.0)
+        p_thresh = parameters.get('p_thresh', 0.05)
+        max_genes = parameters.get('max_genes', 10)
+
+        r_code = f'''# Load data
+data <- read.csv("ai_agent_working_dataset.csv")
+
+# Filter for specific contrast and significance
+contrast_data <- data[data$contrast_id == "{contrast_id}" &
+                      abs(data$logFC) >= {lfc_thresh} &
+                      data$pvalue < {p_thresh}, ]
+
+# Summary statistics
+total_degs <- nrow(contrast_data)
+mean_lfc <- mean(contrast_data$logFC)
+median_lfc <- median(contrast_data$logFC)
+
+# Top genes by absolute logFC
+top_genes <- contrast_data[order(-abs(contrast_data$logFC)), ][1:{max_genes},
+                          c("Gene", "logFC")]
+
+cat("Total DEGs:", total_degs, "\\n")
+cat("Mean logFC:", mean_lfc, "\\n")
+cat("Median logFC:", median_lfc, "\\n")
+print("Top genes:")
+print(top_genes)'''
+
+        python_code = f'''# Load data
+import pandas as pd
+
+data = pd.read_csv("ai_agent_working_dataset.csv")
+
+# Filter for specific contrast and significance
+contrast_data = data[
+    (data['contrast_id'] == "{contrast_id}") &
+    (abs(data['logFC']) >= {lfc_thresh}) &
+    (data['pvalue'] < {p_thresh})
+]
+
+# Summary statistics
+total_degs = len(contrast_data)
+mean_lfc = contrast_data['logFC'].mean()
+median_lfc = contrast_data['logFC'].median()
+
+# Top genes by absolute logFC
+top_genes = contrast_data.reindex(
+    contrast_data['logFC'].abs().sort_values(ascending=False).index
+).head({max_genes})[['Gene', 'logFC']]
+
+print(f"Total DEGs: {{total_degs}}")
+print(f"Mean logFC: {{mean_lfc}}")
+print(f"Median logFC: {{median_lfc}}")
+print("Top genes:")
+print(top_genes)'''
+
+    else:
+        r_code = "# Code snippet not available for this tool"
+        python_code = "# Code snippet not available for this tool"
+
+    return r_code, python_code
+
 def _display_tool_calls_detailed(tool_calls: List[Dict]):
     """Display tool calls in a detailed, structured format."""
     if not tool_calls:
@@ -967,6 +1157,16 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
             # Add tool description at the top
             st.markdown("#### 📖 What this tool does")
             st.info(_get_tool_description(tool_name))
+
+            # Add code snippets for reproducibility
+            st.markdown("#### 💻 Reproduce this analysis")
+            r_code, python_code = _get_tool_code_snippets(tool_name, call.get('parameters', {}))
+
+            code_tab1, code_tab2 = st.tabs(["🔵 R Code", "🐍 Python Code"])
+            with code_tab1:
+                st.code(r_code, language='r')
+            with code_tab2:
+                st.code(python_code, language='python')
 
             # Create two-column layout
             param_col, result_col = st.columns(2)
