@@ -96,7 +96,6 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
     _render_streamlined_ai_workflow(ri, results_dir)
 
 
-@log_streamlit_function
 def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
     """Render the streamlined AI analysis workflow."""
 
@@ -226,7 +225,11 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                 import json
                 os.environ['SELECTED_CONTRASTS_FOR_AI'] = json.dumps(selected_contrast_dicts)
 
-                agent = create_uorca_agent()
+                # Create cache key based on selected contrasts to invalidate agent cache when contrasts change
+                import hashlib
+                contrasts_key = hashlib.md5(json.dumps(selected_contrast_dicts, sort_keys=True).encode()).hexdigest()
+
+                agent = create_uorca_agent(selected_contrasts_key=contrasts_key)
 
                 # Enhanced prompt that leverages the selection
                 if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE and len(selected_contrast_dicts) <= 20:
@@ -383,7 +386,6 @@ def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str
     )
 
 
-@log_streamlit_function
 def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query: str):
     """Display the contrast relevance assessment results."""
     # Sort by relevance score
@@ -465,7 +467,6 @@ def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query
 
 
 
-@log_streamlit_function
 def _display_relevance_and_selection_results(
     ri: ResultsIntegrator,
     results_df: pd.DataFrame,
@@ -530,7 +531,6 @@ def _display_relevance_and_selection_results(
     _provide_relevance_download(results_df)
 
 
-@log_streamlit_function
 def _provide_relevance_download(results_df):
     """Provide download option for relevance results."""
     csv = results_df.to_csv(index=False)
@@ -581,7 +581,6 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
         raise
 
 
-@log_streamlit_function
 def _display_unified_ai_results(
     ri: ResultsIntegrator,
     result_output: GeneAnalysisOutput,
@@ -934,7 +933,6 @@ def _display_unified_ai_results(
 
 
 
-@log_streamlit_function
 def _get_tool_description(tool_name: str) -> str:
     """Get user-friendly description for each tool."""
     descriptions = {
@@ -1369,7 +1367,6 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                 st.caption(f"Analysis ID: {call['analysis_id']}")
 
 
-@log_streamlit_function
 def _display_raw_log_file():
     """Display the raw log file contents."""
     st.markdown("### Raw Log File Contents")

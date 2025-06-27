@@ -52,10 +52,13 @@ Do NOT wrap it in markdown or add commentary outside the JSON object.
 Focus on identifying both shared signatures across multiple contrasts and context-specific gene expression patterns that could provide biological insights.
 """
 
-@log_streamlit_function
 @st.cache_resource
-def create_uorca_agent() -> Agent:
-    """Create an agent connected to the UORCA MCP server."""
+def create_uorca_agent(selected_contrasts_key: str = "") -> Agent:
+    """Create an agent connected to the UORCA MCP server.
+
+    Args:
+        selected_contrasts_key: String representation of selected contrasts for cache invalidation
+    """
 
     if not os.getenv("OPENAI_API_KEY"):
         raise ValueError(
@@ -69,10 +72,14 @@ def create_uorca_agent() -> Agent:
     try:
         server_script = Path(__file__).parent / "mcp_server_core.py"
 
+        # Create fresh environment with current selected contrasts
+        server_env = os.environ.copy()
+        logger.info(f"Creating MCP server with selected contrasts key: {selected_contrasts_key[:100]}...")
+
         server = MCPServerStdio(
             command="uv",
             args=["run", str(server_script), "server"],
-            env=os.environ.copy(),
+            env=server_env,
             timeout=mcp_config.timeout
         )
 
@@ -97,10 +104,14 @@ def create_uorca_agent() -> Agent:
 
 
 # Convenience function for Streamlit apps
-def get_uorca_agent() -> Agent:
-    """Return a cached UORCA agent instance for Streamlit."""
+def get_uorca_agent(selected_contrasts_key: str = "") -> Agent:
+    """Return a cached UORCA agent instance for Streamlit.
+
+    Args:
+        selected_contrasts_key: String representation of selected contrasts for cache invalidation
+    """
     try:
-        return create_uorca_agent()
+        return create_uorca_agent(selected_contrasts_key)
     except Exception as e:
         st.error(f"Failed to initialize UORCA MCP agent: {e}")
         st.stop()
