@@ -75,9 +75,13 @@ def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc
 
 @log_streamlit_function
 def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float, lfc_thresh: float) -> List[Dict[str, Any]]:
-    """Create a list of contrast information dictionaries."""
+    """Create a list of contrast information dictionaries for successful analyses only."""
     contrast_info = []
-    for aid, info in ri.analysis_info.items():
+    # Only include contrasts from datasets that have successful CPM data (indicator of successful analysis)
+    for aid in ri.cpm_data.keys():
+        if aid not in ri.analysis_info:
+            continue
+        info = ri.analysis_info[aid]
         for c in info.get("contrasts", []):
             contrast_id = c["name"]
             description = c.get("description", "")

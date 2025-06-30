@@ -56,19 +56,22 @@ def _render_dataset_selection(ri: ResultsIntegrator):
         return
 
     dataset_rows = []
-    for analysis_id, info in ri.analysis_info.items():
-        title = getattr(ri, "dataset_info", {}).get(analysis_id, {}).get("title", "")
-        title_display = title[:100] + ("..." if len(title) > 100 else "") if title else "No title available"
+    # Only include datasets that have successful CPM data (indicator of successful analysis)
+    for analysis_id in ri.cpm_data.keys():
+        if analysis_id in ri.analysis_info:
+            info = ri.analysis_info[analysis_id]
+            title = getattr(ri, "dataset_info", {}).get(analysis_id, {}).get("title", "")
+            title_display = title[:100] + ("..." if len(title) > 100 else "") if title else "No title available"
 
-        dataset_rows.append({
-            "✔": analysis_id in st.session_state.get('selected_datasets', set()),
-            "Accession": info.get("accession", "Unknown"),
-            "Dataset ID": analysis_id,
-            "Title": title_display,
-            "Organism": info.get("organism", "Unknown"),
-            "Samples": info.get("number_of_samples", 0),
-            "Contrasts": info.get("number_of_contrasts", 0)
-        })
+            dataset_rows.append({
+                "✔": analysis_id in st.session_state.get('selected_datasets', set()),
+                "Accession": info.get("accession", "Unknown"),
+                "Dataset ID": analysis_id,
+                "Title": title_display,
+                "Organism": info.get("organism", "Unknown"),
+                "Samples": info.get("number_of_samples", 0),
+                "Contrasts": info.get("number_of_contrasts", 0)
+            })
 
     if dataset_rows:
         ds_df = pd.DataFrame(dataset_rows)
