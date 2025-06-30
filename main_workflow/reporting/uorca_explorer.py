@@ -174,8 +174,8 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
 
     # Add banner explaining the new form-based interface
     st.info("""
-    🆕 **New Form-Based Interface**: This app now uses forms in the sidebar for configuration.
-    Configure your analysis using the **Heatmap Configuration** form in the sidebar, then view results in the tabs below.
+    🆕 **New Form-Based Interface**: This app now uses coordinated forms in the sidebar for configuration.
+    Start by selecting datasets and contrasts, then configure parameters. View results in the tabs below.
     """)
 
     # Create main tabs
@@ -190,7 +190,7 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
 
     # Get current selections from form-based parameters
     selected_contrasts = sidebar_params.get('selected_contrasts', [])
-    selected_datasets = []  # Will be implemented with expression form
+    selected_datasets = sidebar_params.get('selected_datasets', [])
     gene_sel = sidebar_params['gene_sel']
 
     # Update session state for compatibility with existing tabs

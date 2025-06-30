@@ -44,25 +44,26 @@ def render_expression_plots_tab(
         hide_x_labels: Whether to hide x-axis labels
     """
     st.header("📈 Plot Gene Expression")
-    st.markdown("**🎻 Violin plots showing gene expression distributions across sample groups.** Each panel represents one gene, with samples grouped by experimental conditions. Configure datasets using the sidebar form.")
+    st.markdown("**🎻 Violin plots showing gene expression distributions across sample groups.** Each panel represents one gene, with samples grouped by experimental conditions. Select datasets using the Dataset & Contrast Selection form in the sidebar.")
 
     # Display settings for expression plots
     display_settings = _render_display_settings()
 
     if not selected_datasets:
         log_streamlit_event("No datasets selected for expression plots")
-        st.info("🔧 **Expression Plots Configuration:**")
+        st.info("🔧 **Getting Started with Expression Plots:**")
         st.markdown("""
-        Expression plot configuration will be available in the **Expression Plots Configuration** form in the sidebar.
+        1. **Select Datasets** in the "Dataset & Contrast Selection" section in the sidebar
+        2. **Configure genes** using the "Heatmap Parameters" section (genes auto-selected based on your contrasts)
+        3. **View expression plots** here once datasets and genes are selected
 
-        For now, you can:
-        - Use the **Heatmap Configuration** to explore differential expression patterns
+        **Alternative options:**
         - View individual dataset plots in the **Analyze Experiments** tab
         - Browse dataset information in the **View Dataset Info** tab
         """)
     elif not gene_sel:
         log_streamlit_event("No genes selected for expression plots")
-        st.info("⚠️ No genes available. Please configure the heatmap form in the sidebar to auto-select genes first.")
+        st.info("⚠️ No genes available. Please select datasets and configure parameters in the sidebar to auto-select genes first.")
     else:
         # Calculate pagination information
         total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(gene_sel)

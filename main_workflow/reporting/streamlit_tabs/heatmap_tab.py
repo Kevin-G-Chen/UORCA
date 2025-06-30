@@ -48,7 +48,7 @@ def render_heatmap_tab(
         hide_empty_rows_cols: Whether to hide empty rows/columns
     """
     st.header("🌡️ Explore DEG Heatmap")
-    st.markdown("**📊 Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Hover over cells for details. Configure parameters and select contrasts using the sidebar form.")
+    st.markdown("**📊 Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Hover over cells for details. Use the Dataset & Contrast Selection and Heatmap Parameters forms in the sidebar.")
 
     # Display settings for heatmap
     display_settings = _render_display_settings()
@@ -57,12 +57,12 @@ def render_heatmap_tab(
         log_streamlit_event("No contrasts selected for heatmap")
         st.info("🔧 **Getting Started:**")
         st.markdown("""
-        1. **Open the Heatmap Configuration** form in the sidebar
-        2. **Set your parameters** (Log2FC and P-value thresholds)
-        3. **Select contrasts** by checking the boxes in the table
-        4. **Click 'Update Heatmap'** to generate the visualization
+        1. **Select Datasets** in the "Dataset & Contrast Selection" section in the sidebar
+        2. **Select Contrasts** using the second form (auto-populated from your datasets)
+        3. **Configure Parameters** in the "Heatmap Parameters" section (thresholds and gene count)
+        4. **View Results** - genes are automatically selected and heatmap generated
 
-        Your genes will be automatically selected based on the parameters and contrasts you choose.
+        **Tip:** Start with dataset selection - this will automatically populate available contrasts.
         """)
     elif not gene_sel:
         log_streamlit_event("No genes selected for heatmap")
@@ -171,7 +171,7 @@ def _draw_heatmap(
 @log_streamlit_function
 def _display_heatmap_info():
     """Display informational messages about the heatmap."""
-    st.info("💡 **Heatmap Tips:** Hover over cells to see contrast descriptions and gene information. Use the sidebar form to modify parameters and contrast selection.")
+    st.info("💡 **Heatmap Tips:** Hover over cells to see contrast descriptions and gene information. Use the Dataset & Contrast Selection and Heatmap Parameters forms in the sidebar to modify your analysis.")
 
 
 @log_streamlit_function
