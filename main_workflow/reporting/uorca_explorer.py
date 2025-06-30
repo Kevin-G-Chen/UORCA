@@ -174,18 +174,18 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
 
     # Add banner explaining the new form-based interface
     st.info("""
-    🆕 **New Form-Based Interface**: This app now uses coordinated forms in the sidebar for configuration.
+    **New Form-Based Interface**: This app now uses coordinated forms in the sidebar for configuration.
     Start by selecting datasets and contrasts, then configure parameters. View results in the tabs below.
     """)
 
     # Create main tabs
     tab_ai, tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "🤖 AI Assistant",
-        "🌡️ Explore DEG Heatmap",
-        "📈 Plot Gene Expression",
-        "🧑‍🔬 Analyze Experiments",
-        "📋 View Dataset Info",
-        "🔍 View Contrast Info"
+        "AI Assistant",
+        "Explore DEG Heatmap",
+        "Plot Gene Expression",
+        "Analyze Experiments",
+        "View Dataset Info",
+        "View Contrast Info"
     ])
 
     # Get current selections from form-based parameters

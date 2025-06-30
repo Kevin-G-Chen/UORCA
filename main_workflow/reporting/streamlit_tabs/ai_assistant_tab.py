@@ -84,7 +84,7 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
         ri: ResultsIntegrator instance
         results_dir: Path to the results directory
     """
-    st.header("🤖 AI Assistant")
+    st.header("AI Assistant")
     st.markdown("**Ask questions and get insights from your RNA-seq data using AI.**")
 
     # Check for OpenAI API key
