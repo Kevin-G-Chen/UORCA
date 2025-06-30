@@ -15,7 +15,10 @@ from .helpers import (
     cached_figure_creation,
     log_streamlit_tab,
     log_streamlit_function,
-    log_streamlit_event
+    log_streamlit_event,
+    group_contrasts_by_organism,
+    filter_genes_by_organism,
+    get_organism_display_name
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -69,18 +72,67 @@ def render_heatmap_tab(
         st.warning("No genes were automatically selected with the current parameters. Try adjusting the significance thresholds in the sidebar form.")
     else:
         log_streamlit_event(f"Heatmap: {len(gene_sel)} genes, {len(selected_contrasts)} contrasts")
-        st.success(f"Ready to display heatmap with {len(gene_sel)} genes across {len(selected_contrasts)} contrasts")
-        # Create and display the heatmap
-        _draw_heatmap(
-            ri,
-            gene_sel,
-            selected_contrasts,
-            effective_pvalue_thresh,
-            effective_lfc_thresh,
-            use_dynamic_filtering,
-            hide_empty_rows_cols,
-            **display_settings
-        )
+
+        # Group contrasts by organism
+        organism_groups = group_contrasts_by_organism(ri, selected_contrasts)
+
+        if len(organism_groups) == 1:
+            # Single organism - no sub-tabs needed
+            organism = list(organism_groups.keys())[0]
+            organism_contrasts = organism_groups[organism]
+            organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
+
+            st.success(f"Ready to display heatmap with {len(organism_genes)} genes across {len(organism_contrasts)} contrasts ({get_organism_display_name(organism)})")
+
+            _draw_heatmap(
+                ri,
+                organism_genes,
+                organism_contrasts,
+                effective_pvalue_thresh,
+                effective_lfc_thresh,
+                use_dynamic_filtering,
+                hide_empty_rows_cols,
+                **display_settings
+            )
+        else:
+            # Multiple organisms - create sub-tabs
+            st.success(f"Found {len(organism_groups)} species in selected data. Creating species-specific heatmaps to prevent gene name conflicts.")
+
+            # Show organism breakdown
+            with st.expander("Species Breakdown", expanded=True):
+                for organism, contrasts in organism_groups.items():
+                    datasets = set(contrast[0] for contrast in contrasts)
+                    st.write(f"**{get_organism_display_name(organism)}**: {len(datasets)} datasets, {len(contrasts)} contrasts")
+
+            st.info("**Important**: Gene expression data is separated by species to ensure biological accuracy and prevent cross-species gene name conflicts.")
+
+            # Create organism-specific tabs
+            organism_names = list(organism_groups.keys())
+            tab_names = [get_organism_display_name(org) for org in organism_names]
+            tabs = st.tabs(tab_names)
+
+            for i, organism in enumerate(organism_names):
+                with tabs[i]:
+                    organism_contrasts = organism_groups[organism]
+                    organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
+
+                    if organism_genes:
+                        st.success(f"**{get_organism_display_name(organism)} Analysis**")
+                        st.write(f"Displaying {len(organism_genes)} genes across {len(organism_contrasts)} contrasts")
+
+                        _draw_heatmap(
+                            ri,
+                            organism_genes,
+                            organism_contrasts,
+                            effective_pvalue_thresh,
+                            effective_lfc_thresh,
+                            use_dynamic_filtering,
+                            hide_empty_rows_cols,
+                            **display_settings
+                        )
+                    else:
+                        st.warning(f"No genes found for {get_organism_display_name(organism)} with current parameters.")
+                        st.info("Try adjusting the significance thresholds in the sidebar or selecting more datasets for this species.")
 
 
 @log_streamlit_function

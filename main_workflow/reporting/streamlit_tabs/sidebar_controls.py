@@ -18,7 +18,10 @@ from .helpers import (
     load_environment,
     log_streamlit_function,
     log_streamlit_event,
-    log_streamlit_user_action
+    log_streamlit_user_action,
+    group_contrasts_by_organism,
+    filter_genes_by_organism,
+    get_organism_display_name
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -147,15 +150,23 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                         ),
                         "Accession": st.column_config.TextColumn(
                             "Accession",
-                            help="GEO accession number"
+                            help="GEO accession number",
+                            width="medium"
+                        ),
+                        "Organism": st.column_config.TextColumn(
+                            "Organism",
+                            help="Species/organism",
+                            width="medium"
                         ),
                         "Samples": st.column_config.NumberColumn(
                             "Samples",
-                            help="Number of samples"
+                            help="Number of samples",
+                            width="small"
                         ),
                         "Contrasts": st.column_config.NumberColumn(
                             "Contrasts",
-                            help="Number of contrasts"
+                            help="Number of contrasts",
+                            width="small"
                         )
                     },
                     key="dataset_selection_table"
@@ -339,6 +350,7 @@ def _create_dataset_table_data(ri: ResultsIntegrator) -> List[Dict[str, Any]]:
         dataset_data.append({
             "Select": False,  # Default to unselected
             "Accession": info.get("accession", analysis_id),
+            "Organism": info.get("organism", "Unknown"),
             "Samples": info.get("number_of_samples", 0),
             "Contrasts": info.get("number_of_contrasts", 0)
         })
@@ -372,33 +384,78 @@ def _auto_select_genes(
     results_dir: str,
     heatmap_params: Dict[str, Any]
 ) -> List[str]:
-    """Auto-select genes based on heatmap parameters."""
+    """Auto-select genes based on heatmap parameters, considering species separation."""
     if not heatmap_params.get('contrasts'):
         return []
 
     try:
-        # Use cached function to get important genes
-        top_genes = cached_identify_important_genes(
-            results_dir=results_dir,
-            top_frequent=heatmap_params.get('gene_count', 50),  # Use gene count from form
-            top_unique=0,     # No unique genes for now
-            max_contrasts_for_unique=0,
-            min_unique_per_contrast=1,
-            p_value_threshold=heatmap_params['pvalue_thresh'],
-            lfc_threshold=heatmap_params['lfc_thresh']
-        )
+        # Group contrasts by organism first
+        organism_groups = group_contrasts_by_organism(ri, heatmap_params['contrasts'])
 
-        # Limit to specified gene count
-        gene_count = heatmap_params.get('gene_count', 50)
-        limited_genes = top_genes[:gene_count] if len(top_genes) > gene_count else top_genes
+        if len(organism_groups) == 1:
+            # Single organism - use existing logic
+            top_genes = cached_identify_important_genes(
+                results_dir=results_dir,
+                top_frequent=heatmap_params.get('gene_count', 50),
+                top_unique=0,
+                max_contrasts_for_unique=0,
+                min_unique_per_contrast=1,
+                p_value_threshold=heatmap_params['pvalue_thresh'],
+                lfc_threshold=heatmap_params['lfc_thresh']
+            )
 
-        if len(top_genes) > gene_count:
-            st.sidebar.info(f"Auto-selected top {gene_count} of {len(top_genes)} important genes")
+            # Limit to specified gene count
+            gene_count = heatmap_params.get('gene_count', 50)
+            limited_genes = top_genes[:gene_count] if len(top_genes) > gene_count else top_genes
+
+            organism = list(organism_groups.keys())[0]
+            organism_display = get_organism_display_name(organism)
+
+            if len(top_genes) > gene_count:
+                st.sidebar.info(f"Auto-selected top {gene_count} of {len(top_genes)} important genes ({organism_display})")
+            else:
+                st.sidebar.success(f"Auto-selected {len(limited_genes)} important genes ({organism_display})")
+
+            log_streamlit_event(f"Auto-selected {len(limited_genes)} genes for {organism}")
+            return limited_genes
+
         else:
-            st.sidebar.success(f"Auto-selected {len(limited_genes)} important genes")
+            # Multiple organisms - select genes for each and combine
+            all_selected_genes = []
+            gene_count_per_organism = heatmap_params.get('gene_count', 50) // len(organism_groups)
 
-        log_streamlit_event(f"Auto-selected {len(limited_genes)} genes")
-        return limited_genes
+            organism_summaries = []
+
+            for organism, organism_contrasts in organism_groups.items():
+                # Filter contrasts to only this organism for gene identification
+                # We need to temporarily filter the results to this organism
+                organism_genes = cached_identify_important_genes(
+                    results_dir=results_dir,
+                    top_frequent=gene_count_per_organism,
+                    top_unique=0,
+                    max_contrasts_for_unique=0,
+                    min_unique_per_contrast=1,
+                    p_value_threshold=heatmap_params['pvalue_thresh'],
+                    lfc_threshold=heatmap_params['lfc_thresh']
+                )
+
+                # Filter genes to only those present in this organism's data
+                organism_specific_genes = filter_genes_by_organism(ri, organism_genes, organism, organism_contrasts)
+
+                # Limit genes per organism
+                limited_organism_genes = organism_specific_genes[:gene_count_per_organism]
+                all_selected_genes.extend(limited_organism_genes)
+
+                organism_display = get_organism_display_name(organism)
+                organism_summaries.append(f"{len(limited_organism_genes)} genes from {organism_display}")
+
+            # Display summary
+            total_genes = len(all_selected_genes)
+            summary_text = f"Auto-selected {total_genes} genes across {len(organism_groups)} species: " + ", ".join(organism_summaries)
+            st.sidebar.success(summary_text)
+
+            log_streamlit_event(f"Auto-selected {total_genes} genes across {len(organism_groups)} organisms")
+            return all_selected_genes
 
     except Exception as e:
         logger.error(f"Error in auto gene selection: {e}")

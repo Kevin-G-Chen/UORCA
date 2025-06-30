@@ -309,6 +309,158 @@ def load_environment():
         pass
 
 
+@log_streamlit_function
+def get_organisms_from_datasets(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[str]:
+    """
+    Get unique organisms from selected datasets.
+
+    Args:
+        ri: ResultsIntegrator instance
+        selected_datasets: List of dataset IDs
+
+    Returns:
+        Sorted list of unique organism names
+    """
+    organisms = set()
+    for dataset_id in selected_datasets:
+        if dataset_id in ri.analysis_info:
+            organism = ri.analysis_info[dataset_id].get('organism', 'Unknown')
+            organisms.add(organism)
+    return sorted(list(organisms))
+
+
+@log_streamlit_function
+def group_datasets_by_organism(ri: ResultsIntegrator, selected_datasets: List[str]) -> Dict[str, List[str]]:
+    """
+    Group datasets by their organism.
+
+    Args:
+        ri: ResultsIntegrator instance
+        selected_datasets: List of dataset IDs
+
+    Returns:
+        Dictionary mapping organism names to lists of dataset IDs
+    """
+    organism_groups = {}
+    for dataset_id in selected_datasets:
+        if dataset_id in ri.analysis_info:
+            organism = ri.analysis_info[dataset_id].get('organism', 'Unknown')
+            if organism not in organism_groups:
+                organism_groups[organism] = []
+            organism_groups[organism].append(dataset_id)
+    return organism_groups
+
+
+@log_streamlit_function
+def group_contrasts_by_organism(ri: ResultsIntegrator, selected_contrasts: List[Tuple[str, str]]) -> Dict[str, List[Tuple[str, str]]]:
+    """
+    Group contrasts by their dataset's organism.
+
+    Args:
+        ri: ResultsIntegrator instance
+        selected_contrasts: List of (analysis_id, contrast_id) tuples
+
+    Returns:
+        Dictionary mapping organism names to lists of contrast tuples
+    """
+    organism_groups = {}
+    for analysis_id, contrast_id in selected_contrasts:
+        if analysis_id in ri.analysis_info:
+            organism = ri.analysis_info[analysis_id].get('organism', 'Unknown')
+            if organism not in organism_groups:
+                organism_groups[organism] = []
+            organism_groups[organism].append((analysis_id, contrast_id))
+    return organism_groups
+
+
+@log_streamlit_function
+def filter_genes_by_organism(ri: ResultsIntegrator, genes: List[str], organism: str, selected_contrasts: List[Tuple[str, str]]) -> List[str]:
+    """
+    Filter genes to only include those found in datasets of a specific organism (for contrasts).
+
+    Args:
+        ri: ResultsIntegrator instance
+        genes: List of gene names to filter
+        organism: Target organism name
+        selected_contrasts: List of (analysis_id, contrast_id) tuples for this organism
+
+    Returns:
+        List of genes that are present in the organism's datasets
+    """
+    organism_genes = set()
+
+    # Collect all genes from datasets of this organism
+    for analysis_id, contrast_id in selected_contrasts:
+        if analysis_id in ri.analysis_info and ri.analysis_info[analysis_id].get('organism') == organism:
+            # Check DEG data
+            if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
+                deg_df = ri.deg_data[analysis_id][contrast_id]
+                if 'Gene' in deg_df.columns:
+                    organism_genes.update(deg_df['Gene'].tolist())
+
+            # Check CPM data
+            if analysis_id in ri.cpm_data:
+                cpm_df = ri.cpm_data[analysis_id]
+                if 'Gene' in cpm_df.columns:
+                    organism_genes.update(cpm_df['Gene'].tolist())
+
+    # Return only genes that are in the input list AND found in this organism's data
+    return [gene for gene in genes if gene in organism_genes]
+
+
+@log_streamlit_function
+def filter_genes_by_organism_datasets(ri: ResultsIntegrator, genes: List[str], organism: str, selected_datasets: List[str]) -> List[str]:
+    """
+    Filter genes to only include those found in datasets of a specific organism (for datasets).
+
+    Args:
+        ri: ResultsIntegrator instance
+        genes: List of gene names to filter
+        organism: Target organism name
+        selected_datasets: List of dataset IDs for this organism
+
+    Returns:
+        List of genes that are present in the organism's datasets
+    """
+    organism_genes = set()
+
+    # Collect all genes from datasets of this organism
+    for analysis_id in selected_datasets:
+        if analysis_id in ri.analysis_info and ri.analysis_info[analysis_id].get('organism') == organism:
+            # Check CPM data (primary source for expression plots)
+            if analysis_id in ri.cpm_data:
+                cpm_df = ri.cpm_data[analysis_id]
+                if 'Gene' in cpm_df.columns:
+                    organism_genes.update(cpm_df['Gene'].tolist())
+
+    # Return only genes that are in the input list AND found in this organism's data
+    return [gene for gene in genes if gene in organism_genes]
+
+
+@log_streamlit_function
+def get_organism_display_name(organism: str) -> str:
+    """
+    Get a user-friendly display name for an organism.
+
+    Args:
+        organism: Scientific or common name of organism
+
+    Returns:
+        Cleaned display name for UI
+    """
+    if not organism or organism == 'Unknown':
+        return 'Unknown Species'
+
+    # Handle common organism name patterns
+    organism = organism.strip()
+
+    # Capitalize first letter of each word for better display
+    if len(organism.split()) <= 2:  # Scientific names typically have 1-2 words
+        return organism.title()
+    else:
+        return organism
+
+
 # Export all functions for easy importing
 __all__ = [
     # Main helper functions
@@ -325,6 +477,14 @@ __all__ = [
     'cached_figure_creation',
     'short_label',
     'load_environment',
+
+    # Organism/species helper functions
+    'get_organisms_from_datasets',
+    'group_datasets_by_organism',
+    'group_contrasts_by_organism',
+    'filter_genes_by_organism',
+    'filter_genes_by_organism_datasets',
+    'get_organism_display_name',
 
     # Streamlit logging functions
     'setup_streamlit_logging',

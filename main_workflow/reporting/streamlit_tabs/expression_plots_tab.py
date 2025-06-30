@@ -17,7 +17,10 @@ from .helpers import (
     safe_rerun,
     log_streamlit_tab,
     log_streamlit_function,
-    log_streamlit_event
+    log_streamlit_event,
+    group_datasets_by_organism,
+    filter_genes_by_organism_datasets,
+    get_organism_display_name
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -65,24 +68,79 @@ def render_expression_plots_tab(
         log_streamlit_event("No genes selected for expression plots")
         st.info("No genes available. Please select datasets and configure parameters in the sidebar to auto-select genes first.")
     else:
-        # Calculate pagination information
-        total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(gene_sel)
-        log_streamlit_event(f"Expression plots pagination: page {current_page}/{total_pages}, showing {len(current_genes)} genes")
+        # Group datasets by organism
+        organism_groups = group_datasets_by_organism(ri, selected_datasets)
 
-        # Add pagination controls at the top if needed
-        if total_pages > 1:
-            _render_top_pagination_controls(current_page, total_pages)
+        if len(organism_groups) == 1:
+            # Single organism - no sub-tabs needed
+            organism = list(organism_groups.keys())[0]
+            organism_datasets = organism_groups[organism]
+            organism_genes = filter_genes_by_organism_datasets(ri, gene_sel, organism, organism_datasets)
 
-        # Create and display the expression plots
-        _draw_expression_plots(
-            ri,
-            gene_sel,
-            selected_datasets,
-            hide_x_labels,
-            current_page,
-            total_pages,
-            **display_settings
-        )
+            # Calculate pagination information for this organism
+            total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(organism_genes)
+            log_streamlit_event(f"Expression plots pagination: page {current_page}/{total_pages}, showing {len(current_genes)} genes for {organism}")
+
+            # Add pagination controls at the top if needed
+            if total_pages > 1:
+                _render_top_pagination_controls(current_page, total_pages)
+
+            # Create and display the expression plots
+            _draw_expression_plots(
+                ri,
+                organism_genes,
+                organism_datasets,
+                hide_x_labels,
+                current_page,
+                total_pages,
+                **display_settings
+            )
+        else:
+            # Multiple organisms - create sub-tabs
+            st.success(f"Found {len(organism_groups)} species in selected data. Creating species-specific expression plots to prevent gene name conflicts.")
+
+            # Show organism breakdown
+            with st.expander("Species Breakdown", expanded=True):
+                for organism, datasets in organism_groups.items():
+                    st.write(f"**{get_organism_display_name(organism)}**: {len(datasets)} datasets")
+
+            st.info("**Important**: Gene expression data is separated by species to ensure biological accuracy and prevent cross-species gene name conflicts.")
+
+            # Create organism-specific tabs
+            organism_names = list(organism_groups.keys())
+            tab_names = [get_organism_display_name(org) for org in organism_names]
+            tabs = st.tabs(tab_names)
+
+            for i, organism in enumerate(organism_names):
+                with tabs[i]:
+                    organism_datasets = organism_groups[organism]
+                    organism_genes = filter_genes_by_organism_datasets(ri, gene_sel, organism, organism_datasets)
+
+                    if organism_genes:
+                        st.success(f"**{get_organism_display_name(organism)} Analysis**")
+                        st.write(f"Displaying expression plots for {len(organism_genes)} genes across {len(organism_datasets)} datasets")
+
+                        # Calculate pagination information for this organism
+                        total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(organism_genes)
+
+                        # Add pagination controls at the top if needed
+                        if total_pages > 1:
+                            _render_top_pagination_controls(current_page, total_pages)
+
+                        # Create and display the expression plots
+                        _draw_expression_plots(
+                            ri,
+                            organism_genes,
+                            organism_datasets,
+                            hide_x_labels,
+                            current_page,
+                            total_pages,
+                            **display_settings
+                        )
+                    else:
+                        st.warning(f"No genes found for {get_organism_display_name(organism)} with current parameters.")
+                        st.info("Try adjusting the significance thresholds in the sidebar or selecting more datasets for this species.")
+
 
 
 @log_streamlit_function
