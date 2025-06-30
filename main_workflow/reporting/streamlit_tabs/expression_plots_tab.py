@@ -97,14 +97,7 @@ def render_expression_plots_tab(
             )
         else:
             # Multiple organisms - create sub-tabs
-            st.success(f"Found {len(organism_groups)} species in selected data. Creating species-specific expression plots to prevent gene name conflicts.")
 
-            # Show organism breakdown
-            with st.expander("Species Breakdown", expanded=True):
-                for organism, datasets in organism_groups.items():
-                    st.write(f"**{get_organism_display_name(organism)}**: {len(datasets)} datasets")
-
-            st.info("**Important**: Gene expression data is separated by species to ensure biological accuracy and prevent cross-species gene name conflicts.")
 
             # Create organism-specific tabs
             organism_names = list(organism_groups.keys())
@@ -117,8 +110,6 @@ def render_expression_plots_tab(
                     organism_genes = filter_genes_by_organism_datasets(ri, gene_sel, organism, organism_datasets)
 
                     if organism_genes:
-                        st.success(f"**{get_organism_display_name(organism)} Analysis**")
-                        st.write(f"Displaying expression plots for {len(organism_genes)} genes across {len(organism_datasets)} datasets")
 
                         # Calculate pagination information for this organism
                         total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(organism_genes)

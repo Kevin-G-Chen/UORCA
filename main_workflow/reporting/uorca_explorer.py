@@ -39,7 +39,7 @@ from streamlit_tabs.helpers import (
 
 # Import tab modules
 from streamlit_tabs.sidebar_controls import render_sidebar_controls
-from streamlit_tabs.data_selection_tab import render_data_selection_tab
+
 from streamlit_tabs.heatmap_tab import render_heatmap_tab
 from streamlit_tabs.expression_plots_tab import render_expression_plots_tab
 from streamlit_tabs.analysis_plots_tab import render_analysis_plots_tab

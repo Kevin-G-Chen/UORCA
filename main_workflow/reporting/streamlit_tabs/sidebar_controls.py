@@ -98,13 +98,12 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
         'effective_pvalue_thresh': params['heatmap_params']['pvalue_thresh'],
         'effective_lfc_thresh': params['heatmap_params']['lfc_thresh'],
         'use_dynamic_filtering': True,
-        'hide_empty_rows_cols': False,
+        'hide_empty_rows_cols': True,
         'hide_x_labels': True,
         'show_advanced': False
     })
 
-    # Configuration status display
-    _render_configuration_status(params)
+
 
     # Help section
     _render_help_section()
@@ -413,7 +412,7 @@ def _auto_select_genes(
 
             organism_display = get_organism_display_name(organism)
 
-            st.sidebar.success(f"Auto-selected {len(limited_genes)} important genes ({organism_display})")
+
 
             # Display which contrasts were used for gene selection
             with st.sidebar.expander("Contrasts Used for Gene Selection", expanded=False):
@@ -429,7 +428,7 @@ def _auto_select_genes(
         else:
             # Multiple organisms - select genes for each and combine
             all_selected_genes = []
-            gene_count_per_organism = heatmap_params.get('gene_count', 50) // len(organism_groups)
+            gene_count_per_organism = heatmap_params.get('gene_count', 50)
 
             organism_summaries = []
 
@@ -452,7 +451,6 @@ def _auto_select_genes(
             # Display summary
             total_genes = len(all_selected_genes)
             summary_text = f"Auto-selected {total_genes} genes across {len(organism_groups)} species: " + ", ".join(organism_summaries)
-            st.sidebar.success(summary_text)
 
             # Display which contrasts were used for gene selection
             with st.sidebar.expander("Contrasts Used for Gene Selection", expanded=False):
@@ -473,42 +471,7 @@ def _auto_select_genes(
         return []
 
 
-@log_streamlit_function
-def _render_configuration_status(params: Dict[str, Any]):
-    """Display current configuration status in the sidebar."""
-    st.sidebar.divider()
-    st.sidebar.subheader("Current Configuration")
 
-    # Show dataset selection status
-    dataset_count = len(params.get('selected_datasets', []))
-    contrast_count = len(params.get('selected_contrasts', []))
-    gene_count = len(params.get('gene_sel', []))
-
-    if dataset_count > 0:
-        st.sidebar.success(f"{dataset_count} datasets, {contrast_count} contrasts selected")
-    else:
-        st.sidebar.info("Select datasets and contrasts above")
-
-    # Show heatmap configuration
-    heatmap_params = params.get('heatmap_params', {})
-    if heatmap_params and gene_count > 0:
-        st.sidebar.success("Heatmap Parameters Set")
-        st.sidebar.caption(
-            f"{gene_count} genes | "
-            f"LFC≥{heatmap_params.get('lfc_thresh', 'N/A')} | "
-            f"P≤{heatmap_params.get('pvalue_thresh', 'N/A')}"
-        )
-    else:
-        st.sidebar.info("Configure heatmap parameters above")
-
-    # Show expression configuration status
-    expression_params = params.get('expression_params', {})
-    if expression_params and expression_params.get('datasets'):
-        st.sidebar.success("Expression Plots Configured")
-        dataset_count = len(expression_params['datasets'])
-        st.sidebar.caption(f"{dataset_count} datasets selected")
-    else:
-        st.sidebar.info("Expression plots: Not yet configured")
 
 
 @log_streamlit_function

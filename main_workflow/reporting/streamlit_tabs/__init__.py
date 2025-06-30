@@ -7,7 +7,7 @@ and development workflow.
 """
 
 # Import main render functions from each tab module
-from .data_selection_tab import render_data_selection_tab
+
 from .heatmap_tab import render_heatmap_tab
 from .expression_plots_tab import render_expression_plots_tab
 from .analysis_plots_tab import render_analysis_plots_tab
@@ -27,7 +27,7 @@ from .helpers import (
 
 __all__ = [
     # Tab render functions
-    'render_data_selection_tab',
+
     'render_heatmap_tab',
     'render_expression_plots_tab',
     'render_analysis_plots_tab',

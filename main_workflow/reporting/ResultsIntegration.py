@@ -677,14 +677,41 @@ class ResultsIntegrator:
             heatmap_df = heatmap_df.set_index('Gene')
         heatmap_df = heatmap_df.fillna(0)
 
+        # Initialize tracking for filtered items
+        self.last_heatmap_filtered_genes = []
+        self.last_heatmap_filtered_contrasts = []
+
         # Remove empty rows/columns if requested
         if hide_empty_rows_cols:
-            # Remove genes (rows) where all values are 0
+            # Track genes that will be removed (rows where all values are 0)
             non_zero_rows = (heatmap_df != 0).any(axis=1)
-            heatmap_df = heatmap_df[non_zero_rows]
+            filtered_genes = heatmap_df[~non_zero_rows].index.tolist()
+            self.last_heatmap_filtered_genes = filtered_genes
 
-            # Remove contrasts (columns) where all values are 0
+            # Track contrasts that will be removed (columns where all values are 0)
             non_zero_cols = (heatmap_df != 0).any(axis=0)
+            filtered_contrast_labels = heatmap_df.loc[:, ~non_zero_cols].columns.tolist()
+
+            # Convert filtered contrast labels to readable format
+            filtered_contrasts = []
+            try:
+                for label in filtered_contrast_labels:
+                    # Find the corresponding contrast in our contrasts list
+                    for i, (analysis_id, contrast_id) in enumerate(contrasts):
+                        expected_label = f"{analysis_id}_{contrast_id}"
+                        if expected_label == label:
+                            # Get accession for display
+                            accession = self.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
+                            readable_name = f"{accession}: {contrast_id}"
+                            filtered_contrasts.append(readable_name)
+                            break
+                self.last_heatmap_filtered_contrasts = filtered_contrasts
+            except Exception as e:
+                logger.warning(f"Error creating readable contrast names for filtered items: {e}")
+                self.last_heatmap_filtered_contrasts = filtered_contrast_labels
+
+            # Apply the filtering
+            heatmap_df = heatmap_df[non_zero_rows]
             heatmap_df = heatmap_df.loc[:, non_zero_cols]
 
             # Update contrasts list to match remaining columns
@@ -694,7 +721,9 @@ class ResultsIntegrator:
                 # Recompute contrast labels after filtering to keep everything in sync
                 contrast_labels = [f"{a_id}_{c_id}" for a_id, c_id in contrasts]
                 simplified_labels = [simplify_contrast_label(a_id, c_id) for a_id, c_id in contrasts]
-                logger.info(f"After filtering empty rows/columns: {len(heatmap_df)} genes × {len(heatmap_df.columns)} contrasts")
+
+            logger.info(f"After filtering empty rows/columns: {len(heatmap_df)} genes × {len(heatmap_df.columns)} contrasts")
+            logger.info(f"Filtered out {len(filtered_genes)} genes and {len(filtered_contrasts)} contrasts with no significant values")
 
         # Check if we still have data after filtering
         if len(heatmap_df) == 0:
@@ -860,6 +889,18 @@ class ResultsIntegrator:
             logger.info(f"Saved LFC heatmap to {output_file}")
 
         return fig
+
+    def get_last_heatmap_filtered_info(self) -> Dict[str, List[str]]:
+        """
+        Get information about genes and contrasts that were filtered out in the last heatmap.
+
+        Returns:
+            Dictionary with 'genes' and 'contrasts' keys containing lists of filtered items
+        """
+        return {
+            'genes': getattr(self, 'last_heatmap_filtered_genes', []),
+            'contrasts': getattr(self, 'last_heatmap_filtered_contrasts', [])
+        }
 
     def create_expression_plots(self,
                               genes: List[str],

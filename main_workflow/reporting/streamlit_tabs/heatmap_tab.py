@@ -82,8 +82,6 @@ def render_heatmap_tab(
             organism_contrasts = organism_groups[organism]
             organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
 
-            st.success(f"Ready to display heatmap with {len(organism_genes)} genes across {len(organism_contrasts)} contrasts ({get_organism_display_name(organism)})")
-
             _draw_heatmap(
                 ri,
                 organism_genes,
@@ -96,16 +94,6 @@ def render_heatmap_tab(
             )
         else:
             # Multiple organisms - create sub-tabs
-            st.success(f"Found {len(organism_groups)} species in selected data. Creating species-specific heatmaps to prevent gene name conflicts.")
-
-            # Show organism breakdown
-            with st.expander("Species Breakdown", expanded=True):
-                for organism, contrasts in organism_groups.items():
-                    datasets = set(contrast[0] for contrast in contrasts)
-                    st.write(f"**{get_organism_display_name(organism)}**: {len(datasets)} datasets, {len(contrasts)} contrasts")
-
-            st.info("**Important**: Gene expression data is separated by species to ensure biological accuracy and prevent cross-species gene name conflicts.")
-
             # Create organism-specific tabs
             organism_names = list(organism_groups.keys())
             tab_names = [get_organism_display_name(org) for org in organism_names]
@@ -117,9 +105,6 @@ def render_heatmap_tab(
                     organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
 
                     if organism_genes:
-                        st.success(f"**{get_organism_display_name(organism)} Analysis**")
-                        st.write(f"Displaying {len(organism_genes)} genes across {len(organism_contrasts)} contrasts")
-
                         _draw_heatmap(
                             ri,
                             organism_genes,
@@ -208,8 +193,9 @@ def _draw_heatmap(
                 _display_heatmap_info()
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Show current configuration
-                st.caption(f"Showing {len(gene_selection)} genes across {len(contrast_pairs)} contrasts with P-value ≤ {p_thresh:.3f} and |Log2FC| ≥ {lfc_thresh_val:.1f}")
+                # Display information about filtered genes/contrasts if hide_empty_rows_cols is True
+                if hide_empty_rows_cols:
+                    _display_filtered_elements_info(ri)
             else:
                 log_streamlit_event("Failed to generate heatmap")
                 st.error("Could not generate heatmap. Please check your selections and try adjusting the parameters in the sidebar form.")
@@ -224,6 +210,35 @@ def _draw_heatmap(
 def _display_heatmap_info():
     """Display informational messages about the heatmap."""
     st.info("**Heatmap Tips:** Hover over cells to see contrast descriptions and gene information. Use the Dataset & Contrast Selection and Heatmap Parameters forms in the sidebar to modify your analysis.")
+
+
+@log_streamlit_function
+def _display_filtered_elements_info(ri: ResultsIntegrator):
+    """Display information about filtered genes and contrasts."""
+    try:
+        filtered_info = ri.get_last_heatmap_filtered_info()
+        filtered_genes = filtered_info.get('genes', [])
+        filtered_contrasts = filtered_info.get('contrasts', [])
+
+        if filtered_genes or filtered_contrasts:
+            with st.expander("Hidden Elements (No Significant Values)", expanded=False):
+                if filtered_genes:
+                    st.subheader("Hidden Genes")
+                    st.write(f"**{len(filtered_genes)} genes** hidden because they have no significant values in any selected contrasts:")
+                    # Display genes in a more compact format
+                    genes_text = ", ".join(filtered_genes)
+                    st.text_area("Genes:", value=genes_text, height=100, disabled=True, key="filtered_genes_display")
+
+                if filtered_contrasts:
+                    st.subheader("Hidden Contrasts")
+                    st.write(f"**{len(filtered_contrasts)} contrasts** hidden because they have no significant values for any selected genes:")
+                    for contrast in filtered_contrasts:
+                        st.write(f"• {contrast}")
+
+                if not filtered_genes and not filtered_contrasts:
+                    st.info("No elements were hidden - all genes and contrasts have at least one significant value.")
+    except Exception as e:
+        logger.warning(f"Could not display filtered elements info: {e}")
 
 
 @log_streamlit_function
