@@ -287,13 +287,15 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
                 lfc_thresh = st.text_input(
                     "Log2FC Threshold",
                     value="1.0",
-                    help="Absolute log2 fold change threshold"
+                    help="Absolute log2 fold change threshold",
+                    key="heatmap_lfc_threshold"
                 )
             with col2:
                 pvalue_thresh = st.text_input(
                     "P-value Threshold",
                     value="0.05",
-                    help="Adjusted p-value threshold"
+                    help="Adjusted p-value threshold",
+                    key="heatmap_pvalue_threshold"
                 )
 
             # Gene count control
@@ -301,7 +303,8 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
             gene_count_input = st.text_input(
                 "Number of genes to display",
                 value="50",
-                help="Maximum number of top genes to include in analysis"
+                help="Maximum number of top genes to include in analysis",
+                key="heatmap_gene_count"
             )
 
             # Validate parameters

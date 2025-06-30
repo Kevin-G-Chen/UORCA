@@ -111,11 +111,12 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
         organism_filter = st.multiselect(
             "Filter by Organism",
             options=sorted(df["Organism"].unique()),
-            default=[]
+            default=[],
+            key="datasets_info_organism_filter"
         )
 
     with col2:
-        search_filter = st.text_input("Search Datasets", "")
+        search_filter = st.text_input("Search Datasets", "", key="datasets_info_search")
 
     # Apply filters
     filtered_df = df
@@ -152,7 +153,7 @@ def _render_dataset_table(filtered_df: pd.DataFrame):
             "Number of Samples": st.column_config.NumberColumn("Samples", format="%d"),
             "Number of Contrasts": st.column_config.NumberColumn("Contrasts", format="%d")
         },
-        key="dataset_info_editor"
+        key="datasets_info_table_editor"
     )
 
     # Update selections based on checkboxes
@@ -193,7 +194,7 @@ def _render_dataset_details(filtered_df: pd.DataFrame):
 def _render_selection_controls(display_df: pd.DataFrame):
     """Render controls for selecting all visible datasets."""
     # Add quick selection button
-    if st.button("Select all visible datasets", key="select_all_visible_datasets"):
+    if st.button("Select all visible datasets", key="datasets_info_select_all"):
         visible_datasets = set(display_df["Accession"].tolist())
         st.session_state['selected_datasets'] = visible_datasets
         # Reset page number when changing datasets

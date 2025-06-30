@@ -83,7 +83,7 @@ def render_expression_plots_tab(
 
             # Add pagination controls at the top if needed
             if total_pages > 1:
-                _render_top_pagination_controls(current_page, total_pages)
+                _render_top_pagination_controls(current_page, total_pages, "expression_single")
 
             # Create and display the expression plots
             _draw_expression_plots(
@@ -116,7 +116,7 @@ def render_expression_plots_tab(
 
                         # Add pagination controls at the top if needed
                         if total_pages > 1:
-                            _render_top_pagination_controls(current_page, total_pages)
+                            _render_top_pagination_controls(current_page, total_pages, f"expression_{organism}")
 
                         # Create and display the expression plots
                         _draw_expression_plots(
@@ -138,10 +138,10 @@ def render_expression_plots_tab(
 def _render_display_settings() -> Dict[str, Any]:
     """Render display settings controls in the sidebar and return the settings."""
     with st.sidebar.expander("Display Settings", expanded=False):
-        facet_font_size = st.slider("Facet title size", 8, 16, 10, key="violin_font")
-        lock_y_axis = st.checkbox("Lock y-axis across genes", value=False, key="violin_lock_y")
-        show_raw_points = st.checkbox("Show raw points", value=True, key="violin_points")
-        legend_position = st.selectbox("Legend position", ["Bottom", "Right", "Top"], index=0, key="violin_legend")
+        facet_font_size = st.slider("Facet title size", 8, 16, 10, key="expression_plots_font")
+        lock_y_axis = st.checkbox("Lock y-axis across genes", value=False, key="expression_plots_lock_y")
+        show_raw_points = st.checkbox("Show raw points", value=True, key="expression_plots_points")
+        legend_position = st.selectbox("Legend position", ["Bottom", "Right", "Top"], index=0, key="expression_plots_legend")
 
     return {
         "facet_font_size": facet_font_size,
@@ -152,13 +152,13 @@ def _render_display_settings() -> Dict[str, Any]:
 
 
 @log_streamlit_function
-def _render_top_pagination_controls(current_page: int, total_pages: int):
+def _render_top_pagination_controls(current_page: int, total_pages: int, prefix: str = "expression"):
     """Render pagination controls at the top of the plots for convenience."""
     cols = st.columns([2, 1, 1, 1, 2])
 
     with cols[1]:
         prev_disabled = current_page <= 1
-        if st.button("Previous", disabled=prev_disabled, key="prev_main"):
+        if st.button("Previous", disabled=prev_disabled, key=f"{prefix}_prev"):
             st.session_state.page_num = max(1, current_page - 1)
             safe_rerun()
 
@@ -167,7 +167,7 @@ def _render_top_pagination_controls(current_page: int, total_pages: int):
 
     with cols[3]:
         next_disabled = current_page >= total_pages
-        if st.button("Next", disabled=next_disabled, key="next_main"):
+        if st.button("Next", disabled=next_disabled, key=f"{prefix}_next"):
             st.session_state.page_num = min(total_pages, current_page + 1)
             safe_rerun()
 

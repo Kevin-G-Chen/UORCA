@@ -129,13 +129,14 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
         "Research Question",
         value=saved_query if saved_query else "",
         placeholder=placeholder_text,
-        help=help_text
+        help=help_text,
+        key="ai_research_query_input"
     )
 
     # Single workflow button
     col1, col2 = st.columns([1, 3])
     with col1:
-        run_button = st.button("Run Complete AI Analysis", type="primary")
+        run_button = st.button("Run Complete AI Analysis", type="primary", key="ai_run_analysis_button")
     with col2:
         if not research_query.strip():
             st.info("Enter a research question above to start AI analysis.")
@@ -371,7 +372,7 @@ def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str
     with col1:
         st.info(f"Cached results from {cached_data['cached_at'].strftime('%H:%M:%S')}")
     with col2:
-        if st.button("New Analysis", help="Start a new analysis"):
+        if st.button("New Analysis", help="Start a new analysis", key="ai_new_analysis_button"):
             st.session_state['show_cached_results'] = False
             st.session_state['current_analysis_id'] = None
             st.rerun()

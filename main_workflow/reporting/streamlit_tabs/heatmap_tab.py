@@ -124,9 +124,9 @@ def render_heatmap_tab(
 def _render_display_settings() -> dict:
     """Render display settings controls in the sidebar and return the settings."""
     with st.sidebar.expander("Display Settings", expanded=False):
-        heatmap_font_size = st.slider("Font size", 8, 16, 12, key="heatmap_font")
-        show_grid_lines = st.checkbox("Show grid lines", value=True, key="heatmap_grid")
-        grid_opacity = st.slider("Grid opacity", 0.1, 1.0, 0.3, key="heatmap_grid_opacity")
+        heatmap_font_size = st.slider("Font size", 8, 16, 12, key="heatmap_tab_font")
+        show_grid_lines = st.checkbox("Show grid lines", value=True, key="heatmap_tab_grid")
+        grid_opacity = st.slider("Grid opacity", 0.1, 1.0, 0.3, key="heatmap_tab_grid_opacity")
 
     return {
         "font_size": heatmap_font_size,
@@ -227,7 +227,7 @@ def _display_filtered_elements_info(ri: ResultsIntegrator):
                     st.write(f"**{len(filtered_genes)} genes** hidden because they have no significant values in any selected contrasts:")
                     # Display genes in a more compact format
                     genes_text = ", ".join(filtered_genes)
-                    st.text_area("Genes:", value=genes_text, height=100, disabled=True, key="filtered_genes_display")
+                    st.text_area("Genes:", value=genes_text, height=100, disabled=True, key="heatmap_filtered_genes_display")
 
                 if filtered_contrasts:
                     st.subheader("Hidden Contrasts")
