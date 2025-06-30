@@ -98,7 +98,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
         'effective_pvalue_thresh': params['heatmap_params']['pvalue_thresh'],
         'effective_lfc_thresh': params['heatmap_params']['lfc_thresh'],
         'use_dynamic_filtering': True,
-        'hide_empty_rows_cols': True,
+        'hide_empty_rows_cols': False,
         'hide_x_labels': True,
         'show_advanced': False
     })
@@ -396,28 +396,32 @@ def _auto_select_genes(
         organism_groups = group_contrasts_by_organism(ri, heatmap_params['contrasts'])
 
         if len(organism_groups) == 1:
-            # Single organism - use existing logic
+            # Single organism - use selected contrasts only
+            organism = list(organism_groups.keys())[0]
+            organism_contrasts = organism_groups[organism]
+
             top_genes = cached_identify_important_genes(
                 results_dir=results_dir,
+                selected_contrasts=organism_contrasts,
                 top_frequent=heatmap_params.get('gene_count', 50),
-                top_unique=0,
-                max_contrasts_for_unique=0,
-                min_unique_per_contrast=1,
                 p_value_threshold=heatmap_params['pvalue_thresh'],
                 lfc_threshold=heatmap_params['lfc_thresh']
             )
 
-            # Limit to specified gene count
-            gene_count = heatmap_params.get('gene_count', 50)
-            limited_genes = top_genes[:gene_count] if len(top_genes) > gene_count else top_genes
+            # The cached function already limits to the requested gene count
+            limited_genes = top_genes
 
-            organism = list(organism_groups.keys())[0]
             organism_display = get_organism_display_name(organism)
 
-            if len(top_genes) > gene_count:
-                st.sidebar.info(f"Auto-selected top {gene_count} of {len(top_genes)} important genes ({organism_display})")
-            else:
-                st.sidebar.success(f"Auto-selected {len(limited_genes)} important genes ({organism_display})")
+            st.sidebar.success(f"Auto-selected {len(limited_genes)} important genes ({organism_display})")
+
+            # Display which contrasts were used for gene selection
+            with st.sidebar.expander("Contrasts Used for Gene Selection", expanded=False):
+                st.write(f"**{organism_display}** - {len(organism_contrasts)} contrasts:")
+                for analysis_id, contrast_id in organism_contrasts:
+                    # Get dataset accession for display
+                    accession = ri.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
+                    st.write(f"• {accession}: {contrast_id}")
 
             log_streamlit_event(f"Auto-selected {len(limited_genes)} genes for {organism}")
             return limited_genes
@@ -430,32 +434,35 @@ def _auto_select_genes(
             organism_summaries = []
 
             for organism, organism_contrasts in organism_groups.items():
-                # Filter contrasts to only this organism for gene identification
-                # We need to temporarily filter the results to this organism
+                # Get genes for this organism's contrasts only
                 organism_genes = cached_identify_important_genes(
                     results_dir=results_dir,
+                    selected_contrasts=organism_contrasts,
                     top_frequent=gene_count_per_organism,
-                    top_unique=0,
-                    max_contrasts_for_unique=0,
-                    min_unique_per_contrast=1,
                     p_value_threshold=heatmap_params['pvalue_thresh'],
                     lfc_threshold=heatmap_params['lfc_thresh']
                 )
 
-                # Filter genes to only those present in this organism's data
-                organism_specific_genes = filter_genes_by_organism(ri, organism_genes, organism, organism_contrasts)
-
-                # Limit genes per organism
-                limited_organism_genes = organism_specific_genes[:gene_count_per_organism]
-                all_selected_genes.extend(limited_organism_genes)
+                # The cached function already filters to the organism's data and limits gene count
+                all_selected_genes.extend(organism_genes)
 
                 organism_display = get_organism_display_name(organism)
-                organism_summaries.append(f"{len(limited_organism_genes)} genes from {organism_display}")
+                organism_summaries.append(f"{len(organism_genes)} genes from {organism_display}")
 
             # Display summary
             total_genes = len(all_selected_genes)
             summary_text = f"Auto-selected {total_genes} genes across {len(organism_groups)} species: " + ", ".join(organism_summaries)
             st.sidebar.success(summary_text)
+
+            # Display which contrasts were used for gene selection
+            with st.sidebar.expander("Contrasts Used for Gene Selection", expanded=False):
+                for organism, organism_contrasts in organism_groups.items():
+                    organism_display = get_organism_display_name(organism)
+                    st.write(f"**{organism_display}** - {len(organism_contrasts)} contrasts:")
+                    for analysis_id, contrast_id in organism_contrasts:
+                        # Get dataset accession for display
+                        accession = ri.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
+                        st.write(f"• {accession}: {contrast_id}")
 
             log_streamlit_event(f"Auto-selected {total_genes} genes across {len(organism_groups)} organisms")
             return all_selected_genes

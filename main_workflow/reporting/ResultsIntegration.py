@@ -378,24 +378,22 @@ class ResultsIntegrator:
 
     def identify_important_genes(self,
                                top_frequent: int = 20,
-                               top_unique: int = 10,
-                               max_contrasts_for_unique: int = 2,
-                               min_unique_per_contrast: int = 1,
                                p_value_threshold: float = None,
                                lfc_threshold: float = None) -> Set[str]:
         """
-        Identify important genes across all analyses using two criteria:
-        1. Top frequently occurring genes across all contrasts
-        2. Genes that appear in few contrasts but have large fold changes
+        Identify important genes across all analyses based on frequency of differential expression.
+
+        Focuses on genes that are commonly differentially expressed across multiple contrasts,
+        indicating consistent biological significance.
 
         Parameters:
         -----------
         top_frequent : int
             Number of top frequently occurring genes to select
-        top_unique : int
-            Number of top unique genes to select per contrast based on fold change
-        max_contrasts_for_unique : int
-            Maximum number of contrasts a gene can appear in to be considered "unique"
+        p_value_threshold : float, optional
+            P-value threshold for significance (uses instance default if None)
+        lfc_threshold : float, optional
+            Log fold change threshold for significance (uses instance default if None)
 
         Returns:
         --------
@@ -469,25 +467,8 @@ class ResultsIntegrator:
         important_genes.update(top_frequent_genes)
 
         logger.info(f"Selected {len(top_frequent_genes)} top frequently occurring genes")
-
-        # 2. Find unique/rare genes with large fold changes in each contrast
-        for contrast_key, genes in genes_by_contrast.items():
-            # Find genes that appear in few contrasts (unique or rare)
-            unique_genes = {gene: lfc for gene, lfc in genes.items()
-                           if genes_by_occurrence.get(gene, 0) <= max_contrasts_for_unique}
-
-            # Sort by fold change and take top ones
-            sorted_unique_genes = sorted(unique_genes.items(), key=lambda x: x[1], reverse=True)
-            top_unique_genes = [gene for gene, _ in sorted_unique_genes[:top_unique]]
-
-            if len(top_unique_genes) >= min_unique_per_contrast:
-                important_genes.update(top_unique_genes)
-                logger.info(f"Selected {len(top_unique_genes)} unique genes with large fold changes from {contrast_key}")
-            else:
-                logger.warning(f"Not enough unique genes found for {contrast_key}: {len(top_unique_genes)} < {min_unique_per_contrast}")
-
-        logger.info(f"Identified {len(important_genes)} important genes in total")
-        return important_genes
+        logger.info(f"Identified {len(top_frequent_genes)} important genes in total")
+        return set(top_frequent_genes)
 
     def _ensure_output_dir(self):
         """Create output_dir only on first use."""
@@ -549,10 +530,7 @@ class ResultsIntegrator:
         if genes is None:
             try:
                 genes = list(self.identify_important_genes(
-                    top_frequent=20,
-                    top_unique=10,
-                    max_contrasts_for_unique=2,
-                    min_unique_per_contrast=1
+                    top_frequent=20
                 ))
                 if not genes:
                     logger.warning("No important genes identified")
@@ -1372,16 +1350,14 @@ class ResultsIntegrator:
 
     def create_integrated_report(self,
                                top_frequent: int = 20,
-                               top_unique: int = 10,
                                plot_type: str = 'violin',
                                gene_list: List[str] = None,
+                               analyses: list = None,
                                max_genes: int = 100,
-                               min_unique_per_contrast: int = 1,
                                p_value_threshold: float = None,
                                lfc_threshold: float = None,
-                               max_contrasts_for_unique: int = 2,
                                hide_x_labels: bool = True,
-                               output_dir: str = None):
+                               output_file: str = None):
         """
         Create a comprehensive integrated report with all visualizations.
 
@@ -1389,36 +1365,34 @@ class ResultsIntegrator:
         -----------
         top_frequent : int
             Number of top frequently occurring genes to include
-        top_unique : int
-            Number of top unique genes to include per contrast
         plot_type : str
             Type of expression plot: 'violin', 'box', or 'both'
         gene_list : List[str], optional
             Specific list of genes to plot (overrides automatic selection)
+        analyses : list, optional
+            List of analysis IDs to include (all by default)
         max_genes : int
             Maximum number of genes to include in visualizations
-        min_unique_per_contrast : int
-            Minimum number of unique genes to select from each contrast
         p_value_threshold : float, optional
             Override the default p-value threshold for gene selection
         lfc_threshold : float, optional
             Override the default log fold change threshold for gene selection
-        max_contrasts_for_unique : int
-            Maximum number of contrasts a gene can appear in to be considered unique
         hide_x_labels : bool
             Whether to hide x-axis labels in expression plots
-        output_dir : str, optional
-            Override the default output directory
+        output_file : str, optional
+            Output file path for the report (defaults to results_dir/integrated_report.html)
 
         Returns:
         --------
-        str
-            Path to the output directory containing the report
+        str: Path to the generated HTML report file
         """
-        # Override output directory if specified
-        if output_dir is not None:
-            self._output_dir_requested = output_dir
-            self.output_dir = None
+        # Set output file path if specified
+        if output_file is not None:
+            import os
+            output_dir = os.path.dirname(output_file)
+            if output_dir:
+                self._output_dir_requested = output_dir
+                self.output_dir = None
 
         # Now ensure the output directory exists
         self._ensure_output_dir()
@@ -1431,9 +1405,6 @@ class ResultsIntegrator:
         if gene_list is None:
             gene_list = list(self.identify_important_genes(
                 top_frequent=top_frequent,
-                top_unique=top_unique,
-                max_contrasts_for_unique=max_contrasts_for_unique,
-                min_unique_per_contrast=min_unique_per_contrast,
                 # Use provided thresholds or default to 0.01 for automatic selection to highlight stronger signals
                 p_value_threshold=p_value_threshold if p_value_threshold is not None else 0.01,
                 lfc_threshold=lfc_threshold
@@ -1655,12 +1626,7 @@ def main():
         default=20,
         help="Number of most frequently occurring genes to include (default: 20)"
     )
-    parser.add_argument(
-        "--top_unique",
-        type=int,
-        default=5,
-        help="Number of unique genes with large fold changes to include per contrast (default: 10)"
-    )
+
     parser.add_argument(
         "--max_genes",
         type=int,
@@ -1689,7 +1655,7 @@ def main():
         output_dir=args.output_dir,
         pvalue_threshold=args.pvalue_threshold,
         lfc_threshold=args.lfc_threshold,
-        top_n_genes=max(args.top_frequent, args.top_unique)
+        top_n_genes=args.top_frequent
     )
 
     # Load gene list if provided
@@ -1705,7 +1671,6 @@ def main():
     # Create the integrated report
     output_dir = integrator.create_integrated_report(
         top_frequent=args.top_frequent,
-        top_unique=args.top_unique,
         plot_type=args.plot_type,
         gene_list=gene_list,
         max_genes=args.max_genes
