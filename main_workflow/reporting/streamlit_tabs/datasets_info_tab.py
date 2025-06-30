@@ -30,8 +30,8 @@ def render_datasets_info_tab(ri: ResultsIntegrator):
     Args:
         ri: ResultsIntegrator instance
     """
-    st.header("📋 View Dataset Info")
-    st.markdown("**📋 Browse and filter dataset metadata.** View study details, organism information, sample counts, and experimental descriptions. Use filters to find specific datasets of interest.")
+    st.header("View Dataset Info")
+    st.markdown("**Browse and filter dataset metadata.** View study details, organism information, sample counts, and experimental descriptions. Use filters to find specific datasets of interest.")
 
     # Render the main datasets interface
     _render_datasets_interface(ri)
@@ -76,11 +76,10 @@ def _create_dataset_info_dataframe(ri: ResultsIntegrator) -> List[Dict[str, Any]
     for analysis_id, info in ri.analysis_info.items():
         # Build a dataset info dictionary
         dataset_dict = {
-            "Accession": info.get("accession", "Unknown"),
+            "Accession": info.get("accession", analysis_id),
             "Organism": info.get("organism", "Unknown"),
             "Number of Samples": info.get("number_of_samples", 0),
-            "Number of Contrasts": info.get("number_of_contrasts", 0),
-            "Dataset ID": analysis_id  # Keep dataset ID but place it last
+            "Number of Contrasts": info.get("number_of_contrasts", 0)
         }
 
         # Add dataset metadata from analysis_info.json if available
@@ -135,7 +134,7 @@ def _render_dataset_table(filtered_df: pd.DataFrame):
     """Render the interactive dataset table with selection checkboxes."""
     # Add checkbox column for selection
     display_df = filtered_df.copy()
-    display_df["✔"] = display_df["Dataset ID"].isin(st.session_state.get('selected_datasets', set()))
+    display_df["✔"] = display_df["Accession"].isin(st.session_state.get('selected_datasets', set()))
 
     # Display dataset information with dataframe for interactivity
     edited_df = st.data_editor(
@@ -144,7 +143,6 @@ def _render_dataset_table(filtered_df: pd.DataFrame):
         use_container_width=True,
         column_config={
             "✔": st.column_config.CheckboxColumn("Select", default=False),
-            "Dataset ID": st.column_config.TextColumn("Dataset ID", width="medium"),
             "Title": st.column_config.TextColumn("Title", width="large"),
             "Accession": st.column_config.TextColumn("Accession", width="medium"),
             "Organism": st.column_config.TextColumn("Organism", width="medium"),
@@ -156,7 +154,7 @@ def _render_dataset_table(filtered_df: pd.DataFrame):
 
     # Update selections based on checkboxes
     if not edited_df.empty:
-        selected_from_info = set(edited_df.loc[edited_df["✔"], "Dataset ID"].tolist())
+        selected_from_info = set(edited_df.loc[edited_df["✔"], "Accession"].tolist())
         st.session_state['selected_datasets'] = selected_from_info
         log_streamlit_event(f"User selected {len(selected_from_info)} datasets from info tab")
 
@@ -167,10 +165,9 @@ def _render_dataset_details(filtered_df: pd.DataFrame):
     # Show dataset details if available (always show by default)
     if any(col in filtered_df.columns for col in ["Title", "Summary", "Design"]):
         for _, row in filtered_df.iterrows():
-            dataset_id = row.get("Dataset ID", row.get("Accession", "Unknown"))
-            accession = row.get("Accession", "")
+            accession = row.get("Accession", "Unknown")
 
-            with st.expander(f"Details for {dataset_id} {f'({accession})' if accession else ''}", expanded=True):
+            with st.expander(f"Details for {accession}", expanded=True):
                 if "Title" in filtered_df.columns and pd.notna(row.get("Title")):
                     st.subheader("Title")
                     st.markdown(str(row["Title"]))
@@ -189,7 +186,7 @@ def _render_selection_controls(display_df: pd.DataFrame):
     """Render controls for selecting all visible datasets."""
     # Add quick selection button
     if st.button("Select all visible datasets", key="select_all_visible_datasets"):
-        visible_datasets = set(display_df["Dataset ID"].tolist())
+        visible_datasets = set(display_df["Accession"].tolist())
         st.session_state['selected_datasets'] = visible_datasets
         # Reset page number when changing datasets
         st.session_state.page_num = 1

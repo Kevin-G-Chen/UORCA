@@ -42,8 +42,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
     """
     st.sidebar.title("🧬 UORCA Explorer")
 
-    # Results directory input (outside of forms)
-    _render_results_directory_input(results_dir)
+
 
     # Initialize return parameters with defaults
     params = {
@@ -110,30 +109,15 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
     return params
 
 
-@log_streamlit_function
-def _render_results_directory_input(current_results_dir: str):
-    """Render the results directory input field."""
-    # Get the default results directory
-    default_dir = os.getenv("UORCA_DEFAULT_RESULTS_DIR")
-    if not default_dir:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        default_dir = os.path.join(os.path.dirname(os.path.dirname(script_dir)), "UORCA_results")
-        if not os.path.exists(default_dir):
-            default_dir = os.path.dirname(os.path.dirname(script_dir))
 
-    # Results directory input
-    results_dir = st.sidebar.text_input(
-        "Results directory",
-        value="/UORCA_results" if os.path.exists('/UORCA_results') else current_results_dir or default_dir,
-        help="Path to UORCA results. If running in container, use '/UORCA_results'. Otherwise, use the full path to your results directory."
-    )
 
 
 @log_streamlit_function
 def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -> Optional[Dict[str, Any]]:
     """Render the dataset selection section with two coordinated forms."""
-    with st.sidebar.expander("📊 Dataset & Contrast Selection", expanded=True):
+    with st.sidebar.expander("Dataset & Contrast Selection :question:", expanded=True):
         st.markdown("**Select your datasets and contrasts for analysis**")
+        st.info("Selecting datasets will automatically update the contrast table below.")
 
         # Initialize session state for coordination
         if 'selected_datasets_from_form' not in st.session_state:
@@ -149,7 +133,7 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
             if dataset_data:
                 df = pd.DataFrame(dataset_data)
                 # Pre-select based on session state
-                df['Select'] = df['Dataset'].isin(st.session_state['selected_datasets_from_form'])
+                df['Select'] = df['Accession'].isin(st.session_state['selected_datasets_from_form'])
 
                 edited_df = st.data_editor(
                     df,
@@ -160,10 +144,6 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                             "Select",
                             help="Check to include this dataset",
                             default=False
-                        ),
-                        "Dataset": st.column_config.TextColumn(
-                            "Dataset",
-                            help="Dataset identifier"
                         ),
                         "Accession": st.column_config.TextColumn(
                             "Accession",
@@ -181,14 +161,14 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                     key="dataset_selection_table"
                 )
 
-                dataset_submitted = st.form_submit_button("Update Datasets", type="primary")
+                dataset_submitted = st.form_submit_button("Apply", type="primary")
 
                 if dataset_submitted:
                     # Get selected datasets
                     selected_datasets = set()
                     if not edited_df.empty:
                         selected_rows = edited_df[edited_df["Select"] == True]
-                        selected_datasets = set(selected_rows["Dataset"].tolist())
+                        selected_datasets = set(selected_rows["Accession"].tolist())
 
                     # Update session state
                     st.session_state['selected_datasets_from_form'] = selected_datasets
@@ -224,7 +204,7 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                 df = pd.DataFrame(contrast_data)
                 # Pre-select based on session state
                 df['Select'] = df.apply(
-                    lambda row: (row['Dataset'], row['Contrast']) in st.session_state['selected_contrasts_from_form'],
+                    lambda row: (row['Accession'], row['Contrast']) in st.session_state['selected_contrasts_from_form'],
                     axis=1
                 )
 
@@ -238,9 +218,9 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                             help="Check to include this contrast",
                             default=False
                         ),
-                        "Dataset": st.column_config.TextColumn(
-                            "Dataset",
-                            help="Dataset identifier"
+                        "Accession": st.column_config.TextColumn(
+                            "Accession",
+                            help="GEO accession number"
                         ),
                         "Contrast": st.column_config.TextColumn(
                             "Contrast",
@@ -250,7 +230,7 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                     key="contrast_selection_table"
                 )
 
-                contrast_submitted = st.form_submit_button("Update Contrasts", type="secondary")
+                contrast_submitted = st.form_submit_button("Apply", type="secondary")
 
                 if contrast_submitted:
                     # Get selected contrasts
@@ -258,7 +238,7 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                     if not edited_df.empty:
                         selected_rows = edited_df[edited_df["Select"] == True]
                         selected_contrasts = set([
-                            (row["Dataset"], row["Contrast"])
+                            (row["Accession"], row["Contrast"])
                             for _, row in selected_rows.iterrows()
                         ])
 
@@ -287,7 +267,7 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
 @log_streamlit_function
 def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Dict[str, Any]]:
     """Render the heatmap configuration form."""
-    with st.sidebar.expander("🌡️ Heatmap Parameters", expanded=False):
+    with st.sidebar.expander("Heatmap Parameters", expanded=False):
         with st.form("heatmap_config"):
             st.subheader("Significance Thresholds")
 
@@ -308,10 +288,9 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
 
             # Gene count control
             st.subheader("Gene Selection")
-            gene_count = st.selectbox(
+            gene_count_input = st.text_input(
                 "Number of genes to display",
-                options=[20, 50, 100, 200],
-                index=1,  # Default to 50
+                value="50",
                 help="Maximum number of top genes to include in analysis"
             )
 
@@ -319,12 +298,15 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
             try:
                 lfc_val = float(lfc_thresh)
                 pval_val = float(pvalue_thresh)
+                gene_count = int(gene_count_input)
+                if gene_count <= 0:
+                    raise ValueError("Gene count must be positive")
             except ValueError:
-                st.error("Please enter valid numeric values for thresholds")
-                lfc_val, pval_val = 1.0, 0.05
+                st.error("Please enter valid numeric values")
+                lfc_val, pval_val, gene_count = 1.0, 0.05, 50
 
             # Submit button
-            submitted = st.form_submit_button("Update Heatmap Parameters", type="primary")
+            submitted = st.form_submit_button("Apply", type="primary")
 
             if submitted:
                 log_streamlit_user_action(f"Heatmap parameters updated: LFC={lfc_val}, P={pval_val}, genes={gene_count}")
@@ -340,10 +322,10 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
 @log_streamlit_function
 def _render_expression_form(ri: ResultsIntegrator) -> Optional[Dict[str, Any]]:
     """Render the expression plots configuration form (placeholder)."""
-    with st.sidebar.expander("📈 Expression Plots Configuration", expanded=False):
+    with st.sidebar.expander("Expression Plots Configuration", expanded=False):
         with st.form("expression_config"):
             st.info("Expression plot configuration will be implemented in future versions.")
-            st.form_submit_button("Update Expression Plots", disabled=True)
+            st.form_submit_button("Apply", disabled=True)
 
     return None
 
@@ -356,8 +338,7 @@ def _create_dataset_table_data(ri: ResultsIntegrator) -> List[Dict[str, Any]]:
     for analysis_id, info in ri.analysis_info.items():
         dataset_data.append({
             "Select": False,  # Default to unselected
-            "Dataset": analysis_id,
-            "Accession": info.get("accession", "Unknown"),
+            "Accession": info.get("accession", analysis_id),
             "Samples": info.get("number_of_samples", 0),
             "Contrasts": info.get("number_of_contrasts", 0)
         })
@@ -378,7 +359,7 @@ def _create_contrast_table_data_filtered(ri: ResultsIntegrator, selected_dataset
 
                 contrast_data.append({
                     "Select": False,  # Default to unselected
-                    "Dataset": analysis_id,
+                    "Accession": ri.analysis_info[analysis_id].get("accession", analysis_id),
                     "Contrast": contrast_id
                 })
 
@@ -429,7 +410,7 @@ def _auto_select_genes(
 def _render_configuration_status(params: Dict[str, Any]):
     """Display current configuration status in the sidebar."""
     st.sidebar.divider()
-    st.sidebar.subheader("📊 Current Configuration")
+    st.sidebar.subheader("Current Configuration")
 
     # Show dataset selection status
     dataset_count = len(params.get('selected_datasets', []))
@@ -444,30 +425,30 @@ def _render_configuration_status(params: Dict[str, Any]):
     # Show heatmap configuration
     heatmap_params = params.get('heatmap_params', {})
     if heatmap_params and gene_count > 0:
-        st.sidebar.success("✅ Heatmap Parameters Set")
+        st.sidebar.success("Heatmap Parameters Set")
         st.sidebar.caption(
-            f"🧬 {gene_count} genes | "
-            f"📊 LFC≥{heatmap_params.get('lfc_thresh', 'N/A')} | "
+            f"{gene_count} genes | "
+            f"LFC≥{heatmap_params.get('lfc_thresh', 'N/A')} | "
             f"P≤{heatmap_params.get('pvalue_thresh', 'N/A')}"
         )
     else:
-        st.sidebar.info("ℹ️ Configure heatmap parameters above")
+        st.sidebar.info("Configure heatmap parameters above")
 
     # Show expression configuration status
     expression_params = params.get('expression_params', {})
     if expression_params and expression_params.get('datasets'):
-        st.sidebar.success("✅ Expression Plots Configured")
+        st.sidebar.success("Expression Plots Configured")
         dataset_count = len(expression_params['datasets'])
-        st.sidebar.caption(f"📈 {dataset_count} datasets selected")
+        st.sidebar.caption(f"{dataset_count} datasets selected")
     else:
-        st.sidebar.info("📈 Expression plots: Not yet configured")
+        st.sidebar.info("Expression plots: Not yet configured")
 
 
 @log_streamlit_function
 def _render_help_section():
     """Render the help section at the bottom of the sidebar."""
     st.sidebar.divider()
-    with st.sidebar.expander("ℹ️ Help", expanded=False):
+    with st.sidebar.expander("Help", expanded=False):
         st.markdown(
             """
             ### How to Use the New Interface

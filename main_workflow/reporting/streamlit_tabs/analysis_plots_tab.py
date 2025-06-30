@@ -49,8 +49,8 @@ def render_analysis_plots_tab(ri: ResultsIntegrator, results_dir: str):
         ri: ResultsIntegrator instance
         results_dir: Path to the results directory
     """
-    st.header("🧑‍🔬 Analyze Experiments")
-    st.markdown("**📈 Quality control and differential expression plots from individual datasets.** View MDS plots, normalization diagnostics, volcano plots, and MA plots for detailed analysis.")
+    st.header("Analyze Experiments")
+    st.markdown("**Quality control and differential expression plots from individual datasets.** View MDS plots, normalization diagnostics, volcano plots, and MA plots for detailed analysis.")
 
     # Display settings for analysis plots
     _render_display_settings()
@@ -62,7 +62,7 @@ def render_analysis_plots_tab(ri: ResultsIntegrator, results_dir: str):
 @log_streamlit_function
 def _render_display_settings():
     """Render display settings controls in the sidebar."""
-    with st.sidebar.expander("🎨 Display Settings", expanded=False):
+    with st.sidebar.expander("Display Settings", expanded=False):
         plot_font_size = st.slider("Font size", 8, 16, 12, key="analysis_font")
         plot_grid = st.checkbox("Show grid lines", value=True, key="analysis_grid")
 

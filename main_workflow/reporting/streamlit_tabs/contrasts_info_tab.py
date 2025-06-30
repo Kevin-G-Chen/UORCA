@@ -32,8 +32,8 @@ def render_contrasts_info_tab(ri: ResultsIntegrator, pvalue_thresh: float, lfc_t
         pvalue_thresh: P-value threshold for DEG counting
         lfc_thresh: Log fold change threshold for DEG counting
     """
-    st.header("🔍 View Contrast Info")
-    st.markdown("**🔍 Browse and filter contrast details.** View contrast descriptions, DEG counts, and filter by dataset or significance. Use this to understand what each comparison represents.")
+    st.header("View Contrast Info")
+    st.markdown("**Browse and filter contrast details.** View contrast descriptions, DEG counts, and filter by dataset or significance. Use this to understand what each comparison represents.")
 
     # Render the main contrasts interface
     _render_contrasts_interface(ri, pvalue_thresh, lfc_thresh)
@@ -100,8 +100,7 @@ def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float,
                                  (abs(df[lfc_col]) > lfc_thresh)).sum()
 
             contrast_info.append({
-                "Dataset": aid,
-                "Accession": info.get("accession", "Unknown"),
+                "Accession": info.get("accession", aid),
                 "Contrast": contrast_id,
                 "Original ID": contrast_id,
                 "Description": description,
@@ -118,10 +117,9 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        dataset_column = "Dataset" if "Dataset" in df.columns else "Accession"
         dataset_filter = st.multiselect(
-            "Filter by Dataset",
-            options=sorted(df[dataset_column].unique()),
+            "Filter by Accession",
+            options=sorted(df["Accession"].unique()),
             default=[]
         )
 
@@ -134,9 +132,7 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
     # Apply filters
     filtered_df = df
     if dataset_filter:
-        # Get the column to filter by
-        dataset_column = "Dataset" if "Dataset" in filtered_df.columns else "Accession"
-        filtered_df = filtered_df[filtered_df[dataset_column].isin(dataset_filter)]
+        filtered_df = filtered_df[filtered_df["Accession"].isin(dataset_filter)]
 
     if min_degs > 0:
         filtered_df = filtered_df[filtered_df["DEGs"] >= min_degs]
@@ -160,7 +156,7 @@ def _render_contrast_table(filtered_df: pd.DataFrame):
     # Add checkbox column for selection
     display_df = filtered_df.copy()
     display_df["✔"] = display_df.apply(
-        lambda row: (row['Dataset'], row.get('Original ID', row['Contrast'])) in st.session_state.get('selected_contrasts', set()),
+        lambda row: (row['Accession'], row.get('Original ID', row['Contrast'])) in st.session_state.get('selected_contrasts', set()),
         axis=1
     )
 
@@ -171,7 +167,6 @@ def _render_contrast_table(filtered_df: pd.DataFrame):
         use_container_width=True,
         column_config={
             "✔": st.column_config.CheckboxColumn("Select", default=False),
-            "Dataset": st.column_config.TextColumn("Dataset", width="medium"),
             "Accession": st.column_config.TextColumn("Accession", width="medium"),
             "Contrast": st.column_config.TextColumn("Contrast", width="medium"),
             "Original ID": st.column_config.TextColumn("Original ID", width="medium"),
@@ -186,9 +181,9 @@ def _render_contrast_table(filtered_df: pd.DataFrame):
         selected_from_info = set()
         for _, row in edited_df.iterrows():
             if row["✔"]:
-                dataset = row['Dataset']
+                accession = row['Accession']
                 contrast = row.get('Original ID', row['Contrast'])
-                selected_from_info.add((dataset, contrast))
+                selected_from_info.add((accession, contrast))
         st.session_state['selected_contrasts'] = selected_from_info
         log_streamlit_event(f"User selected {len(selected_from_info)} contrasts from info tab")
 
@@ -199,10 +194,10 @@ def _render_selection_controls(filtered_df: pd.DataFrame):
     # Add quick selection button
     if st.button("Select all visible contrasts", key="select_all_visible_contrasts"):
         visible_contrasts = set()
-        for _, row in display_df.iterrows():
-            dataset = row['Dataset']
+        for _, row in filtered_df.iterrows():
+            accession = row['Accession']
             contrast = row.get('Original ID', row['Contrast'])
-            visible_contrasts.add((dataset, contrast))
+            visible_contrasts.add((accession, contrast))
         st.session_state['selected_contrasts'] = visible_contrasts
         # Reset page number when changing contrasts
         st.session_state.page_num = 1
