@@ -103,33 +103,89 @@ def get_integrator(path: str) -> Tuple[Optional[ResultsIntegrator], Optional[str
 @log_streamlit_function
 def cached_identify_important_genes(
     results_dir: str,
+    selected_contrasts: List[Tuple[str, str]],
     top_frequent: int,
-    top_unique: int,
-    max_contrasts_for_unique: int,
-    min_unique_per_contrast: int,
     p_value_threshold: float,
     lfc_threshold: float
 ) -> List[str]:
     """
-    Cache the identify_important_genes computation to avoid recomputation on every rerun.
+    Cache the identify_important_genes computation for selected contrasts only.
 
-    This function is cached based on the input parameters, so it will only recompute
-    when the parameters change. Cache expires after 1 hour to handle data updates.
+    This function identifies genes that are commonly differentially expressed
+    across the selected contrasts, not all contrasts in the dataset.
+
+    Args:
+        results_dir: Path to results directory
+        selected_contrasts: List of (analysis_id, contrast_id) tuples to analyze
+        top_frequent: Number of top frequently DE genes to return
+        p_value_threshold: P-value threshold for significance
+        lfc_threshold: Log fold change threshold for significance
+
+    Returns:
+        List of gene names sorted alphabetically
     """
     ri, error = get_integrator(results_dir)
     if error or not ri:
         return []
 
     try:
-        top_genes = ri.identify_important_genes(
-            top_frequent=top_frequent,
-            top_unique=top_unique,
-            max_contrasts_for_unique=max_contrasts_for_unique,
-            min_unique_per_contrast=min_unique_per_contrast,
-            p_value_threshold=p_value_threshold,
-            lfc_threshold=lfc_threshold
-        )
-        return sorted(top_genes)
+        # Sort contrasts to ensure deterministic caching regardless of order
+        sorted_contrasts = sorted(selected_contrasts)
+
+        # Count gene occurrences across selected contrasts only
+        gene_counts = {}
+        contrasts_processed = 0
+        total_significant_genes = 0
+
+        logger.info(f"Processing {len(sorted_contrasts)} selected contrasts for gene identification")
+        logger.info(f"Using thresholds: P-value < {p_value_threshold}, |logFC| > {lfc_threshold}")
+
+        for analysis_id, contrast_id in sorted_contrasts:
+            if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
+                deg_df = ri.deg_data[analysis_id][contrast_id]
+
+                # Filter for significant genes
+                if 'adj.P.Val' in deg_df.columns and 'logFC' in deg_df.columns and 'Gene' in deg_df.columns:
+                    significant_genes = deg_df[
+                        (deg_df['adj.P.Val'] < p_value_threshold) &
+                        (abs(deg_df['logFC']) > lfc_threshold)
+                    ]['Gene'].tolist()
+
+                    contrasts_processed += 1
+                    total_significant_genes += len(significant_genes)
+                    logger.info(f"Contrast {analysis_id}:{contrast_id} - found {len(significant_genes)} significant genes")
+
+                    # Count occurrences
+                    for gene in significant_genes:
+                        gene_counts[gene] = gene_counts.get(gene, 0) + 1
+                else:
+                    logger.warning(f"Missing required columns in {analysis_id}:{contrast_id}")
+            else:
+                logger.warning(f"Contrast {analysis_id}:{contrast_id} not found in DEG data")
+
+        # Sort by frequency (descending) then by gene name (ascending)
+        sorted_genes = sorted(gene_counts.items(), key=lambda x: (-x[1], x[0]))
+
+        # Log summary statistics
+        unique_genes_found = len(gene_counts)
+        logger.info(f"Gene identification summary:")
+        logger.info(f"  - Contrasts processed: {contrasts_processed}/{len(sorted_contrasts)}")
+        logger.info(f"  - Total significant gene occurrences: {total_significant_genes}")
+        logger.info(f"  - Unique genes found: {unique_genes_found}")
+        logger.info(f"  - Requested top genes: {top_frequent}")
+
+        # Return top N most frequent genes
+        top_genes = [gene for gene, count in sorted_genes[:top_frequent]]
+        actual_returned = len(top_genes)
+
+        logger.info(f"  - Genes returned: {actual_returned}")
+        if actual_returned > 0:
+            # Show frequency distribution of top genes
+            top_5_genes = sorted_genes[:min(5, len(sorted_genes))]
+            logger.info(f"  - Top gene frequencies: {[(gene, count) for gene, count in top_5_genes]}")
+
+        return top_genes
+
     except Exception as e:
         logger.error(f"Error identifying important genes: {e}")
         return []
