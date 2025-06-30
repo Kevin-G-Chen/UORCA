@@ -142,7 +142,7 @@ def _render_dataset_table(filtered_df: pd.DataFrame):
         hide_index=True,
         use_container_width=True,
         column_config={
-            "✔": st.column_config.CheckboxColumn("Select", default=False),
+            "✔": st.column_config.CheckboxColumn("", default=False),
             "Title": st.column_config.TextColumn("Title", width="large"),
             "Accession": st.column_config.TextColumn("Accession", width="medium"),
             "Organism": st.column_config.TextColumn("Organism", width="medium"),
@@ -166,11 +166,16 @@ def _render_dataset_details(filtered_df: pd.DataFrame):
     if any(col in filtered_df.columns for col in ["Title", "Summary", "Design"]):
         for _, row in filtered_df.iterrows():
             accession = row.get("Accession", "Unknown")
+            title = row.get("Title", "")
 
-            with st.expander(f"Details for {accession}", expanded=True):
+            # Create expander title with accession and title
+            expander_title = f"Details for {accession}"
+            if title and pd.notna(title):
+                expander_title += f" - {title}"
+
+            with st.expander(expander_title, expanded=True):
                 if "Title" in filtered_df.columns and pd.notna(row.get("Title")):
-                    st.subheader("Title")
-                    st.markdown(str(row["Title"]))
+                    st.subheader(str(row["Title"]))
 
                 if "Summary" in filtered_df.columns and pd.notna(row.get("Summary")):
                     st.subheader("Summary")

@@ -62,7 +62,6 @@ setup_fragment_decorator()
 # Set page configuration
 st.set_page_config(
     page_title="UORCA Explorer",
-    page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -158,7 +157,7 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
         else:
             log_streamlit_data_load("CPM datasets", len(ri.cpm_data))
             log_streamlit_data_load("DEG datasets", len(ri.deg_data))
-            status.update(label=f"✅ Loaded {len(ri.cpm_data)} datasets", state="complete")
+            status.update(label=f"Loaded {len(ri.cpm_data)} datasets", state="complete")
 
             # Check if this is the first time loading this directory
             if 'previous_results_dir' not in st.session_state or st.session_state.previous_results_dir != results_dir:
@@ -172,11 +171,7 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
 def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_params: Dict[str, Any]):
     """Render the main tabbed interface."""
 
-    # Add banner explaining the new form-based interface
-    st.info("""
-    **New Form-Based Interface**: This app now uses coordinated forms in the sidebar for configuration.
-    Start by selecting datasets and contrasts, then configure parameters. View results in the tabs below.
-    """)
+
 
     # Create main tabs
     tab_ai, tab1, tab2, tab3, tab4, tab5 = st.tabs([

@@ -149,58 +149,26 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
 
 @log_streamlit_function
 def _render_contrast_table(filtered_df: pd.DataFrame):
-    """Render the interactive contrast table with selection checkboxes."""
+    """Render the contrast table for viewing."""
     # Sort by DEG count by default
     filtered_df = filtered_df.sort_values("DEGs", ascending=False)
 
-    # Add checkbox column for selection
-    display_df = filtered_df.copy()
-    display_df["✔"] = display_df.apply(
-        lambda row: (row['Accession'], row.get('Original ID', row['Contrast'])) in st.session_state.get('selected_contrasts', set()),
-        axis=1
-    )
-
-    # Display contrast information with dataframe for interactivity
-    edited_df = st.data_editor(
-        display_df,
+    # Display contrast information
+    st.dataframe(
+        filtered_df,
         hide_index=True,
         use_container_width=True,
         column_config={
-            "✔": st.column_config.CheckboxColumn("Select", default=False),
             "Accession": st.column_config.TextColumn("Accession", width="medium"),
             "Contrast": st.column_config.TextColumn("Contrast", width="medium"),
             "Original ID": st.column_config.TextColumn("Original ID", width="medium"),
             "Description": st.column_config.TextColumn("Description", width="large"),
             "DEGs": st.column_config.NumberColumn("DEGs", format="%d")
-        },
-        key="contrast_info_editor"
+        }
     )
-
-    # Update selections based on checkboxes
-    if not edited_df.empty:
-        selected_from_info = set()
-        for _, row in edited_df.iterrows():
-            if row["✔"]:
-                accession = row['Accession']
-                contrast = row.get('Original ID', row['Contrast'])
-                selected_from_info.add((accession, contrast))
-        st.session_state['selected_contrasts'] = selected_from_info
-        log_streamlit_event(f"User selected {len(selected_from_info)} contrasts from info tab")
 
 
 @log_streamlit_function
 def _render_selection_controls(filtered_df: pd.DataFrame):
-    """Render controls for selecting all visible contrasts."""
-    # Add quick selection button
-    if st.button("Select all visible contrasts", key="select_all_visible_contrasts"):
-        visible_contrasts = set()
-        for _, row in filtered_df.iterrows():
-            accession = row['Accession']
-            contrast = row.get('Original ID', row['Contrast'])
-            visible_contrasts.add((accession, contrast))
-        st.session_state['selected_contrasts'] = visible_contrasts
-        # Reset page number when changing contrasts
-        st.session_state.page_num = 1
-        log_streamlit_event(f"User selected all {len(visible_contrasts)} visible contrasts")
-        st.success(f"Selected {len(visible_contrasts)} contrasts for analysis!")
-        st.info("Switch to the Heat-map tab to view updated visualizations.")
+    """Render information about contrast selection."""
+    st.info("Use the sidebar Dataset & Contrast Selection forms to select contrasts for analysis.")
