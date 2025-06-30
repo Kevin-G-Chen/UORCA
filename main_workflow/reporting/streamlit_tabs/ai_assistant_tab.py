@@ -109,7 +109,7 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
         _restore_and_display_cached_analysis(ri, results_dir)
         return
 
-    st.subheader("🧬 Gene Analysis")
+    st.subheader("Gene Analysis")
     st.markdown("Enter your research question and the AI will find relevant contrasts and identify key genes.")
 
     # Load saved query from dataset identification
@@ -135,10 +135,10 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
     # Single workflow button
     col1, col2 = st.columns([1, 3])
     with col1:
-        run_button = st.button("🚀 Run Complete AI Analysis", type="primary")
+        run_button = st.button("Run Complete AI Analysis", type="primary")
     with col2:
         if not research_query.strip():
-            st.info("💡 Enter a research question above to start AI analysis.")
+            st.info("Enter a research question above to start AI analysis.")
 
     if run_button:
         log_streamlit_event(f"User started complete AI analysis: '{research_query.strip()}'")
@@ -297,9 +297,9 @@ Please perform the analysis using your four tools, choose all thresholds reasona
 
     except Exception as e:
         logger.error(f"Error in AI analysis workflow: {str(e)}", exc_info=True)
-        st.error(f"❌ Analysis failed: {str(e)}")
+        st.error(f"Analysis failed: {str(e)}")
 
-        with st.expander("🔍 Error Details", expanded=False):
+        with st.expander("Error Details", expanded=False):
             import traceback
             st.code(traceback.format_exc())
 
@@ -369,9 +369,9 @@ def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str
     # Add a header to show this is cached
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.info(f"📋 Cached results from {cached_data['cached_at'].strftime('%H:%M:%S')}")
+        st.info(f"Cached results from {cached_data['cached_at'].strftime('%H:%M:%S')}")
     with col2:
-        if st.button("🔄 New Analysis", help="Start a new analysis"):
+        if st.button("New Analysis", help="Start a new analysis"):
             st.session_state['show_cached_results'] = False
             st.session_state['current_analysis_id'] = None
             st.rerun()
@@ -410,7 +410,7 @@ def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query
     )
 
     log_streamlit_event(f"Contrast relevance assessment completed: {len(results_df)} contrasts scored")
-    st.success(f"✅ Successfully assessed {len(results_df)} contrasts!")
+    st.success(f"Successfully assessed {len(results_df)} contrasts!")
 
     # Store results for AI gene analysis
     st.session_state['selected_contrasts_for_ai'] = \
@@ -537,7 +537,7 @@ def _provide_relevance_download(results_df):
     """Provide download option for relevance results."""
     csv = results_df.to_csv(index=False)
     st.download_button(
-        label="📥 Download Relevance Scores as CSV",
+        label="Download Relevance Scores as CSV",
         data=csv,
         file_name=f"contrast_relevance_scores.csv",
         mime="text/csv"
@@ -600,7 +600,7 @@ def _display_unified_ai_results(
         parsed = result_output
     except Exception as e:
         st.error(f"Error processing AI output: {e}")
-        st.subheader("📑 Raw AI Response")
+        st.subheader("Raw AI Response")
         st.markdown(str(result_output))
         return
 
@@ -608,17 +608,17 @@ def _display_unified_ai_results(
     contrasts = [(item['analysis_id'], item['contrast_id']) for item in selected_contrast_dicts]
 
     # --- AI Interpretation (at the very top)
-    st.subheader("🧠 Analysis Results")
+    st.subheader("Analysis Results")
     st.markdown(parsed.interpretation)
 
     # Create tabs for organized display
     gene_tab, heatmap_tab, table_tab, contrast_tab, logs_tab, downloads_tab = st.tabs([
-        "🧬 Selected Genes",
-        "🌡️ Heatmap",
-        "📊 Expression Data",
-        "🎯 Contrast Selection",
-        "🔧 Tool Logs",
-        "📥 Download Data"
+        "Selected Genes",
+        "Heatmap",
+        "Expression Data",
+        "Contrast Selection",
+        "Tool Logs",
+        "Download Data"
     ])
 
     # Prepare data for all tabs
@@ -662,7 +662,7 @@ def _display_unified_ai_results(
         gene_download_key = f"download_genes_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
 
         st.download_button(
-            label="📥 Download Gene List (CSV)",
+            label="Download Gene List (CSV)",
             data=gene_list_csv,
             file_name="selected_genes.csv",
             mime="text/csv",
@@ -709,7 +709,7 @@ def _display_unified_ai_results(
             expression_download_key = f"download_expression_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
 
             st.download_button(
-                label="📥 Download Expression Table (CSV)",
+                label="Download Expression Table (CSV)",
                 data=expression_csv,
                 file_name="gene_expression_data.csv",
                 mime="text/csv",
@@ -721,7 +721,7 @@ def _display_unified_ai_results(
             st.info("No expression data found for the selected genes in the chosen contrasts.")
 
         if missing:
-            st.info(f"ℹ️ {len(missing)} gene(s) not present in the selected contrasts: {', '.join(missing)}")
+            st.info(f"{len(missing)} gene(s) not present in the selected contrasts: {', '.join(missing)}")
 
     # Tab 4: Contrast Selection
     with contrast_tab:
@@ -797,7 +797,7 @@ def _display_unified_ai_results(
                 contrast_download_key = f"download_contrasts_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
 
                 st.download_button(
-                    label="📥 Download Selected Contrasts (CSV)",
+                    label="Download Selected Contrasts (CSV)",
                     data=contrast_table_csv,
                     file_name="selected_contrasts.csv",
                     mime="text/csv",
@@ -810,7 +810,7 @@ def _display_unified_ai_results(
                 contrast_download_key = f"download_contrasts_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
 
                 st.download_button(
-                    label="📥 Download Analyzed Contrasts (CSV)",
+                    label="Download Analyzed Contrasts (CSV)",
                     data=contrast_table_csv,
                     file_name="analyzed_contrasts.csv",
                     mime="text/csv",
@@ -826,7 +826,7 @@ def _display_unified_ai_results(
         if tool_calls:
             _display_tool_calls_detailed(tool_calls)
         else:
-            st.info("🔍 No tool calls found.")
+            st.info("No tool calls found.")
 
     # Tab 6: Downloads
     with downloads_tab:
@@ -858,7 +858,7 @@ def _display_unified_ai_results(
             report_download_key = f"download_report_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
 
             st.download_button(
-                label="📄 Complete Analysis Report (Markdown)",
+                label="Complete Analysis Report (Markdown)",
                 data=analysis_report,
                 file_name="uorca_ai_gene_analysis.md",
                 mime="text/markdown",
@@ -876,7 +876,7 @@ def _display_unified_ai_results(
                     agent_data_key = f"download_agent_data_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
 
                     st.download_button(
-                        label="🤖 AI Agent's Working Dataset (CSV)",
+                        label="AI Agent's Working Dataset (CSV)",
                         data=csv_data,
                         file_name="ai_agent_working_dataset.csv",
                         mime="text/csv",
@@ -895,7 +895,7 @@ def _display_unified_ai_results(
                 relevance_key = f"download_all_relevance_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
 
                 st.download_button(
-                    label="📊 All Contrast Relevance Scores (CSV)",
+                    label="All Contrast Relevance Scores (CSV)",
                     data=relevance_csv,
                     file_name="contrast_relevance_scores.csv",
                     mime="text/csv",
@@ -923,7 +923,7 @@ def _display_unified_ai_results(
                 raw_log_key = f"download_raw_log_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
 
                 st.download_button(
-                    label="📝 Raw Tool Usage Log (Text)",
+                    label="Raw Tool Usage Log (Text)",
                     data=log_content,
                     file_name="ai_tool_usage_log.txt",
                     mime="text/plain",
@@ -1148,21 +1148,21 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
 
     for i, call in enumerate(tool_calls, 1):
         # Format success indicator
-        status_icon = "✅" if call.get('success', True) else "❌"
+        status_icon = "SUCCESS" if call.get('success', True) else "FAILED"
         tool_name = call.get('tool_name', 'Unknown Tool')
         timestamp = call.get('timestamp', 'Unknown time')
 
         with st.expander(f"{status_icon} **{tool_name}** (Call #{i}) - {timestamp}", expanded=False):
 
             # Add tool description at the top
-            st.markdown("#### 📖 What this tool does")
+            st.markdown("#### What this tool does")
             st.info(_get_tool_description(tool_name))
 
             # Add code snippets for reproducibility
-            st.markdown("#### 💻 Reproduce this analysis")
+            st.markdown("#### Reproduce this analysis")
             r_code, python_code = _get_tool_code_snippets(tool_name, call.get('parameters', {}))
 
-            code_tab1, code_tab2 = st.tabs(["🔵 R Code", "🐍 Python Code"])
+            code_tab1, code_tab2 = st.tabs(["R Code", "Python Code"])
             with code_tab1:
                 st.code(r_code, language='r')
             with code_tab2:
@@ -1173,7 +1173,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
 
             # Left column: Parameters
             with param_col:
-                st.markdown("#### 📋 Parameters")
+                st.markdown("#### Parameters")
                 if call.get('parameters'):
                     # Display parameters in a formatted way
                     for param_name, param_value in call['parameters'].items():
@@ -1187,7 +1187,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
 
             # Right column: Results
             with result_col:
-                st.markdown("#### 📤 Results")
+                st.markdown("#### Results")
                 if call.get('success', True):
                     output_snippet = call.get('output_snippet')
                     if output_snippet and output_snippet.strip():
@@ -1204,7 +1204,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                             is_truncated = "truncated" in output_snippet
 
                         if is_truncated:
-                            st.warning("⚠️ Output truncated for display")
+                            st.warning("Output truncated for display")
 
                         # Clean output for parsing (remove truncation text if present)
                         if is_truncated and full_output is None:
@@ -1270,11 +1270,11 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                         df = pd.DataFrame(df_data)
                                         st.dataframe(df, use_container_width=True)
                                     else:
-                                        st.info("ℹ️ No gene statistics found for the specified parameters")
+                                        st.info("No gene statistics found for the specified parameters")
                                 elif parsed_output == [] or (isinstance(parsed_output, list) and len(parsed_output) == 0):
-                                    st.info("ℹ️ No gene statistics found - this gene may not be significantly expressed in any contrasts")
+                                    st.info("No gene statistics found - this gene may not be significantly expressed in any contrasts")
                                 else:
-                                    st.info("ℹ️ No gene statistics available")
+                                    st.info("No gene statistics available")
 
                             elif tool_name == 'summarize_contrast' and parsed_output:
                                 # Display with text wrapping
@@ -1296,7 +1296,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                         except Exception as e:
                             # Handle truncated output specially
                             if is_truncated and "truncated" in output_snippet:
-                                st.warning("⚠️ Output was truncated and cannot be fully parsed")
+                                st.warning("Output was truncated and cannot be fully parsed")
 
                                 # For truncated output, try to extract what we can
                                 if tool_name == 'get_most_common_genes':
@@ -1341,7 +1341,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
 
                             else:
                                 # Non-truncated parsing error
-                                st.warning(f"⚠️ Could not parse output: {e}")
+                                st.warning(f"Could not parse output: {e}")
 
                                 # Try JSON parsing as fallback
                                 try:
@@ -1358,7 +1358,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                         st.text_area("Raw Output:", value=clean_output, height=100, disabled=True)
                                         st.caption("*Displaying as raw text*")
                     elif not output_snippet or not output_snippet.strip():
-                        st.info("ℹ️ Tool completed successfully but returned no output")
+                        st.info("Tool completed successfully but returned no output")
                     else:
                         st.write("*No output*")
                 else:
@@ -1379,7 +1379,7 @@ def _display_raw_log_file():
     if raw_contents:
         # Add download button for raw log
         st.download_button(
-            label="📥 Download Raw Log File",
+            label="Download Raw Log File",
             data=raw_contents,
             file_name=f"ai_tool_calls_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.json",
             mime="application/json"

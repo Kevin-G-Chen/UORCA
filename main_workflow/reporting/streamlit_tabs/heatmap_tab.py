@@ -86,7 +86,7 @@ def render_heatmap_tab(
 @log_streamlit_function
 def _render_display_settings() -> dict:
     """Render display settings controls in the sidebar and return the settings."""
-    with st.sidebar.expander("🎨 Display Settings", expanded=False):
+    with st.sidebar.expander("Display Settings", expanded=False):
         heatmap_font_size = st.slider("Font size", 8, 16, 12, key="heatmap_font")
         show_grid_lines = st.checkbox("Show grid lines", value=True, key="heatmap_grid")
         grid_opacity = st.slider("Grid opacity", 0.1, 1.0, 0.3, key="heatmap_grid_opacity")
@@ -177,5 +177,5 @@ def _display_heatmap_info():
 @log_streamlit_function
 def _display_heatmap_error_details(error: Exception):
     """Display detailed error information in an expandable section."""
-    with st.expander("🔍 Heatmap Error Details", expanded=False):
+    with st.expander("Heatmap Error Details", expanded=False):
         st.code(traceback.format_exc())

@@ -32,7 +32,7 @@ def render_data_selection_tab(ri: ResultsIntegrator, pvalue_thresh: float, lfc_t
         pvalue_thresh: P-value threshold for DEG counting
         lfc_thresh: Log fold change threshold for DEG counting
     """
-    st.header("☑️ Select Data & Contrasts")
+    st.header("Select Data & Contrasts")
     st.markdown("**Select datasets and contrasts for analysis.** Use the tables below to choose your data, then click 'Regenerate Plots' to update visualizations.")
 
     # Dataset selection table
@@ -91,7 +91,7 @@ def _render_dataset_selection(ri: ResultsIntegrator):
             st.session_state['selected_datasets'] = selected_datasets
             log_streamlit_event(f"User selected {len(selected_datasets)} datasets")
             log_streamlit_user_action("Dataset selection", f"Selected {len(selected_datasets)} datasets")
-            st.caption(f"📊 {len(selected_datasets)} datasets selected")
+            st.caption(f"{len(selected_datasets)} datasets selected")
 
 
 @st.fragment
@@ -149,7 +149,7 @@ def _render_contrast_selection(ri: ResultsIntegrator, pvalue_thresh: float, lfc_
                 st.session_state['selected_contrasts'] = selected_contrasts
                 log_streamlit_event(f"User selected {len(selected_contrasts)} contrasts")
                 log_streamlit_user_action("Contrast selection", f"Selected {len(selected_contrasts)} contrasts")
-                st.caption(f"🔍 {len(selected_contrasts)} contrasts selected")
+                st.caption(f"{len(selected_contrasts)} contrasts selected")
         else:
             st.info("No contrasts available for selected datasets.")
     else:
@@ -176,7 +176,7 @@ def _render_selection_summary():
         st.metric("Genes", genes_count)
 
     if selected_datasets_count > 0 and selected_contrasts_count > 0 and genes_count > 0:
-        st.success("✅ Ready for analysis! Switch to Heat-map or Expression tabs to view results.")
+        st.success("Ready for analysis! Switch to Heat-map or Expression tabs to view results.")
     else:
         missing = []
         if selected_datasets_count == 0:
@@ -185,4 +185,4 @@ def _render_selection_summary():
             missing.append("contrasts")
         if genes_count == 0:
             missing.append("genes")
-        st.info(f"ℹ️ Please select {', '.join(missing)} to enable plot generation.")
+        st.info(f"Please select {', '.join(missing)} to enable plot generation.")

@@ -88,7 +88,7 @@ def render_expression_plots_tab(
 @log_streamlit_function
 def _render_display_settings() -> Dict[str, Any]:
     """Render display settings controls in the sidebar and return the settings."""
-    with st.sidebar.expander("🎨 Display Settings", expanded=False):
+    with st.sidebar.expander("Display Settings", expanded=False):
         facet_font_size = st.slider("Facet title size", 8, 16, 10, key="violin_font")
         lock_y_axis = st.checkbox("Lock y-axis across genes", value=False, key="violin_lock_y")
         show_raw_points = st.checkbox("Show raw points", value=True, key="violin_points")
@@ -109,7 +109,7 @@ def _render_top_pagination_controls(current_page: int, total_pages: int):
 
     with cols[1]:
         prev_disabled = current_page <= 1
-        if st.button("◀ Previous", disabled=prev_disabled, key="prev_main"):
+        if st.button("Previous", disabled=prev_disabled, key="prev_main"):
             st.session_state.page_num = max(1, current_page - 1)
             safe_rerun()
 
@@ -118,7 +118,7 @@ def _render_top_pagination_controls(current_page: int, total_pages: int):
 
     with cols[3]:
         next_disabled = current_page >= total_pages
-        if st.button("Next ▶", disabled=next_disabled, key="next_main"):
+        if st.button("Next", disabled=next_disabled, key="next_main"):
             st.session_state.page_num = min(total_pages, current_page + 1)
             safe_rerun()
 
@@ -198,5 +198,5 @@ def _draw_expression_plots(
 @log_streamlit_function
 def _display_expression_plot_error_details(error: Exception):
     """Display detailed error information in an expandable section."""
-    with st.expander("🔍 Expression Plot Error Details", expanded=False):
+    with st.expander("Expression Plot Error Details", expanded=False):
         st.code(traceback.format_exc())

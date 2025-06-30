@@ -40,7 +40,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
     Returns:
         Dictionary containing all selected parameters and gene selections
     """
-    st.sidebar.title("🧬 UORCA Explorer")
+    st.sidebar.title("UORCA Explorer")
 
 
 
@@ -115,7 +115,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
 @log_streamlit_function
 def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -> Optional[Dict[str, Any]]:
     """Render the dataset selection section with two coordinated forms."""
-    with st.sidebar.expander("Dataset & Contrast Selection :question:", expanded=True):
+    with st.sidebar.expander("Dataset & Contrast Selection", expanded=True):
         st.markdown("**Select your datasets and contrasts for analysis**")
         st.info("Selecting datasets will automatically update the contrast table below.")
 
@@ -141,7 +141,7 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                     hide_index=True,
                     column_config={
                         "Select": st.column_config.CheckboxColumn(
-                            "Select",
+                            "",
                             help="Check to include this dataset",
                             default=False
                         ),
@@ -214,7 +214,7 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                     hide_index=True,
                     column_config={
                         "Select": st.column_config.CheckboxColumn(
-                            "Select",
+                            "",
                             help="Check to include this contrast",
                             default=False
                         ),
@@ -418,9 +418,9 @@ def _render_configuration_status(params: Dict[str, Any]):
     gene_count = len(params.get('gene_sel', []))
 
     if dataset_count > 0:
-        st.sidebar.success(f"✅ {dataset_count} datasets, {contrast_count} contrasts selected")
+        st.sidebar.success(f"{dataset_count} datasets, {contrast_count} contrasts selected")
     else:
-        st.sidebar.info("ℹ️ Select datasets and contrasts above")
+        st.sidebar.info("Select datasets and contrasts above")
 
     # Show heatmap configuration
     heatmap_params = params.get('heatmap_params', {})
@@ -451,24 +451,25 @@ def _render_help_section():
     with st.sidebar.expander("Help", expanded=False):
         st.markdown(
             """
-            ### How to Use the New Interface
+            ### How to Use This Interface
 
-            1. **Select Datasets**: Choose datasets in the first form
-            2. **Select Contrasts**: Fine-tune contrast selection in the second form
-            3. **Set Parameters**: Configure significance thresholds and gene count
+            1. **Select Datasets**: Choose datasets in the first form and click "Apply"
+            2. **Select Contrasts**: Fine-tune contrast selection in the second form and click "Apply"
+            3. **Set Parameters**: Configure significance thresholds and gene count, then click "Apply"
             4. **View Results**: Switch to the heatmap tab to see results
 
-            ### Form Coordination
+            ### Important Notes
+            - You must click "Apply" after making selections for changes to take effect
             - Selecting datasets automatically updates available contrasts
-            - Contrast changes don't affect dataset selection
-            - Both forms can trigger plot generation
+            - Genes are automatically selected based on your parameters and settings
+            - Each form works independently - apply changes as needed
 
-            ### Auto Gene Selection
-            - Genes are automatically selected based on your parameters
-            - Use the gene count dropdown to control how many genes to show
-            - Uses frequency across selected contrasts
+            ### Form Coordination
+            - Dataset selection populates available contrasts
+            - Parameter changes affect gene selection and visualization
+            - All changes require clicking the respective "Apply" button
 
             ---
-            *Form-based interface for predictable analysis workflow*
+            *Click the arrow above to close this help panel*
             """
         )
