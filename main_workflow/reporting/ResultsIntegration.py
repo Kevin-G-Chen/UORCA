@@ -1585,7 +1585,7 @@ class ResultsIntegrator:
                             <th># Samples</th>
                             <th># Contrasts</th>
                         </tr>
-                        {''.join(f'<tr><td>{info.get("accession", "Unknown")}</td><td>{info.get("organism", "Unknown")}</td><td>{info.get("number_of_samples", 0)}</td><td>{info.get("number_of_contrasts", 0)}</td></tr>' for analysis_id, info in self.analysis_info.items())}
+                        {''.join(f'<tr><td>{info.get("accession", "Unknown")}</td><td>{info.get("organism", "Unknown")}</td><td>{info.get("number_of_samples", 0)}</td><td>{info.get("number_of_contrasts", 0)}</td></tr>' for analysis_id in self.cpm_data.keys() if analysis_id in self.analysis_info for info in [self.analysis_info[analysis_id]])}
                     </table>
 
                     <h3>Contrast Details</h3>

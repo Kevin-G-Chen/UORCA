@@ -75,8 +75,43 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
     if check_ai_generating():
         return
 
-    dataset_options = list(ri.cpm_data.keys()) if ri else []
-    selected_dataset = st.selectbox("Select a dataset to view analysis plots:", dataset_options)
+    # Create formatted dataset options with GSExxxx - Title format
+    dataset_options = []
+    dataset_mapping = {}  # Map display name to analysis_id
+
+    if ri:
+        # Get datasets with successful analyses only (those with CPM data)
+        for analysis_id in ri.cpm_data.keys():
+            if analysis_id in ri.analysis_info:
+                info = ri.analysis_info[analysis_id]
+                accession = info.get("accession", analysis_id)
+
+                # Get title from dataset info if available
+                title = ""
+                if hasattr(ri, "dataset_info") and analysis_id in getattr(ri, "dataset_info", {}):
+                    title = ri.dataset_info[analysis_id].get("title", "")
+                    # Remove "Title:" prefix if present
+                    if isinstance(title, str) and title.startswith("Title:"):
+                        title = title[6:].strip()
+
+                # Format as GSExxxx - Title or just GSExxxx if no title
+                if title:
+                    display_name = f"{accession} - {title}"
+                else:
+                    display_name = accession
+
+                dataset_options.append(display_name)
+                dataset_mapping[display_name] = analysis_id
+            else:
+                # Fallback for datasets without analysis info
+                dataset_options.append(analysis_id)
+                dataset_mapping[analysis_id] = analysis_id
+
+        # Sort alphabetically
+        dataset_options.sort()
+
+    selected_dataset_display = st.selectbox("Select a dataset to view analysis plots:", dataset_options)
+    selected_dataset = dataset_mapping.get(selected_dataset_display, selected_dataset_display) if selected_dataset_display else None
 
     if not selected_dataset:
         log_streamlit_event("No dataset selected for analysis plots")

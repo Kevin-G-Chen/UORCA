@@ -71,29 +71,32 @@ def _render_datasets_interface(ri: ResultsIntegrator):
 
 @log_streamlit_function
 def _create_dataset_info_dataframe(ri: ResultsIntegrator) -> List[Dict[str, Any]]:
-    """Create a list of dataset information dictionaries."""
+    """Create a list of dataset information dictionaries for successful analyses only."""
     dataset_info = []
-    for analysis_id, info in ri.analysis_info.items():
-        # Build a dataset info dictionary
-        dataset_dict = {
-            "Accession": info.get("accession", analysis_id),
-            "Organism": info.get("organism", "Unknown"),
-            "Number of Samples": info.get("number_of_samples", 0),
-            "Number of Contrasts": info.get("number_of_contrasts", 0)
-        }
+    # Only include datasets that have successful CPM data (indicator of successful analysis)
+    for analysis_id in ri.cpm_data.keys():
+        if analysis_id in ri.analysis_info:
+            info = ri.analysis_info[analysis_id]
+            # Build a dataset info dictionary
+            dataset_dict = {
+                "Accession": info.get("accession", analysis_id),
+                "Organism": info.get("organism", "Unknown"),
+                "Number of Samples": info.get("number_of_samples", 0),
+                "Number of Contrasts": info.get("number_of_contrasts", 0)
+            }
 
-        # Add dataset metadata from analysis_info.json if available
-        if hasattr(ri, "dataset_info") and analysis_id in getattr(ri, "dataset_info", {}):
-            # Remove any "Title:" prefix from the title field
-            title = ri.dataset_info[analysis_id].get("title", "")
-            if isinstance(title, str) and title.startswith("Title:"):
-                title = title[6:].strip()
-            dataset_dict["Title"] = title
+            # Add dataset metadata from analysis_info.json if available
+            if hasattr(ri, "dataset_info") and analysis_id in getattr(ri, "dataset_info", {}):
+                # Remove any "Title:" prefix from the title field
+                title = ri.dataset_info[analysis_id].get("title", "")
+                if isinstance(title, str) and title.startswith("Title:"):
+                    title = title[6:].strip()
+                dataset_dict["Title"] = title
 
-            dataset_dict["Summary"] = ri.dataset_info[analysis_id].get("summary", "")
-            dataset_dict["Design"] = ri.dataset_info[analysis_id].get("design", "")
+                dataset_dict["Summary"] = ri.dataset_info[analysis_id].get("summary", "")
+                dataset_dict["Design"] = ri.dataset_info[analysis_id].get("design", "")
 
-        dataset_info.append(dataset_dict)
+            dataset_info.append(dataset_dict)
 
     return dataset_info
 
@@ -173,7 +176,7 @@ def _render_dataset_details(filtered_df: pd.DataFrame):
             if title and pd.notna(title):
                 expander_title += f" - {title}"
 
-            with st.expander(expander_title, expanded=True):
+            with st.expander(expander_title, expanded=False):
                 if "Title" in filtered_df.columns and pd.notna(row.get("Title")):
                     st.subheader(str(row["Title"]))
 

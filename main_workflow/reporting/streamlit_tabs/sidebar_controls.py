@@ -151,22 +151,22 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                         "Accession": st.column_config.TextColumn(
                             "Accession",
                             help="GEO accession number",
-                            width="medium"
+                            width=100
                         ),
                         "Organism": st.column_config.TextColumn(
                             "Organism",
                             help="Species/organism",
-                            width="medium"
+                            width=100
                         ),
                         "Samples": st.column_config.NumberColumn(
                             "Samples",
                             help="Number of samples",
-                            width="small"
+                            width=85
                         ),
                         "Contrasts": st.column_config.NumberColumn(
                             "Contrasts",
                             help="Number of contrasts",
-                            width="small"
+                            width=85
                         )
                     },
                     key="dataset_selection_table"
@@ -343,17 +343,20 @@ def _render_expression_form(ri: ResultsIntegrator) -> Optional[Dict[str, Any]]:
 
 @log_streamlit_function
 def _create_dataset_table_data(ri: ResultsIntegrator) -> List[Dict[str, Any]]:
-    """Create data for the dataset selection table."""
+    """Create data for the dataset selection table for successful analyses only."""
     dataset_data = []
 
-    for analysis_id, info in ri.analysis_info.items():
-        dataset_data.append({
-            "Select": False,  # Default to unselected
-            "Accession": info.get("accession", analysis_id),
-            "Organism": info.get("organism", "Unknown"),
-            "Samples": info.get("number_of_samples", 0),
-            "Contrasts": info.get("number_of_contrasts", 0)
-        })
+    # Only include datasets that have successful CPM data (indicator of successful analysis)
+    for analysis_id in ri.cpm_data.keys():
+        if analysis_id in ri.analysis_info:
+            info = ri.analysis_info[analysis_id]
+            dataset_data.append({
+                "Select": False,  # Default to unselected
+                "Accession": info.get("accession", analysis_id),
+                "Organism": info.get("organism", "Unknown"),
+                "Samples": info.get("number_of_samples", 0),
+                "Contrasts": info.get("number_of_contrasts", 0)
+            })
 
     return dataset_data
 
