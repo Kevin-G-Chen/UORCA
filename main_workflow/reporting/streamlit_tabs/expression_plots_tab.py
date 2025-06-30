@@ -44,17 +44,25 @@ def render_expression_plots_tab(
         hide_x_labels: Whether to hide x-axis labels
     """
     st.header("📈 Plot Gene Expression")
-    st.markdown("**🎻 Violin plots showing gene expression distributions across sample groups.** Each panel represents one gene, with samples grouped by experimental conditions.")
+    st.markdown("**🎻 Violin plots showing gene expression distributions across sample groups.** Each panel represents one gene, with samples grouped by experimental conditions. Configure datasets using the sidebar form.")
 
     # Display settings for expression plots
     display_settings = _render_display_settings()
 
-    if not gene_sel:
-        log_streamlit_event("No genes selected for expression plots")
-        st.info("Please select genes from the sidebar.")
-    elif not selected_datasets:
+    if not selected_datasets:
         log_streamlit_event("No datasets selected for expression plots")
-        st.info("Please select datasets in the 'Selections' tab.")
+        st.info("🔧 **Expression Plots Configuration:**")
+        st.markdown("""
+        Expression plot configuration will be available in the **Expression Plots Configuration** form in the sidebar.
+
+        For now, you can:
+        - Use the **Heatmap Configuration** to explore differential expression patterns
+        - View individual dataset plots in the **Analyze Experiments** tab
+        - Browse dataset information in the **View Dataset Info** tab
+        """)
+    elif not gene_sel:
+        log_streamlit_event("No genes selected for expression plots")
+        st.info("⚠️ No genes available. Please configure the heatmap form in the sidebar to auto-select genes first.")
     else:
         # Calculate pagination information
         total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(gene_sel)

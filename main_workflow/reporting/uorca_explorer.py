@@ -171,10 +171,16 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
 @log_streamlit_function
 def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_params: Dict[str, Any]):
     """Render the main tabbed interface."""
+
+    # Add banner explaining the new form-based interface
+    st.info("""
+    🆕 **New Form-Based Interface**: This app now uses forms in the sidebar for configuration.
+    Configure your analysis using the **Heatmap Configuration** form in the sidebar, then view results in the tabs below.
+    """)
+
     # Create main tabs
-    tab_ai, tab_sel, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab_ai, tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🤖 AI Assistant",
-        "☑️ Select Data & Contrasts",
         "🌡️ Explore DEG Heatmap",
         "📈 Plot Gene Expression",
         "🧑‍🔬 Analyze Experiments",
@@ -182,10 +188,14 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
         "🔍 View Contrast Info"
     ])
 
-    # Get current selections from session state
-    selected_contrasts = list(st.session_state.get('selected_contrasts', set()))
-    selected_datasets = list(st.session_state.get('selected_datasets', set()))
+    # Get current selections from form-based parameters
+    selected_contrasts = sidebar_params.get('selected_contrasts', [])
+    selected_datasets = []  # Will be implemented with expression form
     gene_sel = sidebar_params['gene_sel']
+
+    # Update session state for compatibility with existing tabs
+    st.session_state['selected_contrasts'] = set(selected_contrasts)
+    st.session_state['selected_datasets'] = set(selected_datasets)
 
     log_streamlit_event(f"Rendering interface: {len(selected_datasets)} datasets, {len(selected_contrasts)} contrasts, {len(gene_sel)} genes")
 
@@ -196,15 +206,7 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             results_dir=results_dir
         )
 
-    # Tab 2: Data Selection
-    with tab_sel:
-        render_data_selection_tab(
-            ri=ri,
-            pvalue_thresh=sidebar_params['pvalue_thresh'],
-            lfc_thresh=sidebar_params['lfc_thresh']
-        )
-
-    # Tab 3: Heatmap
+    # Tab 2: Heatmap
     with tab1:
         render_heatmap_tab(
             ri=ri,
@@ -216,7 +218,7 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             hide_empty_rows_cols=sidebar_params['hide_empty_rows_cols']
         )
 
-    # Tab 4: Expression Plots
+    # Tab 3: Expression Plots
     with tab2:
         render_expression_plots_tab(
             ri=ri,
@@ -225,18 +227,18 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             hide_x_labels=sidebar_params['hide_x_labels']
         )
 
-    # Tab 5: Analysis Plots
+    # Tab 4: Analysis Plots
     with tab3:
         render_analysis_plots_tab(
             ri=ri,
             results_dir=results_dir
         )
 
-    # Tab 6: Dataset Info
+    # Tab 5: Dataset Info
     with tab4:
         render_datasets_info_tab(ri=ri)
 
-    # Tab 7: Contrast Info
+    # Tab 6: Contrast Info
     with tab5:
         render_contrasts_info_tab(
             ri=ri,

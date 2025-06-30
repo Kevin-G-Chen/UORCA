@@ -48,19 +48,28 @@ def render_heatmap_tab(
         hide_empty_rows_cols: Whether to hide empty rows/columns
     """
     st.header("🌡️ Explore DEG Heatmap")
-    st.markdown("**📊 Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Hover over cells for details. Use the sidebar to adjust significance thresholds and filtering options.")
+    st.markdown("**📊 Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Hover over cells for details. Configure parameters and select contrasts using the sidebar form.")
 
     # Display settings for heatmap
     display_settings = _render_display_settings()
 
-    if not gene_sel:
-        log_streamlit_event("No genes selected for heatmap")
-        st.info("Please select genes from the sidebar.")
-    elif not selected_contrasts:
+    if not selected_contrasts:
         log_streamlit_event("No contrasts selected for heatmap")
-        st.info("Please select contrasts in the 'Selections' tab.")
+        st.info("🔧 **Getting Started:**")
+        st.markdown("""
+        1. **Open the Heatmap Configuration** form in the sidebar
+        2. **Set your parameters** (Log2FC and P-value thresholds)
+        3. **Select contrasts** by checking the boxes in the table
+        4. **Click 'Update Heatmap'** to generate the visualization
+
+        Your genes will be automatically selected based on the parameters and contrasts you choose.
+        """)
+    elif not gene_sel:
+        log_streamlit_event("No genes selected for heatmap")
+        st.warning("⚠️ No genes were automatically selected with the current parameters. Try adjusting the significance thresholds in the sidebar form.")
     else:
         log_streamlit_event(f"Heatmap: {len(gene_sel)} genes, {len(selected_contrasts)} contrasts")
+        st.success(f"✅ Ready to display heatmap with {len(gene_sel)} genes across {len(selected_contrasts)} contrasts")
         # Create and display the heatmap
         _draw_heatmap(
             ri,
@@ -146,9 +155,12 @@ def _draw_heatmap(
                 log_streamlit_event("Heatmap generated successfully")
                 _display_heatmap_info()
                 st.plotly_chart(fig, use_container_width=True)
+
+                # Show current configuration
+                st.caption(f"📊 Showing {len(gene_selection)} genes across {len(contrast_pairs)} contrasts with P-value ≤ {p_thresh:.3f} and |Log2FC| ≥ {lfc_thresh_val:.1f}")
             else:
                 log_streamlit_event("Failed to generate heatmap")
-                st.error("Could not generate heatmap. Please check your selections.")
+                st.error("Could not generate heatmap. Please check your selections and try adjusting the parameters in the sidebar form.")
 
         except Exception as e:
             logger.error(f"Error generating heatmap: {str(e)}", exc_info=True)
@@ -159,11 +171,7 @@ def _draw_heatmap(
 @log_streamlit_function
 def _display_heatmap_info():
     """Display informational messages about the heatmap."""
-    info_messages = [
-        "💡 Hover over cells in the heatmap to see contrast descriptions and gene information."
-    ]
-    for msg in info_messages:
-        st.info(msg)
+    st.info("💡 **Heatmap Tips:** Hover over cells to see contrast descriptions and gene information. Use the sidebar form to modify parameters and contrast selection.")
 
 
 @log_streamlit_function
