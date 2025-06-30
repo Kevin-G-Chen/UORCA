@@ -124,14 +124,15 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
         dataset_filter = st.multiselect(
             "Filter by Accession",
             options=sorted(df["Accession"].unique()),
-            default=[]
+            default=[],
+            key="contrasts_info_dataset_filter"
         )
 
     with col2:
-        min_degs = st.number_input("Minimum DEGs", min_value=0, value=0)
+        min_degs = st.number_input("Minimum DEGs", min_value=0, value=0, key="contrasts_info_min_degs")
 
     with col3:
-        search_filter = st.text_input("Search Contrasts", "")
+        search_filter = st.text_input("Search Contrasts", "", key="contrasts_info_search")
 
     # Apply filters
     filtered_df = df

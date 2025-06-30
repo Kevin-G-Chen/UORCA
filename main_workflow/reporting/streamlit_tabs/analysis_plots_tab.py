@@ -63,8 +63,8 @@ def render_analysis_plots_tab(ri: ResultsIntegrator, results_dir: str):
 def _render_display_settings():
     """Render display settings controls in the sidebar."""
     with st.sidebar.expander("Display Settings", expanded=False):
-        plot_font_size = st.slider("Font size", 8, 16, 12, key="analysis_font")
-        plot_grid = st.checkbox("Show grid lines", value=True, key="analysis_grid")
+        plot_font_size = st.slider("Font size", 8, 16, 12, key="analysis_plots_font")
+        plot_grid = st.checkbox("Show grid lines", value=True, key="analysis_plots_grid")
 
 
 @st.fragment
@@ -110,7 +110,7 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
         # Sort alphabetically
         dataset_options.sort()
 
-    selected_dataset_display = st.selectbox("Select a dataset to view analysis plots:", dataset_options)
+    selected_dataset_display = st.selectbox("Select a dataset to view analysis plots:", dataset_options, key="analysis_dataset_select")
     selected_dataset = dataset_mapping.get(selected_dataset_display, selected_dataset_display) if selected_dataset_display else None
 
     if not selected_dataset:
@@ -325,7 +325,7 @@ def _render_contrast_selection(ri: ResultsIntegrator, contrast_dirs: List[str]) 
     # Create mapping from display string to actual contrast ID
     contrast_display_to_id = {opt: contrast_dirs[i] for i, opt in enumerate(contrast_options)}
 
-    selected_contrast_display = st.selectbox("Select a contrast:", contrast_options)
+    selected_contrast_display = st.selectbox("Select a contrast:", contrast_options, key="analysis_contrast_select")
     return contrast_display_to_id.get(selected_contrast_display)
 
 
