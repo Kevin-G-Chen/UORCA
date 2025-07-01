@@ -82,16 +82,34 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
 
     # Auto-select genes if we have contrasts
     if params['selected_contrasts']:
-        gene_sel = _auto_select_genes(ri, results_dir, params['heatmap_params'])
+        # Create a more robust cache key including contrast details and gene count
+        contrast_hash = hash(tuple(sorted(params['selected_contrasts'])))
+        cache_key = f"{params['heatmap_params']['gene_selection_method']}_{contrast_hash}_{params['heatmap_params']['pvalue_thresh']}_{params['heatmap_params']['lfc_thresh']}_{params['heatmap_params'].get('gene_count', 50)}"
+
+        if (params['heatmap_params']['gene_selection_method'] == 'Custom' and
+            st.session_state.get('cached_custom_genes', '').strip()):
+            # For custom genes, always recalculate to ensure current validation
+            custom_genes_input = st.session_state.get('cached_custom_genes', '')
+            custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+            if custom_genes_list:
+                params['heatmap_params']['custom_genes'] = custom_genes_list
+                gene_sel = _auto_select_genes(ri, results_dir, params['heatmap_params'])
+            else:
+                gene_sel = []
+        elif (params['heatmap_params']['gene_selection_method'] == 'Frequent DEGs' and
+              st.session_state.get('cached_gene_selection_cache_key') == cache_key and
+              st.session_state.get('cached_gene_selection')):
+            # Use cached frequent DEGs if cache key matches and method is frequent DEGs
+            gene_sel = st.session_state.get('cached_gene_selection', [])
+        else:
+            # Calculate new gene selection and cache it (only for frequent DEGs)
+            gene_sel = _auto_select_genes(ri, results_dir, params['heatmap_params'])
+            if params['heatmap_params']['gene_selection_method'] == 'Frequent DEGs':
+                st.session_state['cached_gene_selection'] = gene_sel
+                st.session_state['cached_gene_selection_cache_key'] = cache_key
+
         params['gene_sel'] = gene_sel
         st.session_state['current_gene_selection'] = gene_sel
-
-
-
-
-
-    # Help section
-    _render_help_section()
 
     return params
 
@@ -264,6 +282,23 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
     """Render the heatmap configuration form."""
     with st.sidebar.expander("Heatmap Parameters", expanded=False):
         with st.form("heatmap_config"):
+            # Gene selection method (moved to top)
+            st.subheader("Gene Selection")
+
+            # Get cached values if they exist
+            cached_method = st.session_state.get('cached_gene_selection_method', 'Frequent DEGs')
+            cached_gene_count = st.session_state.get('cached_gene_count', '50')
+            cached_custom_genes = st.session_state.get('cached_custom_genes', '')
+
+            gene_selection_method = st.radio(
+                "Choose gene selection method",
+                options=["Frequent DEGs", "Custom"],
+                index=0 if cached_method == "Frequent DEGs" else 1,
+                key="heatmap_gene_selection_method",
+                help="**Frequent DEGs**: Automatically finds genes that are consistently differentially expressed across multiple contrasts, ranked by how often they appear as significant. \n **Custom**: Use your own gene list for targeted analysis of specific genes of interest.",
+                horizontal=True
+            )
+
             st.subheader("Significance Thresholds")
 
             # Parameter inputs
@@ -283,18 +318,6 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
                     key="heatmap_pvalue_threshold"
                 )
 
-            # Gene selection method
-            st.subheader("Gene Selection")
-            st.markdown("**Choose your gene selection approach:**")
-            gene_selection_method = st.radio(
-                "",
-                options=["Frequent DEGs", "Custom"],
-                index=0,
-                key="heatmap_gene_selection_method",
-                help="Choose between automatically selecting frequent DEGs or providing your own custom gene list",
-                horizontal=True
-            )
-
             # Always show both inputs with clear help text
             col1, col2 = st.columns([1, 1])
 
@@ -306,15 +329,13 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
 
                 gene_count_input = st.text_input(
                     "Number of genes to display",
-                    value="50",
+                    value=cached_gene_count,
                     help=help_text,
-                    key="heatmap_gene_count",
-                    disabled=(gene_selection_method == "Custom")
+                    key="heatmap_gene_count"
                 )
 
             with col2:
-                st.write("**What are Frequent DEGs?**")
-                st.caption("Genes that are most commonly differentially expressed across your selected contrasts. These are ranked by how often they appear as significant (meeting your p-value and log2FC thresholds) across different experimental comparisons.")
+                st.write("")  # Empty space for alignment
 
             # Custom gene input (always visible)
             if gene_selection_method == "Custom":
@@ -324,12 +345,11 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
 
             custom_genes_input = st.text_area(
                 "Custom Gene List",
-                value="",
+                value=cached_custom_genes,
                 height=150,
                 placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
                 help=help_text,
-                key="heatmap_custom_genes",
-                disabled=(gene_selection_method == "Frequent DEGs")
+                key="heatmap_custom_genes"
             )
 
             # Show preview and validation for custom genes
@@ -381,6 +401,21 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
             submitted = st.form_submit_button("Apply", type="primary")
 
             if submitted and not validation_error:
+                # Cache the values for persistence across form submissions
+                st.session_state['cached_gene_selection_method'] = gene_selection_method
+                st.session_state['cached_gene_count'] = gene_count_input
+                st.session_state['cached_custom_genes'] = custom_genes_input
+
+                # Clear cached gene selection if method or parameters changed
+                if (st.session_state.get('previous_gene_method') != gene_selection_method or
+                    st.session_state.get('previous_gene_count') != gene_count_input):
+                    st.session_state.pop('cached_gene_selection', None)
+                    st.session_state.pop('cached_gene_selection_cache_key', None)
+
+                # Store current values for comparison
+                st.session_state['previous_gene_method'] = gene_selection_method
+                st.session_state['previous_gene_count'] = gene_count_input
+
                 if gene_selection_method == "Frequent DEGs":
                     log_streamlit_user_action(f"Heatmap parameters updated: LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
                 else:
@@ -499,14 +534,17 @@ def _auto_select_genes(
                 st.write(f"**Found in data and meeting criteria:** {len(final_genes)}")
 
                 if missing_genes:
-                    st.warning(f"**{len(missing_genes)} genes not found in datasets:**")
+                    gene_word = "gene" if len(missing_genes) == 1 else "genes"
+                    st.write(f"**{len(missing_genes)} {gene_word} not found in datasets:**")
                     if len(missing_genes) <= 15:
                         st.write(", ".join(missing_genes))
                     else:
                         st.write(f"{', '.join(missing_genes[:15])}, ... (+{len(missing_genes)-15} more)")
 
                 if nonsignificant_genes:
-                    st.info(f"**{len(nonsignificant_genes)} genes found but don't meet filtering criteria** (p-value < {p_threshold}, |log2FC| > {lfc_threshold}):")
+                    gene_word = "gene" if len(nonsignificant_genes) == 1 else "genes"
+                    criteria_word = "criteria" if len(nonsignificant_genes) > 1 else "criterion"
+                    st.write(f"**{len(nonsignificant_genes)} {gene_word} found but don't meet filtering {criteria_word}** (p-value < {p_threshold}, |log2FC| > {lfc_threshold}):")
                     if len(nonsignificant_genes) <= 15:
                         st.write(", ".join(nonsignificant_genes))
                     else:
@@ -580,56 +618,3 @@ def _auto_select_genes(
         logger.error(f"Error in gene selection: {e}")
         st.sidebar.error(f"Error selecting genes: {str(e)}")
         return []
-
-
-
-
-
-@log_streamlit_function
-def _render_help_section():
-    """Render the help section at the bottom of the sidebar."""
-    st.sidebar.divider()
-    with st.sidebar.expander("Help", expanded=False):
-        st.markdown(
-            """
-            ### How to Use This Interface
-
-            1. **Select Datasets**: Choose datasets in the first form and click "Apply"
-            2. **Select Contrasts**: Fine-tune contrast selection in the second form and click "Apply"
-            3. **Set Parameters**: Configure significance thresholds and gene selection method, then click "Apply"
-            4. **View Results**: Switch to the heatmap tab to see results
-
-            ### Gene Selection Methods
-
-            **Frequent DEGs**: Automatically identifies genes that are consistently differentially expressed across multiple experimental conditions
-            - **How it works**: Genes are ranked by frequency - how many of your selected contrasts show them as significantly changed
-            - **Why it's useful**: Finds genes that are robustly altered across different experiments, suggesting biological importance
-            - **Selection criteria**: Genes must meet your p-value and log2FC thresholds in each contrast to be counted
-            - **Number control**: Uses the "Number of genes to display" setting to limit results to top candidates
-            - **Cross-study validation**: Particularly powerful when analyzing multiple datasets, as it identifies reproducible findings
-
-            **Custom**: Use your own gene list for targeted analysis of specific genes of interest
-            - Enter gene symbols one per line in the text area
-            - All entered genes will be included (if found in data and meeting significance criteria)
-            - Number of genes setting does not apply - all valid custom genes are used
-            - Useful for hypothesis-driven analysis or follow-up of specific pathways
-
-            ### Threshold Application
-            - **P-value and Log2FC thresholds** apply to both gene selection methods
-            - **Number of genes** threshold only applies to Frequent DEGs method
-            - Custom genes are filtered using the significance thresholds
-
-            ### Important Notes
-            - You must click "Apply" after making selections for changes to take effect
-            - Selecting datasets automatically updates available contrasts
-            - Each form works independently - apply changes as needed
-
-            ### Form Coordination
-            - Dataset selection populates available contrasts
-            - Parameter changes affect gene selection and visualization
-            - All changes require clicking the respective "Apply" button
-
-            ---
-            *Click the arrow above to close this help panel*
-            """
-        )
