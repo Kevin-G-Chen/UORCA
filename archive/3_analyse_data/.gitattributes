@@ -1,3 +1,0 @@
-output/ filter=lfs diff=lfs merge=lfs -text
-output/* filter=lfs diff=lfs merge=lfs -text
-abundance.tsv filter=lfs diff=lfs merge=lfs -text
