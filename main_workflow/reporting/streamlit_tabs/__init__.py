@@ -20,7 +20,6 @@ from .sidebar_controls import render_sidebar_controls
 from .helpers import (
     get_integrator,
     cached_identify_important_genes,
-    initialize_session_state,
     add_custom_css,
     setup_fragment_decorator
 )
@@ -39,7 +38,6 @@ __all__ = [
     # Helper functions
     'get_integrator',
     'cached_identify_important_genes',
-    'initialize_session_state',
     'add_custom_css',
     'setup_fragment_decorator'
 ]

@@ -13,8 +13,6 @@ from typing import List, Dict, Any, Tuple, Optional
 
 from .helpers import (
     cached_identify_important_genes,
-    get_integrator,
-    cached_get_all_genes_from_integrator,
     load_environment,
     log_streamlit_function,
     log_streamlit_event,
@@ -59,9 +57,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
             'contrasts': [],
             'datasets': []
         },
-        'expression_params': {
-            'datasets': []
-        }
+
     }
 
     # Dataset Selection Forms
@@ -80,10 +76,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
         if not params['selected_contrasts']:
             params['selected_contrasts'] = heatmap_params.get('contrasts', [])
 
-    # Expression Plots Configuration Form (placeholder for now)
-    expression_params = _render_expression_form(ri)
-    if expression_params:
-        params['expression_params'] = expression_params
+
 
     # Auto-select genes if we have contrasts
     if params['selected_contrasts']:
@@ -91,17 +84,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
         params['gene_sel'] = gene_sel
         st.session_state['current_gene_selection'] = gene_sel
 
-    # Legacy parameter mapping for compatibility
-    params.update({
-        'pvalue_thresh': params['heatmap_params']['pvalue_thresh'],
-        'lfc_thresh': params['heatmap_params']['lfc_thresh'],
-        'effective_pvalue_thresh': params['heatmap_params']['pvalue_thresh'],
-        'effective_lfc_thresh': params['heatmap_params']['lfc_thresh'],
-        'use_dynamic_filtering': True,
-        'hide_empty_rows_cols': True,
-        'hide_x_labels': True,
-        'show_advanced': False
-    })
+
 
 
 
@@ -332,15 +315,7 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
     return None
 
 
-@log_streamlit_function
-def _render_expression_form(ri: ResultsIntegrator) -> Optional[Dict[str, Any]]:
-    """Render the expression plots configuration form (placeholder)."""
-    with st.sidebar.expander("Expression Plots Configuration", expanded=False):
-        with st.form("expression_config"):
-            st.info("Expression plot configuration will be implemented in future versions.")
-            st.form_submit_button("Apply", disabled=True)
 
-    return None
 
 
 @log_streamlit_function

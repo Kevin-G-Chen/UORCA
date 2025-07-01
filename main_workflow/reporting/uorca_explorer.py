@@ -27,7 +27,6 @@ sys.path.insert(0, script_dir)
 from streamlit_tabs.helpers import (
     _validate_results_dir,
     get_integrator,
-    initialize_session_state,
     add_custom_css,
     load_environment,
     setup_fragment_decorator,
@@ -107,9 +106,6 @@ def main():
     # Store integrator and results directory in session state for AI assistant access
     st.session_state['results_integrator'] = ri
     st.session_state['results_dir'] = results_dir
-
-    # Initialize session state
-    initialize_session_state(ri)
 
     # Render sidebar controls and get parameters
     sidebar_params = render_sidebar_controls(ri, results_dir)
@@ -207,10 +203,10 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             ri=ri,
             gene_sel=gene_sel,
             selected_contrasts=selected_contrasts,
-            effective_pvalue_thresh=sidebar_params['effective_pvalue_thresh'],
-            effective_lfc_thresh=sidebar_params['effective_lfc_thresh'],
-            use_dynamic_filtering=sidebar_params['use_dynamic_filtering'],
-            hide_empty_rows_cols=sidebar_params['hide_empty_rows_cols']
+            effective_pvalue_thresh=sidebar_params['heatmap_params']['pvalue_thresh'],
+            effective_lfc_thresh=sidebar_params['heatmap_params']['lfc_thresh'],
+            use_dynamic_filtering=True,
+            hide_empty_rows_cols=True
         )
 
     # Tab 3: Expression Plots
@@ -219,7 +215,7 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             ri=ri,
             gene_sel=gene_sel,
             selected_datasets=selected_datasets,
-            hide_x_labels=sidebar_params['hide_x_labels']
+            hide_x_labels=True
         )
 
     # Tab 4: Analysis Plots
@@ -237,8 +233,8 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
     with tab5:
         render_contrasts_info_tab(
             ri=ri,
-            pvalue_thresh=sidebar_params['pvalue_thresh'],
-            lfc_thresh=sidebar_params['lfc_thresh']
+            pvalue_thresh=sidebar_params['heatmap_params']['pvalue_thresh'],
+            lfc_thresh=sidebar_params['heatmap_params']['lfc_thresh']
         )
 
 

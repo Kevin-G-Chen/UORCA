@@ -11,7 +11,6 @@ from typing import List, Dict, Any, Set
 from .helpers import (
     check_ai_generating,
     setup_fragment_decorator,
-    safe_rerun,
     log_streamlit_tab,
     log_streamlit_function,
     log_streamlit_event
