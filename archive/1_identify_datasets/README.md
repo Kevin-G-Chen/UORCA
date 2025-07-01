@@ -1,1 +1,0 @@
-[IdentifyNCBIGEODatasets.ipynb](notebooks/1_identify_datasets/IdentifyNCBIGEODatasets.ipynb) contains the code I use to, given a research query, identify and evaluate the relevance of NCBI GEO datasets.
