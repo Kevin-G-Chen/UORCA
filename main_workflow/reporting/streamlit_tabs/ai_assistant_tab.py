@@ -90,8 +90,41 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
         log_streamlit_event("OpenAI API key not found for AI assistant")
-        st.error("OPENAI_API_KEY environment variable not set")
-        st.info("Please set your OpenAI API key to use AI features.")
+        st.warning("⚠️ OpenAI API key not configured")
+
+        with st.expander("🔧 Setup Instructions", expanded=True):
+            st.markdown("""
+            **To enable AI-powered analysis, you need to set up an OpenAI API key:**
+
+            ### Option 1: Environment Variable (Recommended)
+            ```bash
+            # Add to your .env file or shell environment
+            export OPENAI_API_KEY="your-api-key-here"
+            ```
+
+            ### Option 2: Create .env file
+            Create a `.env` file in your project directory:
+            ```
+            OPENAI_API_KEY=your-api-key-here
+            ```
+
+            ### Getting an API Key
+            1. Visit [OpenAI's API platform](https://platform.openai.com/api-keys)
+            2. Sign up or log in to your account
+            3. Create a new API key
+            4. Copy the key and set it using one of the methods above
+            5. Restart the Streamlit app
+
+            ### What You'll Get
+            - **Intelligent Contrast Selection**: AI automatically identifies the most relevant contrasts for your research question
+            - **Gene Pattern Analysis**: Discovers shared and context-specific gene expression patterns
+            - **Biological Interpretation**: Provides insights into the biological significance of findings
+            - **Interactive Exploration**: Tools to drill down into specific genes and contrasts
+
+            **Note**: You can still use all other features of UORCA Explorer without the API key.
+            """)
+
+        st.info("💡 **Tip**: The other tabs (Heatmap, Expression Plots, etc.) work without an API key!")
         return
 
     # Render streamlined AI analysis workflow (no tabs needed)
@@ -163,7 +196,7 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
         return
 
     if not os.getenv("OPENAI_API_KEY"):
-        st.error("OpenAI API key not found. Please set the OPENAI_API_KEY environment variable.")
+        st.warning("OpenAI API key not found. Please configure your API key in the instructions above.")
         return
 
     # Run complete analysis workflow with dynamic progress
@@ -193,7 +226,11 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                         st.session_state['selected_contrasts_for_ai'] = selected_contrast_dicts
                         st.session_state['research_query'] = research_query
                     else:
-                        st.warning("No contrasts found for assessment.")
+                        if not os.getenv("OPENAI_API_KEY"):
+                            st.warning("⚠️ OpenAI API key not configured. Cannot assess contrast relevance.")
+                            st.info("Please configure your OpenAI API key using the instructions above to enable AI-powered contrast selection.")
+                        else:
+                            st.warning("No contrasts found for assessment.")
                         return
                 else:
                     # Fall back to original approach
@@ -213,7 +250,11 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                         st.session_state['research_query'] = research_query
                         selected_contrasts = None  # No selection objects in fallback mode
                     else:
-                        st.warning("No contrasts found for assessment.")
+                        if not os.getenv("OPENAI_API_KEY"):
+                            st.warning("⚠️ OpenAI API key not configured. Cannot assess contrast relevance.")
+                            st.info("Please configure your OpenAI API key using the instructions above to enable AI-powered contrast selection.")
+                        else:
+                            st.warning("No contrasts found for assessment.")
                         return
 
         # Step 2: AI Gene Analysis (using selected contrasts)
@@ -233,6 +274,11 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                 contrasts_key = hashlib.md5(json.dumps(selected_contrast_dicts, sort_keys=True).encode()).hexdigest()
 
                 agent = create_uorca_agent(selected_contrasts_key=contrasts_key)
+
+                # Check if agent creation failed due to missing API key
+                if agent is None:
+                    st.error("Failed to create AI agent. Please check that your OpenAI API key is properly configured.")
+                    return
 
                 # Enhanced prompt that leverages the selection
                 if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE and len(selected_contrast_dicts) <= 20:

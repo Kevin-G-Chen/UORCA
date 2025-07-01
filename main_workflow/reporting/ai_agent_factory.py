@@ -53,7 +53,7 @@ Focus on identifying both shared signatures across multiple contrasts and contex
 """
 
 @st.cache_resource
-def create_uorca_agent(selected_contrasts_key: str = "") -> Agent:
+def create_uorca_agent(selected_contrasts_key: str = "") -> Optional[Agent]:
     """Create an agent connected to the UORCA MCP server.
 
     Args:
@@ -61,9 +61,8 @@ def create_uorca_agent(selected_contrasts_key: str = "") -> Agent:
     """
 
     if not os.getenv("OPENAI_API_KEY"):
-        raise ValueError(
-            "OpenAI API key not found. Please set the OPENAI_API_KEY environment variable."
-        )
+        logger.warning("OpenAI API key not found - AI agent creation skipped")
+        return None
 
     # Load configuration
     ai_config = get_ai_agent_config()
@@ -104,14 +103,22 @@ def create_uorca_agent(selected_contrasts_key: str = "") -> Agent:
 
 
 # Convenience function for Streamlit apps
-def get_uorca_agent(selected_contrasts_key: str = "") -> Agent:
+def get_uorca_agent(selected_contrasts_key: str = "") -> Optional[Agent]:
     """Return a cached UORCA agent instance for Streamlit.
 
     Args:
         selected_contrasts_key: String representation of selected contrasts for cache invalidation
+
+    Returns:
+        Agent instance or None if API key is not available
     """
     try:
-        return create_uorca_agent(selected_contrasts_key)
+        agent = create_uorca_agent(selected_contrasts_key)
+        if agent is None:
+            logger.info("UORCA agent not created - OpenAI API key not available")
+            return None
+        return agent
     except Exception as e:
+        logger.error(f"Failed to initialize UORCA MCP agent: {e}")
         st.error(f"Failed to initialize UORCA MCP agent: {e}")
-        st.stop()
+        return None
