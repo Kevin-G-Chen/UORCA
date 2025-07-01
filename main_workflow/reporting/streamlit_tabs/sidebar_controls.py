@@ -285,43 +285,62 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
 
             # Gene selection method
             st.subheader("Gene Selection")
+            st.markdown("**Choose your gene selection approach:**")
             gene_selection_method = st.radio(
-                "Gene Selection Method",
+                "",
                 options=["Frequent DEGs", "Custom"],
                 index=0,
                 key="heatmap_gene_selection_method",
-                help="Choose between automatically selecting frequent DEGs or providing your own custom gene list"
+                help="Choose between automatically selecting frequent DEGs or providing your own custom gene list",
+                horizontal=True
             )
 
-            if gene_selection_method == "Frequent DEGs":
+            # Always show both inputs with clear help text
+            col1, col2 = st.columns([1, 1])
+
+            with col1:
+                if gene_selection_method == "Frequent DEGs":
+                    help_text = "Number of top frequently differentially expressed genes to include in the heatmap"
+                else:
+                    help_text = "This setting does not apply when using custom gene selection"
+
                 gene_count_input = st.text_input(
                     "Number of genes to display",
                     value="50",
-                    help="Maximum number of top frequently differentially expressed genes to include",
-                    key="heatmap_gene_count"
+                    help=help_text,
+                    key="heatmap_gene_count",
+                    disabled=(gene_selection_method == "Custom")
                 )
-                custom_genes_input = ""
-            else:  # Custom
-                st.info("Number of genes threshold does not apply to custom gene selection")
-                custom_genes_input = st.text_area(
-                    "Custom Gene List",
-                    value="",
-                    height=150,
-                    placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
-                    help="Enter gene symbols, one per line. These genes will be filtered using the p-value and log2FC thresholds above.",
-                    key="heatmap_custom_genes"
-                )
-                gene_count_input = "50"  # Default fallback
 
-                # Show preview of custom genes
-                if custom_genes_input.strip():
-                    custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-                    if custom_genes_list:
-                        st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
-                        preview_text = ", ".join(custom_genes_list[:10])
-                        if len(custom_genes_list) > 10:
-                            preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
-                        st.caption(preview_text)
+            with col2:
+                st.write("**What are Frequent DEGs?**")
+                st.caption("Genes that are most commonly differentially expressed across your selected contrasts. These are ranked by how often they appear as significant (meeting your p-value and log2FC thresholds) across different experimental comparisons.")
+
+            # Custom gene input (always visible)
+            if gene_selection_method == "Custom":
+                help_text = "Enter gene symbols, one per line. These genes will be filtered using the p-value and log2FC thresholds above."
+            else:
+                help_text = "Not used for Frequent DEGs method. Switch to 'Custom' method to use this field."
+
+            custom_genes_input = st.text_area(
+                "Custom Gene List",
+                value="",
+                height=150,
+                placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
+                help=help_text,
+                key="heatmap_custom_genes",
+                disabled=(gene_selection_method == "Frequent DEGs")
+            )
+
+            # Show preview and validation for custom genes
+            if gene_selection_method == "Custom" and custom_genes_input.strip():
+                custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+                if custom_genes_list:
+                    st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
+                    preview_text = ", ".join(custom_genes_list[:10])
+                    if len(custom_genes_list) > 10:
+                        preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
+                    st.caption(preview_text)
 
             # Validate parameters
             validation_error = False
@@ -445,36 +464,56 @@ def _auto_select_genes(
                 st.sidebar.warning("No custom genes provided")
                 return []
 
-            # Filter custom genes to only include those present in the selected datasets
+            # Collect all available genes and their significance status
             available_genes = set()
+            significant_genes = set()
+            p_threshold = heatmap_params['pvalue_thresh']
+            lfc_threshold = heatmap_params['lfc_thresh']
+
             for organism_contrasts in organism_groups.values():
                 for analysis_id, contrast_id in organism_contrasts:
                     if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
                         deg_df = ri.deg_data[analysis_id][contrast_id]
                         if 'Gene' in deg_df.columns:
                             available_genes.update(deg_df['Gene'].tolist())
+
+                            # Check which genes meet significance criteria
+                            if 'adj.P.Val' in deg_df.columns and 'logFC' in deg_df.columns:
+                                sig_mask = (deg_df['adj.P.Val'] < p_threshold) & (abs(deg_df['logFC']) > lfc_threshold)
+                                significant_genes.update(deg_df.loc[sig_mask, 'Gene'].tolist())
+
                     if analysis_id in ri.cpm_data:
                         cpm_df = ri.cpm_data[analysis_id]
                         if 'Gene' in cpm_df.columns:
                             available_genes.update(cpm_df['Gene'].tolist())
 
-            # Filter custom genes to only include available ones
-            filtered_custom_genes = [gene for gene in custom_genes if gene in available_genes]
+            # Categorize custom genes
             missing_genes = [gene for gene in custom_genes if gene not in available_genes]
+            available_custom_genes = [gene for gene in custom_genes if gene in available_genes]
+            nonsignificant_genes = [gene for gene in available_custom_genes if gene not in significant_genes]
+            final_genes = [gene for gene in available_custom_genes if gene in significant_genes]
 
-            # Display summary
-            with st.sidebar.expander("Custom Gene Selection Summary", expanded=False):
-                st.write(f"**Custom genes:** {len(custom_genes)} provided")
-                st.write(f"**Available genes:** {len(filtered_custom_genes)} found in data")
+            # Display detailed validation messages
+            with st.sidebar.expander("Custom Gene Validation", expanded=True):
+                st.write(f"**Total custom genes:** {len(custom_genes)}")
+                st.write(f"**Found in data and meeting criteria:** {len(final_genes)}")
+
                 if missing_genes:
-                    st.write(f"**Missing genes:** {len(missing_genes)} not found")
-                    if len(missing_genes) <= 10:
-                        st.write(f"Missing: {', '.join(missing_genes)}")
+                    st.warning(f"**{len(missing_genes)} genes not found in datasets:**")
+                    if len(missing_genes) <= 15:
+                        st.write(", ".join(missing_genes))
                     else:
-                        st.write(f"Missing: {', '.join(missing_genes[:10])}, ... (+{len(missing_genes)-10} more)")
+                        st.write(f"{', '.join(missing_genes[:15])}, ... (+{len(missing_genes)-15} more)")
 
-            log_streamlit_event(f"Custom gene selection: {len(filtered_custom_genes)} of {len(custom_genes)} genes available")
-            return filtered_custom_genes
+                if nonsignificant_genes:
+                    st.info(f"**{len(nonsignificant_genes)} genes found but don't meet filtering criteria** (p-value < {p_threshold}, |log2FC| > {lfc_threshold}):")
+                    if len(nonsignificant_genes) <= 15:
+                        st.write(", ".join(nonsignificant_genes))
+                    else:
+                        st.write(f"{', '.join(nonsignificant_genes[:15])}, ... (+{len(nonsignificant_genes)-15} more)")
+
+            log_streamlit_event(f"Custom gene selection: {len(final_genes)} of {len(custom_genes)} genes meet criteria")
+            return final_genes
 
         else:
             # Frequent DEGs selection - use existing logic
@@ -562,14 +601,18 @@ def _render_help_section():
 
             ### Gene Selection Methods
 
-            **Frequent DEGs**: Automatically selects the most frequently differentially expressed genes across your selected contrasts
-            - Uses the "Number of genes to display" setting
-            - Genes are ranked by how often they appear as significant across contrasts
+            **Frequent DEGs**: Automatically identifies genes that are consistently differentially expressed across multiple experimental conditions
+            - **How it works**: Genes are ranked by frequency - how many of your selected contrasts show them as significantly changed
+            - **Why it's useful**: Finds genes that are robustly altered across different experiments, suggesting biological importance
+            - **Selection criteria**: Genes must meet your p-value and log2FC thresholds in each contrast to be counted
+            - **Number control**: Uses the "Number of genes to display" setting to limit results to top candidates
+            - **Cross-study validation**: Particularly powerful when analyzing multiple datasets, as it identifies reproducible findings
 
-            **Custom**: Use your own gene list for targeted analysis
+            **Custom**: Use your own gene list for targeted analysis of specific genes of interest
             - Enter gene symbols one per line in the text area
-            - Number of genes setting does not apply
-            - All entered genes will be used (if found in data)
+            - All entered genes will be included (if found in data and meeting significance criteria)
+            - Number of genes setting does not apply - all valid custom genes are used
+            - Useful for hypothesis-driven analysis or follow-up of specific pathways
 
             ### Threshold Application
             - **P-value and Log2FC thresholds** apply to both gene selection methods
