@@ -74,13 +74,33 @@ def render_heatmap_tab(
     elif not gene_sel:
         log_streamlit_event("No genes selected for heatmap")
         if gene_selection_method == "Custom":
-            st.warning("No custom genes found in the selected datasets. Please check your gene list and ensure the genes are present in your data.")
+            st.warning("❌ **No custom genes available for heatmap**")
+            st.markdown("""
+            **Possible reasons:**
+            - Genes not found in your selected datasets
+            - Genes don't meet the current p-value and log2FC filtering criteria
+            - Check the **Custom Gene Validation** section in the sidebar for detailed information
+
+            **Next steps:**
+            - Verify gene symbols are correct
+            - Consider relaxing significance thresholds
+            - Check that genes are present in your selected datasets
+            """)
         else:
             st.warning("No genes were automatically selected with the current parameters. Try adjusting the significance thresholds in the sidebar form.")
     else:
         # Display gene selection method information
         if gene_selection_method == "Custom":
-            st.info(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} custom genes (from {custom_genes_count} provided)")
+            success_rate = (len(gene_sel) / custom_genes_count * 100) if custom_genes_count > 0 else 0
+            if success_rate == 100:
+                st.success(f"🎯 **Custom Gene Selection**: All {len(gene_sel)} custom genes found and meet filtering criteria")
+            elif success_rate >= 75:
+                st.info(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} of {custom_genes_count} custom genes ({success_rate:.0f}% success rate)")
+            elif len(gene_sel) > 0:
+                st.warning(f"🎯 **Custom Gene Selection**: Only {len(gene_sel)} of {custom_genes_count} custom genes available ({success_rate:.0f}% success rate). Check sidebar validation for details.")
+
+            if custom_genes_count > len(gene_sel):
+                st.caption("💡 See 'Custom Gene Validation' in the sidebar for information about missing or filtered genes")
         else:
             st.info(f"📊 **Frequent DEGs**: Displaying {len(gene_sel)} most frequently differentially expressed genes")
         log_streamlit_event(f"Heatmap: {len(gene_sel)} genes, {len(selected_contrasts)} contrasts")
