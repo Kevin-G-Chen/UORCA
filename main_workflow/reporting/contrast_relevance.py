@@ -6,6 +6,7 @@ import pandas as pd
 import statistics
 import sys
 import os
+import logging
 from pathlib import Path
 from openai import OpenAI
 try:
@@ -22,17 +23,25 @@ from config_loader import get_contrast_relevance_config
 # Load environment variables
 load_dotenv()
 
+# Set up logging
+logger = logging.getLogger(__name__)
+
 # Set up OpenAI client
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
-    raise RuntimeError("OPENAI_API_KEY not set")
-client = OpenAI(api_key=openai_api_key)
+    client = None
+    logger.warning("OPENAI_API_KEY not set - contrast relevance features will be disabled")
+else:
+    client = OpenAI(api_key=openai_api_key)
 
 # Add path to import from dataset_identification module
 sys.path.insert(0, str(Path(__file__).parent.parent / "dataset_identification"))
 
 def call_openai_json(prompt: str, schema: Dict[str, Any], name: str) -> dict:
     """Call OpenAI API with JSON schema enforcement."""
+    if client is None:
+        raise RuntimeError("OpenAI client not available - API key not configured")
+
     config = get_contrast_relevance_config()
     response = client.chat.completions.create(
         model=config.model,
@@ -208,6 +217,9 @@ def run_contrast_relevance(
     pd.DataFrame
         DataFrame with contrast relevance scores and justifications
     """
+    if client is None:
+        print("⚠️ OpenAI API key not configured - contrast relevance assessment unavailable")
+        return pd.DataFrame()
     # Build a list of all contrasts from ri.deg_data
     contrast_list = []
     for analysis_id, contrasts in ri.deg_data.items():
@@ -339,6 +351,9 @@ def run_contrast_relevance_with_selection(
     Returns:
         Tuple of (relevance_df, selected_contrasts_list)
     """
+    if client is None:
+        print("⚠️ OpenAI API key not configured - contrast relevance with selection unavailable")
+        return pd.DataFrame(), []
     # Build contrast list (same as before)
     contrast_list = []
     for analysis_id, contrasts in ri.deg_data.items():
