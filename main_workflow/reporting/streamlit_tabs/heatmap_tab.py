@@ -36,7 +36,9 @@ def render_heatmap_tab(
     effective_pvalue_thresh: Optional[float],
     effective_lfc_thresh: Optional[float],
     use_dynamic_filtering: bool,
-    hide_empty_rows_cols: bool
+    hide_empty_rows_cols: bool,
+    gene_selection_method: str = "Frequent DEGs",
+    custom_genes_count: int = 0
 ):
     """
     Render the heatmap tab.
@@ -49,6 +51,8 @@ def render_heatmap_tab(
         effective_lfc_thresh: Log fold change threshold for filtering
         use_dynamic_filtering: Whether to use dynamic filtering
         hide_empty_rows_cols: Whether to hide empty rows/columns
+        gene_selection_method: Method used for gene selection ("Frequent DEGs" or "Custom")
+        custom_genes_count: Number of custom genes provided (if applicable)
     """
     st.header("Explore DEG Heatmap")
     st.markdown("**Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Hover over cells for details. Use the Dataset & Contrast Selection and Heatmap Parameters forms in the sidebar.")
@@ -69,8 +73,16 @@ def render_heatmap_tab(
         """)
     elif not gene_sel:
         log_streamlit_event("No genes selected for heatmap")
-        st.warning("No genes were automatically selected with the current parameters. Try adjusting the significance thresholds in the sidebar form.")
+        if gene_selection_method == "Custom":
+            st.warning("No custom genes found in the selected datasets. Please check your gene list and ensure the genes are present in your data.")
+        else:
+            st.warning("No genes were automatically selected with the current parameters. Try adjusting the significance thresholds in the sidebar form.")
     else:
+        # Display gene selection method information
+        if gene_selection_method == "Custom":
+            st.info(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} custom genes (from {custom_genes_count} provided)")
+        else:
+            st.info(f"📊 **Frequent DEGs**: Displaying {len(gene_sel)} most frequently differentially expressed genes")
         log_streamlit_event(f"Heatmap: {len(gene_sel)} genes, {len(selected_contrasts)} contrasts")
 
         # Group contrasts by organism

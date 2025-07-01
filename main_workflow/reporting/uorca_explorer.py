@@ -206,7 +206,9 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             effective_pvalue_thresh=sidebar_params['heatmap_params']['pvalue_thresh'],
             effective_lfc_thresh=sidebar_params['heatmap_params']['lfc_thresh'],
             use_dynamic_filtering=True,
-            hide_empty_rows_cols=True
+            hide_empty_rows_cols=True,
+            gene_selection_method=sidebar_params['heatmap_params']['gene_selection_method'],
+            custom_genes_count=len(sidebar_params['heatmap_params']['custom_genes'])
         )
 
     # Tab 3: Expression Plots
