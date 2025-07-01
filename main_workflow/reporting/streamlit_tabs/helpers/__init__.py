@@ -50,31 +50,10 @@ class ModuleFilter(logging.Filter):
         return any(record.name.startswith(n) for n in self.names)
 
 
-def short_label(full_label: str) -> str:
-    """Create short labels for contrast multiselect display."""
-    # keeps 'KO_vs_WT' out of 'GSE12345:KO_vs_WT – long sentence …'
-    return full_label.split(":", 1)[-1].split(" –")[0].split(" - ")[0][:25]
-
-
 def setup_fragment_decorator():
-    """Set up the fragment decorator with fallbacks for older Streamlit versions."""
-    # Check if fragment is available (Streamlit >=1.33.0)
-    # If not, fallback to experimental_fragment
-    try:
-        from streamlit import fragment
-        st.fragment = fragment
-    except ImportError:
-        try:
-            from streamlit import experimental_fragment
-            st.fragment = experimental_fragment
-        except ImportError:
-            # Fallback for very old Streamlit versions
-            def fragment(func):
-                """Fallback decorator when st.fragment is not available."""
-                def wrapper(*args, **kwargs):
-                    return func(*args, **kwargs)
-                return wrapper
-            st.fragment = fragment
+    """Set up the fragment decorator."""
+    from streamlit import fragment
+    st.fragment = fragment
 
 
 def _validate_results_dir(path: str) -> Tuple[bool, str]:
@@ -256,26 +235,7 @@ def get_all_genes_from_integrator(ri: ResultsIntegrator) -> List[str]:
     return cached_get_all_genes_from_integrator(ri.results_dir)
 
 
-@log_streamlit_function
-def initialize_session_state(ri: ResultsIntegrator):
-    """Initialize session state variables for dataset and contrast selections."""
-    # Initialize session state for selections if not exists
-    if 'selected_datasets' not in st.session_state:
-        # Default to first 5 datasets
-        all_dataset_ids = list(ri.cpm_data.keys())
-        st.session_state['selected_datasets'] = set(all_dataset_ids[:5])
 
-    if 'selected_contrasts' not in st.session_state:
-        # Default to all contrasts for selected datasets
-        selected_contrasts = set()
-        for analysis_id in st.session_state['selected_datasets']:
-            for c in ri.analysis_info.get(analysis_id, {}).get("contrasts", []):
-                selected_contrasts.add((analysis_id, c["name"]))
-        st.session_state['selected_contrasts'] = selected_contrasts
-
-    # Initialize page number
-    if 'page_num' not in st.session_state:
-        st.session_state.page_num = 1
 
 
 @log_streamlit_function
@@ -301,15 +261,8 @@ def calculate_pagination_info(gene_sel: List[str], genes_per_page: int = 30) -> 
 
 
 def safe_rerun():
-    """Safely call streamlit rerun with fallbacks for older versions."""
-    try:
-        st.rerun()
-    except AttributeError:
-        try:
-            st.experimental_rerun()
-        except AttributeError:
-            # For very old versions, do nothing
-            pass
+    """Call streamlit rerun."""
+    st.rerun()
 
 
 def check_ai_generating():
@@ -353,7 +306,6 @@ def load_environment():
     """Load environment variables from .env file if available."""
     try:
         from dotenv import load_dotenv
-        # Try loading from current directory first, then parent directories
         load_dotenv()
         # Also try loading from project root
         project_root = Path(__file__).parent.parent.parent.parent
@@ -522,7 +474,6 @@ __all__ = [
     # Main helper functions
     'get_integrator',
     'cached_identify_important_genes',
-    'initialize_session_state',
     'add_custom_css',
     'setup_fragment_decorator',
     'get_all_genes_from_integrator',
@@ -531,7 +482,6 @@ __all__ = [
     'safe_rerun',
     'check_ai_generating',
     'cached_figure_creation',
-    'short_label',
     'load_environment',
 
     # Organism/species helper functions
