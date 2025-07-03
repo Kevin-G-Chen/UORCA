@@ -2,9 +2,10 @@
 Expression Plots Tab for UORCA Explorer.
 
 This tab displays violin plots showing gene expression distributions across sample groups.
-Includes group selection and custom gene selection forms at the top.
+Simplified interface with combined form for group and gene selection.
 """
 
+import os
 import logging
 import streamlit as st
 import pandas as pd
@@ -15,8 +16,6 @@ from .helpers import (
     check_ai_generating,
     setup_fragment_decorator,
     cached_figure_creation,
-    calculate_pagination_info,
-    safe_rerun,
     log_streamlit_tab,
     log_streamlit_function,
     log_streamlit_event,
@@ -36,7 +35,7 @@ logger = logging.getLogger(__name__)
 @log_streamlit_tab("Expression Plots")
 def render_expression_plots_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kwargs):
     """
-    Render the expression plots tab with group selection and gene selection forms.
+    Render the expression plots tab with combined form for group and gene selection.
 
     Args:
         ri: ResultsIntegrator instance
@@ -44,7 +43,7 @@ def render_expression_plots_tab(ri: ResultsIntegrator, selected_datasets: List[s
         **kwargs: Additional arguments (maintained for compatibility)
     """
     st.header("Plot Gene Expression")
-    st.markdown("**Violin plots showing gene expression distributions across sample groups.** Configure your analysis parameters below, then view the expression plots.")
+    st.markdown("**Violin plots showing gene expression distributions across sample groups.** Configure your analysis below.")
 
     # Get selected datasets from sidebar
     if not selected_datasets:
@@ -54,137 +53,179 @@ def render_expression_plots_tab(ri: ResultsIntegrator, selected_datasets: List[s
         st.info("**Getting Started with Expression Plots:**")
         st.markdown("""
         1. **Select Datasets** in the sidebar first
-        2. **Choose Sample Groups** using the form below (populated from your datasets)
-        3. **Enter Custom Genes** using the gene list form
-        4. **View Results** - expression plots will be generated automatically
-
-        **Note:** This tab shows expression levels across sample groups within datasets.
+        2. **Choose Sample Groups and Enter Genes** using the form below
+        3. **View Results** - expression plots will be generated automatically
         """)
         return
 
-    # Render group selection form
-    selected_groups = _render_group_selection_form(ri, selected_datasets)
+    # Render combined form for groups and genes
+    form_results = _render_combined_form(ri, selected_datasets)
 
-    # Render gene selection form
-    selected_genes = _render_gene_selection_form(ri)
+    if form_results:
+        selected_groups = form_results['groups']
+        selected_genes = form_results['genes']
 
-    # Display current selections summary
-    if selected_groups and selected_genes:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Datasets", len(selected_datasets))
-        with col2:
-            st.metric("Sample Groups", len(selected_groups))
-        with col3:
-            st.metric("Genes", len(selected_genes))
+        # Generate expression plots if we have both groups and genes
+        if selected_groups and selected_genes:
+            # Group datasets by organism
+            organism_groups = group_datasets_by_organism(ri, selected_datasets)
 
-        st.info(f"🎯 **Custom Gene Selection**: Displaying {len(selected_genes)} genes across sample groups")
+            if len(organism_groups) == 1:
+                # Single organism - no sub-tabs needed
+                organism = list(organism_groups.keys())[0]
+                organism_datasets = [ds for ds in selected_datasets if ds in organism_groups[organism]]
+                organism_genes = filter_genes_by_organism_datasets(ri, selected_genes, organism, organism_datasets)
 
-        # Group datasets by organism and render expression plots
-        organism_groups = group_datasets_by_organism(ri, selected_datasets)
+                if organism_genes:
+                    log_streamlit_event(f"Expression plots: showing {len(organism_genes)} genes for {organism}")
 
-        if len(organism_groups) == 1:
-            # Single organism - no sub-tabs needed
-            organism = list(organism_groups.keys())[0]
-            organism_datasets = organism_groups[organism]
-            organism_genes = filter_genes_by_organism_datasets(ri, selected_genes, organism, organism_datasets)
+                    # Create and display all expression plots at once
+                    _draw_expression_plots(
+                        ri,
+                        organism_genes,
+                        organism_datasets,
+                        selected_groups
+                    )
+                else:
+                    st.warning(f"No genes found for {get_organism_display_name(organism)} in selected datasets.")
+            else:
+                # Multiple organisms - create sub-tabs
+                organism_names = list(organism_groups.keys())
+                tab_names = [get_organism_display_name(org) for org in organism_names]
+                tabs = st.tabs(tab_names)
 
-            # Calculate pagination information for this organism
-            total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(organism_genes, genes_per_page=20)  # 20 genes per page for 2x10 layout
-            log_streamlit_event(f"Expression plots pagination: page {current_page}/{total_pages}, showing {len(current_genes)} genes for {organism}")
+                for i, organism in enumerate(organism_names):
+                    with tabs[i]:
+                        organism_datasets = [ds for ds in selected_datasets if ds in organism_groups[organism]]
+                        organism_genes = filter_genes_by_organism_datasets(ri, selected_genes, organism, organism_datasets)
 
-            # Add pagination controls at the top if needed
-            if total_pages > 1:
-                _render_top_pagination_controls(current_page, total_pages, "expression_single")
-
-            # Create and display the expression plots
-            _draw_expression_plots(
-                ri,
-                organism_genes,
-                organism_datasets,
-                selected_groups,
-                current_page,
-                total_pages
-            )
-        else:
-            # Multiple organisms - create sub-tabs
-            organism_names = list(organism_groups.keys())
-            tab_names = [get_organism_display_name(org) for org in organism_names]
-            tabs = st.tabs(tab_names)
-
-            for i, organism in enumerate(organism_names):
-                with tabs[i]:
-                    organism_datasets = organism_groups[organism]
-                    organism_genes = filter_genes_by_organism_datasets(ri, selected_genes, organism, organism_datasets)
-
-                    if organism_genes:
-                        # Calculate pagination information for this organism
-                        total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(organism_genes, genes_per_page=20)
-
-                        # Add pagination controls at the top if needed
-                        if total_pages > 1:
-                            _render_top_pagination_controls(current_page, total_pages, f"expression_{organism}")
-
-                        # Create and display the expression plots
-                        _draw_expression_plots(
-                            ri,
-                            organism_genes,
-                            organism_datasets,
-                            selected_groups,
-                            current_page,
-                            total_pages
-                        )
-                    else:
-                        st.warning(f"No genes found for {get_organism_display_name(organism)} with current parameters.")
-                        st.info("Try entering different genes or selecting more datasets for this species.")
-
-    elif selected_groups and not selected_genes:
-        st.warning("No genes selected. Please enter genes using the form above.")
-    elif not selected_groups:
-        st.info("Please select sample groups using the form above.")
+                        if organism_genes:
+                            # Create and display all expression plots at once
+                            _draw_expression_plots(
+                                ri,
+                                organism_genes,
+                                organism_datasets,
+                                selected_groups
+                            )
+                        else:
+                            st.warning(f"No genes found for {get_organism_display_name(organism)} with current parameters.")
 
 
 @log_streamlit_function
-def _render_group_selection_form(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[str]:
-    """Render the sample group selection form."""
-    st.subheader("1. Select Sample Groups")
+def _get_sample_count_for_group(ri: ResultsIntegrator, dataset_id: str, group_name: str) -> int:
+    """Get the number of samples in a specific group for a dataset."""
+    try:
+        # Look for the sample mapping file
+        analysis_dir = os.path.join(ri.results_dir, dataset_id)
+        sample_file_locations = [
+            os.path.join(analysis_dir, "metadata", "edger_analysis_samples.csv"),
+            os.path.join(analysis_dir, "edger_analysis_samples.csv"),
+        ]
 
-    # Initialize session state
-    if 'selected_groups_expression' not in st.session_state:
-        st.session_state['selected_groups_expression'] = set()
+        edger_samples_file = None
+        for path in sample_file_locations:
+            if os.path.isfile(path):
+                edger_samples_file = path
+                break
 
-    with st.form("expression_group_selection"):
-        # Get all unique groups from selected datasets
-        all_groups = set()
-        dataset_group_mapping = {}
+        if not edger_samples_file:
+            return 0
 
-        for analysis_id in selected_datasets:
-            if analysis_id in ri.analysis_info:
-                info = ri.analysis_info[analysis_id]
-                accession = info.get("accession", analysis_id)
+        # Load the sample mapping file
+        sample_mapping_df = pd.read_csv(edger_samples_file, nrows=0)
+        first_col = sample_mapping_df.columns[0]
+        has_index = first_col == '' or first_col.startswith('Unnamed')
+        sample_mapping_df = pd.read_csv(edger_samples_file, index_col=0 if has_index else None)
+
+        # Get the group column from analysis_info
+        group_col = None
+        if ri.analysis_info and dataset_id in ri.analysis_info and 'merged_column' in ri.analysis_info[dataset_id]:
+            group_col = ri.analysis_info[dataset_id]['merged_column']
+
+        if group_col and group_col in sample_mapping_df.columns:
+            # Count samples in this group
+            count = (sample_mapping_df[group_col] == group_name).sum()
+            return int(count)
+
+        return 0
+    except Exception as e:
+        logger.warning(f"Error getting sample count for group {group_name} in {dataset_id}: {e}")
+        return 0
+
+
+@log_streamlit_function
+def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -> Optional[Dict[str, Any]]:
+    """Render the combined form for sample group and gene selection."""
+
+    with st.form("expression_combined_form"):
+        st.subheader("Configure Expression Analysis")
+
+        # Sample Group Selection
+        st.markdown("**1. Select Sample Groups**")
+
+        # Get all unique group-dataset combinations
+        group_dataset_combinations = []
+
+        for dataset_id in selected_datasets:
+            if dataset_id in ri.analysis_info:
+                info = ri.analysis_info[dataset_id]
+                accession = info.get("accession", dataset_id)
                 unique_groups = info.get("unique_groups", [])
 
-                dataset_group_mapping[accession] = unique_groups
-                all_groups.update(unique_groups)
+                # Get dataset title
+                dataset_title = ""
+                if hasattr(ri, 'dataset_info') and dataset_id in ri.dataset_info:
+                    title = ri.dataset_info[dataset_id].get('title', '')
+                    if title and title.startswith('Title:'):
+                        title = title[6:].strip()
+                    dataset_title = title
 
-        if all_groups:
-            # Create group data for display
-            group_data = []
-            for group in sorted(all_groups):
-                # Find which datasets contain this group
-                containing_datasets = []
-                for dataset, groups in dataset_group_mapping.items():
-                    if group in groups:
-                        containing_datasets.append(dataset)
+                for group in unique_groups:
+                    sample_count = _get_sample_count_for_group(ri, dataset_id, group)
+                    group_dataset_combinations.append({
+                        "Select": True,  # Default to selected
+                        "Sample Group": group,
+                        "Dataset": accession,
+                        "Title": dataset_title,
+                        "Species": info.get("organism", "Unknown"),
+                        "Samples": sample_count
+                    })
 
-                group_data.append({
-                    "Select": group in st.session_state['selected_groups_expression'],
-                    "Group": group,
-                    "Datasets": ", ".join(containing_datasets),
-                    "Count": len(containing_datasets)
-                })
+        # Check for duplicate group names and make them unique
+        if group_dataset_combinations:
+            # Track group names we've seen
+            seen_groups = {}
+            duplicates_found = []
 
-            df = pd.DataFrame(group_data)
+            for item in group_dataset_combinations:
+                original_group = item["Sample Group"]
+
+                if original_group in seen_groups:
+                    # Duplicate found - make unique by appending dataset
+                    unique_group = f"{original_group} ({item['Dataset']})"
+                    item["Sample Group"] = unique_group
+
+                    # Also update the first occurrence
+                    first_item = seen_groups[original_group]
+                    if first_item["Sample Group"] == original_group:  # Only if not already renamed
+                        first_item["Sample Group"] = f"{original_group} ({first_item['Dataset']})"
+
+                    # Track duplicates for warning
+                    if original_group not in duplicates_found:
+                        duplicates_found.append(original_group)
+
+                    # Update tracking
+                    seen_groups[original_group] = "multiple"
+                else:
+                    seen_groups[original_group] = item
+
+            # Show warning if duplicates were found
+            if duplicates_found:
+                st.warning(f"⚠️ Duplicate group names detected and automatically renamed: {', '.join(duplicates_found)}")
+                st.info("Groups with the same name have been renamed to include their dataset accession for clarity.")
+
+        if group_dataset_combinations:
+            df = pd.DataFrame(group_dataset_combinations)
 
             st.info(f"Available sample groups from {len(selected_datasets)} selected datasets")
 
@@ -195,152 +236,117 @@ def _render_group_selection_form(ri: ResultsIntegrator, selected_datasets: List[
                 column_config={
                     "Select": st.column_config.CheckboxColumn(
                         "",
-                        help="Check to include this sample group in expression plots",
-                        default=False
+                        help="Check to include this sample group",
+                        default=True
                     ),
-                    "Group": st.column_config.TextColumn(
+                    "Sample Group": st.column_config.TextColumn(
                         "Sample Group",
                         help="Sample group name",
-                        width=300
+                        width=160
                     ),
-                    "Datasets": st.column_config.TextColumn(
-                        "Found in Datasets",
-                        help="Datasets containing this group",
-                        width=200
+                    "Dataset": st.column_config.TextColumn(
+                        "Dataset",
+                        help="Dataset accession",
+                        width=90
                     ),
-                    "Count": st.column_config.NumberColumn(
-                        "# Datasets",
-                        help="Number of datasets containing this group",
+                    "Species": st.column_config.TextColumn(
+                        "Species",
+                        help="Species/organism",
                         width=100
+                    ),
+                    "Samples": st.column_config.NumberColumn(
+                        "Samples",
+                        help="Number of samples in this group",
+                        width=70
+                    ),
+                    "Title": st.column_config.TextColumn(
+                        "Title",
+                        help="Dataset title",
+                        width=220
                     )
                 },
-                key="expression_group_selection_table"
+                key="expression_combined_group_table"
             )
-
-            # Quick selection buttons
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                select_all = st.form_submit_button("Select All", type="secondary")
-            with col2:
-                clear_all = st.form_submit_button("Clear All", type="secondary")
-            with col3:
-                apply_selection = st.form_submit_button("Apply Selection", type="primary")
-            with col4:
-                st.write("")  # Spacer
-
-            if select_all:
-                # Select all groups
-                all_group_names = set([row["Group"] for _, row in df.iterrows()])
-                st.session_state['selected_groups_expression'] = all_group_names
-                log_streamlit_user_action(f"Selected all {len(all_group_names)} groups for expression plots")
-                st.rerun()
-
-            elif clear_all:
-                # Clear all selections
-                st.session_state['selected_groups_expression'] = set()
-                log_streamlit_user_action("Cleared all group selections for expression plots")
-                st.rerun()
-
-            elif apply_selection:
-                # Apply current selections
-                selected_groups = set()
-                if not edited_df.empty:
-                    selected_rows = edited_df[edited_df["Select"] == True]
-                    selected_groups = set(selected_rows["Group"].tolist())
-
-                st.session_state['selected_groups_expression'] = selected_groups
-                log_streamlit_user_action(f"Applied {len(selected_groups)} group selections for expression plots")
-                st.rerun()
-
         else:
             st.info("No sample groups found in selected datasets")
-            st.form_submit_button("Apply Selection", disabled=True)
+            edited_df = pd.DataFrame()
 
-    # Return current selections as list
-    return list(st.session_state['selected_groups_expression'])
+        # Gene Selection
+        st.markdown("**2. Enter Genes**")
 
-
-@log_streamlit_function
-def _render_gene_selection_form(ri: ResultsIntegrator) -> List[str]:
-    """Render the custom gene selection form."""
-    st.subheader("2. Enter Custom Genes")
-
-    # Initialize session state
-    if 'custom_genes_expression' not in st.session_state:
-        st.session_state['custom_genes_expression'] = []
-
-    with st.form("expression_gene_selection"):
-        st.markdown("**Enter genes to display in expression plots**")
-        st.info("Expression plots show all available genes without significance filtering.")
-
-        # Custom gene input
         custom_genes_input = st.text_area(
             "Gene List",
             height=150,
             placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
-            help="Enter gene symbols, one per line. All available genes will be shown regardless of significance.",
-            key="expression_custom_genes",
-            value="\n".join(st.session_state['custom_genes_expression'])
+            help="Enter gene symbols, one per line",
+            key="expression_combined_genes"
         )
 
-        # Show preview for genes
-        if custom_genes_input.strip():
-            custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-            if custom_genes_list:
-                st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
-                preview_text = ", ".join(custom_genes_list[:10])
-                if len(custom_genes_list) > 10:
-                    preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
-                st.caption(preview_text)
-
         # Submit button
-        submitted = st.form_submit_button("Apply Gene Selection", type="primary")
+        submitted = st.form_submit_button("Generate Expression Plots", type="primary")
 
         if submitted:
-            # Validate custom genes
-            if not custom_genes_input.strip():
+            # Get selected groups from current form state
+            selected_groups = []
+            if not edited_df.empty:
+                selected_rows = edited_df[edited_df["Select"] == True]
+                # Create unique identifiers for each group-dataset combination
+                for _, row in selected_rows.iterrows():
+                    group_id = f"{row['Sample Group']}_{row['Dataset']}"
+                    selected_groups.append(group_id)
+
+            # Get genes from current form state
+            selected_genes = []
+            if custom_genes_input.strip():
+                selected_genes = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+
+            # Validation
+            if not selected_groups:
+                st.error("Please select at least one sample group")
+                return None
+
+            if not selected_genes:
                 st.error("Please enter at least one gene")
-                return st.session_state['custom_genes_expression']
+                return None
 
-            custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-            if not custom_genes_list:
-                st.error("Please enter valid gene names")
-                return st.session_state['custom_genes_expression']
+            # Show gene validation with detailed checking
+            with st.expander("Gene Validation", expanded=False):
+                st.write(f"**Total genes entered:** {len(selected_genes)}")
 
-            # Update session state
-            st.session_state['custom_genes_expression'] = custom_genes_list
-            log_streamlit_user_action(f"Expression plot genes updated: {len(custom_genes_list)} custom genes")
-            st.rerun()
+                # Check which genes are actually found in the selected datasets
+                available_genes = set()
+                for dataset_id in selected_datasets:
+                    if dataset_id in ri.cpm_data:
+                        cpm_df = ri.cpm_data[dataset_id]
+                        if 'Gene' in cpm_df.columns:
+                            available_genes.update(cpm_df['Gene'].tolist())
 
-    # Show current gene validation
-    if st.session_state['custom_genes_expression']:
-        with st.expander("Gene Validation", expanded=False):
-            genes = st.session_state['custom_genes_expression']
-            st.write(f"**Total genes:** {len(genes)}")
-            st.info("All entered genes will be displayed if found in the selected datasets, regardless of significance levels.")
+                found_genes = [gene for gene in selected_genes if gene in available_genes]
+                missing_genes = [gene for gene in selected_genes if gene not in available_genes]
 
-    return st.session_state['custom_genes_expression']
+                if missing_genes:
+                    st.warning(f"**{len(missing_genes)} genes not found in ANY selected datasets:**")
+                    if len(missing_genes) <= 10:
+                        st.write(", ".join(missing_genes))
+                    else:
+                        st.write(f"{', '.join(missing_genes[:10])}, ... (+{len(missing_genes)-10} more)")
+
+                if found_genes:
+                    st.success(f"**{len(found_genes)} genes found and will be displayed**")
+                else:
+                    st.error("No genes found in selected datasets!")
+                    return None
+
+            log_streamlit_user_action(f"Expression plots: {len(selected_groups)} groups, {len(selected_genes)} genes")
+
+            return {
+                'groups': selected_groups,
+                'genes': selected_genes
+            }
+
+    return None
 
 
-@log_streamlit_function
-def _render_top_pagination_controls(current_page: int, total_pages: int, prefix: str = "expression"):
-    """Render pagination controls at the top of the plots for convenience."""
-    cols = st.columns([2, 1, 1, 1, 2])
-
-    with cols[1]:
-        prev_disabled = current_page <= 1
-        if st.button("Previous", disabled=prev_disabled, key=f"{prefix}_prev"):
-            st.session_state.page_num = max(1, current_page - 1)
-            safe_rerun()
-
-    with cols[2]:
-        st.markdown(f"**Page {current_page}/{total_pages}**")
-
-    with cols[3]:
-        next_disabled = current_page >= total_pages
-        if st.button("Next", disabled=next_disabled, key=f"{prefix}_next"):
-            st.session_state.page_num = min(total_pages, current_page + 1)
-            safe_rerun()
 
 
 @st.fragment
@@ -349,9 +355,7 @@ def _draw_expression_plots(
     ri: ResultsIntegrator,
     gene_selection: List[str],
     dataset_selection: List[str],
-    selected_groups: List[str],
-    page_num: int,
-    total_pgs: int
+    selected_groups: List[str]
 ):
     """
     Create and display the expression plots using fragment isolation.
@@ -362,22 +366,28 @@ def _draw_expression_plots(
 
     with st.spinner("Generating expression plots..."):
         try:
-            # Calculate gene slice for the current page (20 genes per page for 2 plots per row)
-            genes_per_page = 20
-            start_idx = (page_num - 1) * genes_per_page
-            end_idx = min(start_idx + genes_per_page, len(gene_selection))
-            current_genes = gene_selection[start_idx:end_idx]
+            # Use all genes at once (no pagination)
+            current_genes = gene_selection
 
             # Fixed parameters for expression plots (2 plots per row)
-            hide_x_labels = True
+            hide_x_labels = False  # Show x and y axis titles on each facet
             facet_font_size = 10
             lock_y_axis = False
             show_raw_points = True
-            legend_position = "Bottom"
+            legend_position = "None"  # No legend
             show_grid_lines = True
             grid_opacity = 0.3
 
-            # Use the passed selected_groups parameter
+            # Convert group IDs back to actual group names for filtering
+            # selected_groups contains items like "GroupName_DatasetAccession"
+            actual_groups = []
+            for group_id in selected_groups:
+                # Extract just the group name part (before the underscore)
+                if '_' in group_id:
+                    group_name = group_id.rsplit('_', 1)[0]
+                    actual_groups.append(group_name)
+                else:
+                    actual_groups.append(group_id)
 
             # Use cached figure creation for better performance
             fig2 = cached_figure_creation(
@@ -388,51 +398,30 @@ def _draw_expression_plots(
                 dataset_selection,
                 None,  # output_file
                 hide_x_labels,
-                page_num,
+                1,  # page_num - always 1 since no pagination
                 facet_font_size,
                 lock_y_axis,
                 show_raw_points,
                 legend_position,
                 show_grid_lines,
                 grid_opacity,
-                selected_groups,  # Pass selected groups for filtering
-                2  # plots_per_row - set to 2 for expression plots
+                actual_groups,  # Pass actual group names for filtering
+                2,  # plots_per_row - set to 2 for expression plots
+                False  # show_box - remove boxplot from violin
             )
 
             if fig2:
                 log_streamlit_event("Expression plots generated successfully")
 
-                # Display information about the plots
-                st.success(f"**Expression plots for {len(current_genes)} genes** - Page {page_num} of {total_pgs}")
+                # Add shared y-axis title
+                fig2.update_layout(
+                    yaxis_title="log₂CPM",
+                    showlegend=False  # Remove legend
+                )
 
                 # Display the plot
                 st.plotly_chart(fig2, use_container_width=True)
 
-                # Add informational notes
-                with st.expander("💡 About Expression Plots", expanded=False):
-                    st.markdown("""
-                    **How to interpret these plots:**
-                    - Each panel shows one gene's expression across samples
-                    - Samples are grouped by experimental conditions (sample groups)
-                    - Violin plots show the distribution of expression values
-                    - Points represent individual samples
-                    - Values are in log₂CPM (counts per million, log-transformed)
-
-                    **Sample grouping:**
-                    - Groups are determined from the experimental design metadata
-                    - Each group represents a different experimental condition
-                    - Groups are shared across datasets when they have the same name
-
-                    **Layout:**
-                    - **2 plots per row** for optimal viewing
-                    - Large gene sets are automatically split into pages
-                    - Use pagination controls above to navigate between pages
-
-                    **Data filtering:**
-                    - **No significance filtering** - all genes are shown if present in data
-                    - Unlike heatmaps, expression plots show raw expression levels
-                    - Missing genes indicate they were not found in the selected datasets
-                    """)
             else:
                 log_streamlit_event("Failed to generate expression plots")
                 st.error("Could not generate expression plots. Please check your selections.")
@@ -443,13 +432,14 @@ def _draw_expression_plots(
                     **Common issues:**
                     - Selected genes not found in the datasets
                     - Sample grouping information missing
+                    - No samples matching selected groups
                     - Dataset compatibility issues
 
                     **Solutions:**
                     - Try selecting different genes or datasets
                     - Check that your datasets have completed analysis
                     - Verify that expression data is available
-                    - Ensure sample groups are properly defined in the metadata
+                    - Ensure sample groups exist in selected datasets
                     """)
 
         except Exception as e:
@@ -467,6 +457,6 @@ def _display_expression_plot_error_details(error: Exception):
         **Common issues:**
         - Selected genes not found in the datasets
         - Sample grouping information missing from analysis metadata
+        - No samples found for selected groups
         - Dataset compatibility issues across different analyses
-        - Expression data not available for selected genes
         """)

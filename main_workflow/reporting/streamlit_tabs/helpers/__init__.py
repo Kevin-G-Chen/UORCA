@@ -188,7 +188,26 @@ def cached_figure_creation(
             return ri.create_lfc_heatmap(*args, **kwargs)
         elif func_name == "create_expression_plots":
             # Map positional arguments to correct parameters for create_expression_plots
-            if len(args) >= 14:
+            if len(args) >= 15:
+                genes, plot_type, analyses, output_file, hide_x_labels, page_number, facet_font_size, lock_y_axis, show_raw_points, legend_position, show_grid_lines, grid_opacity, selected_groups, plots_per_row, show_box = args[:15]
+                return ri.create_expression_plots(
+                    genes=genes,
+                    plot_type=plot_type,
+                    analyses=analyses,
+                    output_file=output_file,
+                    hide_x_labels=hide_x_labels,
+                    page_number=page_number,
+                    facet_font_size=facet_font_size,
+                    lock_y_axis=lock_y_axis,
+                    show_raw_points=show_raw_points,
+                    legend_position=legend_position,
+                    show_grid_lines=show_grid_lines,
+                    grid_opacity=grid_opacity,
+                    selected_groups=selected_groups,
+                    plots_per_row=plots_per_row,
+                    show_box=show_box
+                )
+            elif len(args) >= 14:
                 genes, plot_type, analyses, output_file, hide_x_labels, page_number, facet_font_size, lock_y_axis, show_raw_points, legend_position, show_grid_lines, grid_opacity, selected_groups, plots_per_row = args[:14]
                 return ri.create_expression_plots(
                     genes=genes,
