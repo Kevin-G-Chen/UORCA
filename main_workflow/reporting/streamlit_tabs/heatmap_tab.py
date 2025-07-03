@@ -2,7 +2,7 @@
 Heatmap Tab for UORCA Explorer.
 
 This tab displays interactive heatmaps showing log2 fold changes for selected genes across contrasts.
-Includes contrast selection and gene selection forms at the top.
+Features combined form for contrast and gene selection with proper select/clear all functionality.
 """
 
 import logging
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 @log_streamlit_tab("Heatmap")
 def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kwargs):
     """
-    Render the heatmap tab with contrast and gene selection forms.
+    Render the heatmap tab with combined contrast and gene selection form.
 
     Args:
         ri: ResultsIntegrator instance
@@ -61,104 +61,159 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
         """)
         return
 
-    # Render contrast selection form
-    selected_contrasts = _render_contrast_selection_form(ri, selected_datasets)
-
-    # Render gene selection form
-    gene_params = _render_gene_selection_form(ri, ri.results_dir)
-
-    # Auto-select genes if we have contrasts and gene parameters
-    gene_sel = []
-    if selected_contrasts and gene_params:
-        gene_sel = _auto_select_genes(ri, ri.results_dir, selected_contrasts, gene_params)
-
-    # Display current selections summary
-    if selected_contrasts and gene_sel:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Datasets", len(selected_datasets))
-        with col2:
-            st.metric("Contrasts", len(selected_contrasts))
-        with col3:
-            st.metric("Genes", len(gene_sel))
-
-        # Display gene selection method information
-        if gene_params.get('gene_selection_method') == "Custom":
-            custom_genes_count = len(gene_params.get('custom_genes', []))
-            success_rate = (len(gene_sel) / custom_genes_count * 100) if custom_genes_count > 0 else 0
-            if success_rate == 100:
-                st.success(f"🎯 **Custom Gene Selection**: All {len(gene_sel)} custom genes found in datasets")
-            else:
-                st.info(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} of {custom_genes_count} custom genes ({success_rate:.0f}% found in datasets)")
-        else:
-            st.info(f"📊 **Frequent DEGs**: Displaying {len(gene_sel)} most frequently differentially expressed genes")
-
-        # Group contrasts by organism and render heatmaps
-        organism_groups = group_contrasts_by_organism(ri, selected_contrasts)
-
-        if len(organism_groups) == 1:
-            # Single organism - no sub-tabs needed
-            organism = list(organism_groups.keys())[0]
-            organism_contrasts = organism_groups[organism]
-            organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
-
-            _draw_heatmap(
-                ri,
-                organism_genes,
-                organism_contrasts,
-                gene_params.get('pvalue_thresh', 0.05),
-                gene_params.get('lfc_thresh', 1.0),
-                use_dynamic_filtering=True,
-                hide_empty_rows_cols=True,
-                font_size=12,
-                show_grid_lines=True,
-                grid_opacity=0.3
-            )
-        else:
-            # Multiple organisms - create sub-tabs
-            organism_names = list(organism_groups.keys())
-            tab_names = [get_organism_display_name(org) for org in organism_names]
-            tabs = st.tabs(tab_names)
-
-            for i, organism in enumerate(organism_names):
-                with tabs[i]:
-                    organism_contrasts = organism_groups[organism]
-                    organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
-
-                    if organism_genes:
-                        _draw_heatmap(
-                            ri,
-                            organism_genes,
-                            organism_contrasts,
-                            gene_params.get('pvalue_thresh', 0.05),
-                            gene_params.get('lfc_thresh', 1.0),
-                            use_dynamic_filtering=True,
-                            hide_empty_rows_cols=True,
-                            font_size=12,
-                            show_grid_lines=True,
-                            grid_opacity=0.3
-                        )
-                    else:
-                        st.warning(f"No genes found for {get_organism_display_name(organism)} with current parameters.")
-                        st.info("Try adjusting the significance thresholds in the gene selection form or selecting more datasets for this species.")
-
-    elif selected_contrasts and not gene_sel:
-        st.warning("No genes selected. Please configure gene selection parameters above.")
-    elif not selected_contrasts:
-        st.info("Please select contrasts using the form above.")
-
-
-@log_streamlit_function
-def _render_contrast_selection_form(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[Tuple[str, str]]:
-    """Render the contrast selection form."""
-    st.subheader("1. Select Contrasts")
-
-    # Initialize session state
+    # Initialize session state for selected contrasts
     if 'selected_contrasts_heatmap' not in st.session_state:
         st.session_state['selected_contrasts_heatmap'] = set()
 
-    with st.form("heatmap_contrast_selection"):
+    # Check if datasets have changed and auto-select all contrasts by default
+    current_datasets = set(selected_datasets)
+    if 'previous_datasets_heatmap' not in st.session_state:
+        st.session_state['previous_datasets_heatmap'] = set()
+
+    if current_datasets != st.session_state['previous_datasets_heatmap']:
+        # Datasets changed - select all contrasts by default
         contrast_data = _create_contrast_table_data_filtered(ri, selected_datasets)
+        all_contrasts = set()
+        for item in contrast_data:
+            contrast_tuple = (item['Accession'], item['Contrast'])
+            all_contrasts.add(contrast_tuple)
+        st.session_state['selected_contrasts_heatmap'] = all_contrasts
+        st.session_state['previous_datasets_heatmap'] = current_datasets
+
+    # Quick selection buttons (outside form)
+    st.subheader("1. Select Contrasts")
+    contrast_data = _create_contrast_table_data_filtered(ri, selected_datasets)
+
+    if contrast_data:
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Select All Contrasts", key="select_all_contrasts_heatmap"):
+                # Select all contrasts
+                all_contrasts = set()
+                for item in contrast_data:
+                    contrast_tuple = (item['Accession'], item['Contrast'])
+                    all_contrasts.add(contrast_tuple)
+                st.session_state['selected_contrasts_heatmap'] = all_contrasts
+                log_streamlit_user_action(f"Selected all {len(all_contrasts)} contrasts for heatmap")
+                st.rerun()
+        with col2:
+            if st.button("Clear All Contrasts", key="clear_all_contrasts_heatmap"):
+                # Clear all selections
+                st.session_state['selected_contrasts_heatmap'] = set()
+                log_streamlit_user_action("Cleared all contrast selections for heatmap")
+                st.rerun()
+
+    # Render combined form
+    form_results = _render_combined_heatmap_form(ri, selected_datasets, contrast_data)
+
+    if form_results:
+        selected_contrasts = form_results['contrasts']
+        gene_params = form_results['gene_params']
+
+        # Convert accession-based contrasts to analysis_id-based contrasts
+        analysis_contrasts = []
+        if selected_contrasts:
+            for accession, contrast_id in selected_contrasts:
+                # Find the analysis_id for this accession
+                analysis_id = None
+                for aid in ri.analysis_info:
+                    if ri.analysis_info[aid].get('accession') == accession:
+                        analysis_id = aid
+                        break
+
+                if analysis_id:
+                    analysis_contrasts.append((analysis_id, contrast_id))
+
+        # Auto-select genes if we have contrasts and gene parameters
+        gene_sel = []
+        if analysis_contrasts and gene_params:
+            gene_sel = _auto_select_genes(ri, ri.results_dir, analysis_contrasts, gene_params)
+
+        # Display current selections summary
+        if analysis_contrasts and gene_sel:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Datasets", len(selected_datasets))
+            with col2:
+                st.metric("Contrasts", len(analysis_contrasts))
+            with col3:
+                st.metric("Genes", len(gene_sel))
+
+            # Display gene selection method information
+            if gene_params.get('gene_selection_method') == "Custom":
+                custom_genes_count = len(gene_params.get('custom_genes', []))
+                success_rate = (len(gene_sel) / custom_genes_count * 100) if custom_genes_count > 0 else 0
+                if success_rate == 100:
+                    st.success(f"🎯 **Custom Gene Selection**: All {len(gene_sel)} custom genes found in datasets")
+                else:
+                    st.info(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} of {custom_genes_count} custom genes ({success_rate:.0f}% found in datasets)")
+            else:
+                st.info(f"📊 **Frequent DEGs**: Displaying {len(gene_sel)} most frequently differentially expressed genes")
+
+            # Group contrasts by organism and render heatmaps
+            organism_groups = group_contrasts_by_organism(ri, analysis_contrasts)
+
+            if len(organism_groups) == 1:
+                # Single organism - no sub-tabs needed
+                organism = list(organism_groups.keys())[0]
+                organism_contrasts = organism_groups[organism]
+                organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
+
+                _draw_heatmap(
+                    ri,
+                    organism_genes,
+                    organism_contrasts,
+                    gene_params.get('pvalue_thresh', 0.05),
+                    gene_params.get('lfc_thresh', 1.0),
+                    use_dynamic_filtering=True,
+                    hide_empty_rows_cols=True,
+                    font_size=12,
+                    show_grid_lines=True,
+                    grid_opacity=0.3
+                )
+            else:
+                # Multiple organisms - create sub-tabs
+                organism_names = list(organism_groups.keys())
+                tab_names = [get_organism_display_name(org) for org in organism_names]
+                tabs = st.tabs(tab_names)
+
+                for i, organism in enumerate(organism_names):
+                    with tabs[i]:
+                        organism_contrasts = organism_groups[organism]
+                        organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
+
+                        if organism_genes:
+                            _draw_heatmap(
+                                ri,
+                                organism_genes,
+                                organism_contrasts,
+                                gene_params.get('pvalue_thresh', 0.05),
+                                gene_params.get('lfc_thresh', 1.0),
+                                use_dynamic_filtering=True,
+                                hide_empty_rows_cols=True,
+                                font_size=12,
+                                show_grid_lines=True,
+                                grid_opacity=0.3
+                            )
+                        else:
+                            st.warning(f"No genes found for {get_organism_display_name(organism)} with current parameters.")
+                            st.info("Try adjusting the significance thresholds in the gene selection form or selecting more datasets for this species.")
+
+        elif analysis_contrasts and not gene_sel:
+            st.warning("No genes selected. Please configure gene selection parameters above.")
+        elif not analysis_contrasts:
+            st.info("Please select contrasts using the form above.")
+
+
+@log_streamlit_function
+def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List[str], contrast_data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Render the combined form for contrast and gene selection."""
+
+    with st.form("heatmap_combined_form"):
+        st.subheader("Analysis Configuration")
+
+        # Contrast Selection Section
+        st.markdown("**Contrasts**")
 
         if contrast_data:
             df = pd.DataFrame(contrast_data)
@@ -196,109 +251,34 @@ def _render_contrast_selection_form(ri: ResultsIntegrator, selected_datasets: Li
                         width=400
                     )
                 },
-                key="heatmap_contrast_selection_table"
+                key="heatmap_combined_contrast_table"
             )
-
-            # Quick selection buttons
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                select_all = st.form_submit_button("Select All", type="secondary")
-            with col2:
-                clear_all = st.form_submit_button("Clear All", type="secondary")
-            with col3:
-                apply_selection = st.form_submit_button("Apply Selection", type="primary")
-            with col4:
-                st.write("")  # Spacer
-
-            if select_all:
-                # Select all contrasts
-                all_contrasts = set([
-                    (row["Accession"], row["Contrast"])
-                    for _, row in df.iterrows()
-                ])
-                st.session_state['selected_contrasts_heatmap'] = all_contrasts
-                log_streamlit_user_action(f"Selected all {len(all_contrasts)} contrasts for heatmap")
-                st.rerun()
-
-            elif clear_all:
-                # Clear all selections
-                st.session_state['selected_contrasts_heatmap'] = set()
-                log_streamlit_user_action("Cleared all contrast selections for heatmap")
-                st.rerun()
-
-            elif apply_selection:
-                # Apply current selections
-                selected_contrasts = set()
-                if not edited_df.empty:
-                    selected_rows = edited_df[edited_df["Select"] == True]
-                    selected_contrasts = set([
-                        (row["Accession"], row["Contrast"])
-                        for _, row in selected_rows.iterrows()
-                    ])
-
-                st.session_state['selected_contrasts_heatmap'] = selected_contrasts
-                log_streamlit_user_action(f"Applied {len(selected_contrasts)} contrast selections for heatmap")
-                st.rerun()
-
         else:
+            edited_df = pd.DataFrame()
             st.info("No contrasts available for selected datasets")
-            st.form_submit_button("Apply Selection", disabled=True)
 
-    # Return current selections as list of tuples
-    return list(st.session_state['selected_contrasts_heatmap'])
+        # Gene Selection Section
+        st.markdown("---")
+        st.markdown("**Gene Selection**")
 
-
-@log_streamlit_function
-def _render_gene_selection_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Dict[str, Any]]:
-    """Render the gene selection form."""
-    st.subheader("2. Configure Gene Selection")
-
-    with st.form("heatmap_gene_selection"):
         # Gene selection method
         gene_selection_method = st.radio(
             "Choose gene selection method",
             options=["Frequent DEGs", "Custom"],
-            key="heatmap_gene_selection_method",
+            key="heatmap_combined_gene_method",
             help="**Frequent DEGs**: Automatically finds genes that are consistently differentially expressed across multiple contrasts. **Custom**: Use your own gene list for targeted analysis.",
             horizontal=True
         )
 
-        st.subheader("Significance Thresholds")
-        col1, col2 = st.columns(2)
-        with col1:
-            lfc_thresh = st.text_input(
-                "Log2FC Threshold",
-                value="1.0",
-                help="Absolute log2 fold change threshold for significance",
-                key="heatmap_lfc_threshold"
-            )
-        with col2:
-            pvalue_thresh = st.text_input(
-                "P-value Threshold",
-                value="0.05",
-                help="Adjusted p-value threshold for significance",
-                key="heatmap_pvalue_threshold"
-            )
-
-        # Gene count (for Frequent DEGs)
-        if gene_selection_method == "Frequent DEGs":
-            gene_count_input = st.text_input(
-                "Number of genes to display",
-                value="50",
-                help="Number of top frequently differentially expressed genes to include",
-                key="heatmap_gene_count"
-            )
-        else:
-            gene_count_input = "50"  # Default, not used for custom
-
-        # Custom gene input
+        # Custom gene input (show immediately when Custom is selected)
+        custom_genes_input = ""
         if gene_selection_method == "Custom":
             custom_genes_input = st.text_area(
                 "Custom Gene List",
                 height=150,
                 placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
                 help="Enter gene symbols, one per line. Genes will be filtered by significance thresholds.",
-                key="heatmap_custom_genes"
+                key="heatmap_combined_custom_genes"
             )
 
             # Show preview for custom genes
@@ -310,10 +290,37 @@ def _render_gene_selection_form(ri: ResultsIntegrator, results_dir: str) -> Opti
                     if len(custom_genes_list) > 10:
                         preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
                     st.caption(preview_text)
-        else:
-            custom_genes_input = ""
 
-        # Validate parameters
+        # Gene count (for Frequent DEGs)
+        if gene_selection_method == "Frequent DEGs":
+            gene_count_input = st.text_input(
+                "Number of genes to display",
+                value="50",
+                help="Number of top frequently differentially expressed genes to include",
+                key="heatmap_combined_gene_count"
+            )
+        else:
+            gene_count_input = "50"  # Default, not used for custom
+
+        # Significance Thresholds
+        st.markdown("**Significance Thresholds**")
+        col1, col2 = st.columns(2)
+        with col1:
+            lfc_thresh = st.text_input(
+                "Log2FC Threshold",
+                value="1.0",
+                help="Absolute log2 fold change threshold for significance",
+                key="heatmap_combined_lfc_threshold"
+            )
+        with col2:
+            pvalue_thresh = st.text_input(
+                "P-value Threshold",
+                value="0.05",
+                help="Adjusted p-value threshold for significance",
+                key="heatmap_combined_pvalue_threshold"
+            )
+
+        # Validation
         validation_error = False
         try:
             lfc_val = float(lfc_thresh)
@@ -348,21 +355,77 @@ def _render_gene_selection_form(ri: ResultsIntegrator, results_dir: str) -> Opti
                     st.error("Please enter valid gene names")
                     validation_error = True
 
-        # Submit button
-        submitted = st.form_submit_button("Apply Gene Selection", type="primary")
+        # Single submit button
+        submitted = st.form_submit_button("Generate Heatmap Analysis", type="primary")
 
         if submitted and not validation_error:
+            # Get selected contrasts from current form state
+            selected_contrasts = []
+            if not edited_df.empty:
+                selected_rows = edited_df[edited_df["Select"] == True]
+                selected_contrasts = [
+                    (row["Accession"], row["Contrast"])
+                    for _, row in selected_rows.iterrows()
+                ]
+
+            # Update session state with current selections
+            st.session_state['selected_contrasts_heatmap'] = set(selected_contrasts)
+
+            # Validation
+            if not selected_contrasts:
+                st.error("Please select at least one contrast")
+                return None
+
+            # Gene validation with detailed checking
+            if gene_selection_method == "Custom":
+                with st.expander("Gene Validation", expanded=False):
+                    st.write(f"**Total genes entered:** {len(custom_genes_list)}")
+
+                    # Check which genes are actually found in the selected contrasts
+                    available_genes = set()
+                    for accession, contrast_id in selected_contrasts:
+                        # Find the analysis_id for this accession
+                        analysis_id = None
+                        for aid in ri.analysis_info:
+                            if ri.analysis_info[aid].get('accession') == accession:
+                                analysis_id = aid
+                                break
+
+                        if analysis_id and analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
+                            deg_df = ri.deg_data[analysis_id][contrast_id]
+                            if 'Gene' in deg_df.columns:
+                                available_genes.update(deg_df['Gene'].tolist())
+
+                    found_genes = [gene for gene in custom_genes_list if gene in available_genes]
+                    missing_genes = [gene for gene in custom_genes_list if gene not in available_genes]
+
+                    if missing_genes:
+                        st.warning(f"**{len(missing_genes)} genes not found in selected contrasts:**")
+                        if len(missing_genes) <= 10:
+                            st.write(", ".join(missing_genes))
+                        else:
+                            st.write(f"{', '.join(missing_genes[:10])}, ... (+{len(missing_genes)-10} more)")
+
+                    if found_genes:
+                        st.success(f"**{len(found_genes)} genes found and will be displayed**")
+                    else:
+                        st.error("No genes found in selected contrasts!")
+                        return None
+
             if gene_selection_method == "Frequent DEGs":
-                log_streamlit_user_action(f"Heatmap gene parameters: LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
+                log_streamlit_user_action(f"Heatmap analysis: {len(selected_contrasts)} contrasts, LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
             else:
-                log_streamlit_user_action(f"Heatmap gene parameters: LFC={lfc_val}, P={pval_val}, method=Custom, custom_genes={len(custom_genes_list)}")
+                log_streamlit_user_action(f"Heatmap analysis: {len(selected_contrasts)} contrasts, LFC={lfc_val}, P={pval_val}, method=Custom, custom_genes={len(custom_genes_list)}")
 
             return {
-                'lfc_thresh': lfc_val,
-                'pvalue_thresh': pval_val,
-                'gene_count': gene_count,
-                'gene_selection_method': gene_selection_method,
-                'custom_genes': custom_genes_list
+                'contrasts': selected_contrasts,
+                'gene_params': {
+                    'lfc_thresh': lfc_val,
+                    'pvalue_thresh': pval_val,
+                    'gene_count': gene_count,
+                    'gene_selection_method': gene_selection_method,
+                    'custom_genes': custom_genes_list
+                }
             }
 
     return None
@@ -399,14 +462,14 @@ def _auto_select_genes(
     selected_contrasts: List[Tuple[str, str]],
     gene_params: Dict[str, Any]
 ) -> List[str]:
-    """Select genes based on gene parameters and selected contrasts."""
+    """Select genes based on gene parameters and selected contrasts (analysis_id format)."""
     if not selected_contrasts:
         return []
 
     gene_selection_method = gene_params.get('gene_selection_method', 'Frequent DEGs')
 
     try:
-        # Group contrasts by organism
+        # Group contrasts by organism (selected_contrasts should already be in analysis_id format)
         organism_groups = group_contrasts_by_organism(ri, selected_contrasts)
 
         if gene_selection_method == 'Custom':
