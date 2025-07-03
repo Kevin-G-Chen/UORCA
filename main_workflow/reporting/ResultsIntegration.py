@@ -916,7 +916,8 @@ class ResultsIntegrator:
                               show_grid_lines: bool = True,
                               grid_opacity: float = 0.3,
                               selected_groups: List[str] = None,
-                              plots_per_row: int = 2) -> go.Figure:
+                              plots_per_row: int = 2,
+                              show_box: bool = True) -> go.Figure:
         """
         Create interactive expression plots for selected genes across samples.
 
@@ -946,6 +947,8 @@ class ResultsIntegrator:
             List of sample groups to include. If None, all groups are used.
         plots_per_row : int, optional
             Number of plots per row in the layout (default: 2)
+        show_box : bool, optional
+            Whether to show boxplot within violin plot (default: True)
 
         Returns:
         --------
@@ -1162,12 +1165,13 @@ class ResultsIntegrator:
             facet_col='Gene',
             facet_col_wrap=facet_col_wrap,
             custom_data=['HoverText'],
-            box=True,
+            box=show_box,
             points="all",
             title=f"Gene Expression Across Samples (Page {page_number} of {len(gene_pages)})",
             labels={'LogExpression': y_axis_title, 'Group': 'Group', 'DatasetDisplay': 'Dataset'},
             facet_row_spacing=facet_row_spacing,
-            facet_col_spacing=facet_col_spacing
+            facet_col_spacing=facet_col_spacing,
+            violinmode = "overlay"
         )
 
         # Layout adjustments optimized for readability (2 plots per row)
@@ -1176,7 +1180,7 @@ class ResultsIntegrator:
             width=480 * facet_col_wrap,  # 480px per column (1.5x wider than original 320px)
             legend_title_text="Dataset",
             margin=dict(l=40, r=20, t=80, b=40),
-            font_family="Inter, sans-serif"
+            font_family="Inter, sans-serif",
         )
 
         # Configure legend position
@@ -1189,20 +1193,32 @@ class ResultsIntegrator:
         else:  # Default to bottom
             fig.update_layout(legend=dict(orientation="h", y=-0.35, x=0.5, xanchor="center", yanchor="top"))
 
-        # Improve axis appearance
-        fig.update_xaxes(categoryorder="category ascending")
+        # Improve axis appearance and hide x-axis labels/title completely
+        fig.update_xaxes(categoryorder="category ascending", showticklabels=False, title_text="")
         fig.update_layout(xaxis_title="")
 
         # Configure grid lines and ensure y-axis ticks are shown on each plot
-        # Remove y-axis titles from all plots as requested
         if show_grid_lines:
             fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor=f"rgba(200,200,200,{grid_opacity})", showticklabels=True, title_text="")
         else:
             fig.update_yaxes(showgrid=False, showticklabels=True, title_text="")
 
+        # Add y-axis labels to the left-most facet of each row
+        for r in range(1, n_rows + 1):
+            fig.update_yaxes(
+                title_text=y_axis_title,
+                row=r,
+                col=1,
+                title_standoff=6
+            )
+
         # Configure points visibility and transparency
         if show_raw_points:
-            fig.update_traces(marker=dict(size=4, opacity=0.5), jitter=0.3)
+            fig.update_traces(marker=dict(size=4, opacity=0.5), jitter=0.3,
+                              selector=dict(type='violin'))
+            fig.update_traces(side = "both",
+                pointpos = 0,
+                selector = dict(type='violin'))
         else:
             fig.update_traces(marker=dict(size=0), jitter=0.3)
 
@@ -1211,10 +1227,10 @@ class ResultsIntegrator:
             hovertemplate="%{customdata[0]}<extra></extra>"
         )
 
-        # Update facet formatting (remove "Gene=" prefix and adjust font size)
+        # Update facet formatting (remove "Gene=" prefix and make bold and larger)
         fig.for_each_annotation(lambda a: a.update(
-            text=a.text.split("=")[1],
-            font=dict(size=int(facet_font_size * 1.5), color="#333", family="Inter, sans-serif")
+            text=f"{a.text.split('=')[1]}",
+            font=dict(size=int(facet_font_size * 2), color="#333", family="Inter, sans-serif")
         ))
 
         # Configure y-axis scaling - each plot gets its own scale unless lock_y_axis is True
@@ -1228,9 +1244,9 @@ class ResultsIntegrator:
             # Each facet gets its own y-axis scale (default behavior we want to ensure)
             fig.update_yaxes(matches=None)
 
-        # Hide x-axis labels if requested
-        if hide_x_labels:
-            fig.update_xaxes(showticklabels=False)
+        # X-axis labels and titles are already hidden above
+        # This section is no longer needed as we always hide x-axis labels
+        pass
 
         # Add note about number of genes
         if len(genes) < len(gene_list):
