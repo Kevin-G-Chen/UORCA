@@ -1072,8 +1072,19 @@ class ResultsIntegrator:
             # Add analysis ID
             melted_df['Analysis'] = analysis_id
 
-            # Create a more descriptive sample label for hover info
-            melted_df['SampleLabel'] = melted_df['Analysis'] + ":" + melted_df['Sample']
+            # Create dataset display name with title for hover info
+            accession = self.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
+            dataset_title = ""
+            if hasattr(self, 'dataset_info') and analysis_id in self.dataset_info:
+                title = self.dataset_info[analysis_id].get('title', '')
+                if title and title.startswith('Title:'):
+                    title = title[6:].strip()
+                dataset_title = title
+
+            if dataset_title:
+                melted_df['DatasetDisplay'] = f"{accession} - {dataset_title}"
+            else:
+                melted_df['DatasetDisplay'] = accession
 
             # Map samples to groups if available
             if sample_to_group:
@@ -1083,6 +1094,13 @@ class ResultsIntegrator:
             else:
                 # Use analysis ID as group if no mapping available
                 melted_df['Group'] = analysis_id
+
+            # Create custom hover text with all the information we want (after Group is assigned)
+            melted_df['HoverText'] = (
+                "<b>Dataset:</b> " + melted_df['DatasetDisplay'] + "<br>" +
+                "<b>Group:</b> " + melted_df['Group'].astype(str) + "<br>" +
+                "<b>Expression:</b> " + melted_df['Expression'].round(2).astype(str)
+            )
 
             # Append to all data
             all_long_data.append(melted_df)
@@ -1112,41 +1130,37 @@ class ResultsIntegrator:
         if plot_df['Expression'].min() < 0 or (plot_df['Expression'].min() >= 0 and plot_df['Expression'].max() <= 30):
             # Data appears to be already log-transformed
             plot_df['LogExpression'] = plot_df['Expression']
-            y_axis_title = "Log2(CPM)"
+            y_axis_title = "Log<sub>2</sub>(CPM)"
         else:
             # Apply log2 transformation (after adding 1 to avoid log(0))
             plot_df['LogExpression'] = np.log2(plot_df['Expression'] + 1)
-            y_axis_title = "Log2(CPM+1)"
+            y_axis_title = "Log<sub>2</sub>(CPM+1)"
 
         # Use simple consistent spacing values that work well across different panel counts
         facet_row_spacing = 0.03
         facet_col_spacing = 0.03
-
-        # Add sample label for hover info
-        if 'SampleLabel' not in plot_df.columns:
-            plot_df['SampleLabel'] = plot_df['Analysis'] + ":" + plot_df['Sample']
 
         # Create violin plot using Plotly Express with adjusted spacing
         fig = px.violin(
             plot_df,
             x='Group',
             y='LogExpression',
-            color='Analysis',
+            color='DatasetDisplay',
             facet_col='Gene',
             facet_col_wrap=facet_col_wrap,
-            hover_data=['SampleLabel', 'Group'],
+            custom_data=['HoverText'],
             box=True,
             points="all",
             title=f"Gene Expression Across Samples (Page {page_number} of {len(gene_pages)})",
-            labels={'LogExpression': y_axis_title, 'Group': 'Group', 'Analysis': 'Dataset'},
+            labels={'LogExpression': y_axis_title, 'Group': 'Group', 'DatasetDisplay': 'Dataset'},
             facet_row_spacing=facet_row_spacing,
             facet_col_spacing=facet_col_spacing
         )
 
         # Layout adjustments optimized for readability
         fig.update_layout(
-            height=350 * n_rows,  # 350px per row for more vertical space
-            width=320 * facet_col_wrap,  # 320px per column
+            height=525 * n_rows,  # 525px per row (1.5x taller than original 350px)
+            width=480 * facet_col_wrap,  # 480px per column (1.5x wider than original 320px)
             legend_title_text="Dataset",
             margin=dict(l=40, r=20, t=80, b=40),
             font_family="Inter, sans-serif"
@@ -1166,11 +1180,12 @@ class ResultsIntegrator:
         fig.update_xaxes(categoryorder="category ascending")
         fig.update_layout(xaxis_title="")
 
-        # Configure grid lines
+        # Configure grid lines and ensure y-axis ticks are shown on each plot
+        # Remove y-axis titles from all plots as requested
         if show_grid_lines:
-            fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor=f"rgba(200,200,200,{grid_opacity})")
+            fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor=f"rgba(200,200,200,{grid_opacity})", showticklabels=True, title_text="")
         else:
-            fig.update_yaxes(showgrid=False)
+            fig.update_yaxes(showgrid=False, showticklabels=True, title_text="")
 
         # Configure points visibility and transparency
         if show_raw_points:
@@ -1178,19 +1193,27 @@ class ResultsIntegrator:
         else:
             fig.update_traces(marker=dict(size=0), jitter=0.3)
 
+        # Use the custom hover text we created in the data
+        fig.update_traces(
+            hovertemplate="%{customdata[0]}<extra></extra>"
+        )
+
         # Update facet formatting (remove "Gene=" prefix and adjust font size)
         fig.for_each_annotation(lambda a: a.update(
             text=a.text.split("=")[1],
-            font=dict(size=facet_font_size, color="#333", family="Inter, sans-serif")
+            font=dict(size=int(facet_font_size * 1.5), color="#333", family="Inter, sans-serif")
         ))
 
-        # Lock y-axis if requested
+        # Configure y-axis scaling - each plot gets its own scale unless lock_y_axis is True
         if lock_y_axis and not plot_df.empty:
             global_min = plot_df['LogExpression'].min()
             global_max = plot_df['LogExpression'].max()
             # Add some padding
             padding = (global_max - global_min) * 0.05
             fig.update_yaxes(range=[global_min - padding, global_max + padding])
+        else:
+            # Each facet gets its own y-axis scale (default behavior we want to ensure)
+            fig.update_yaxes(matches=None)
 
         # Hide x-axis labels if requested
         if hide_x_labels:
