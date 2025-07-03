@@ -349,6 +349,34 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
             with col2:
                 st.write("")  # Empty space for alignment
 
+            # Custom gene input (always visible)
+            if gene_selection_method == "Custom":
+                help_text = "Enter gene symbols, one per line. For heatmaps, genes will be filtered by significance thresholds. For expression plots, all available genes will be shown."
+            else:
+                help_text = "Not used for Frequent DEGs method. Switch to 'Custom' method to use this field."
+
+            custom_genes_text = st.session_state.get("saved_custom_genes", "")
+            custom_genes_input = st.text_area(
+                "Custom Gene List",
+                value=custom_genes_text,
+                height=150,
+                placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
+                help=help_text,
+                key="heatmap_custom_genes",
+                on_change=_store_custom_genes
+            )
+
+            # Show preview and validation for custom genes
+            if gene_selection_method == "Custom" and custom_genes_text.strip():
+                custom_genes_list = [
+                    gene.strip() for gene in custom_genes_text.strip().split("\n") if gene.strip()
+                ]
+                if custom_genes_list:
+                    st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
+                    preview_text = ", ".join(custom_genes_list[:10])
+                    if len(custom_genes_list) > 10:
+                        preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
+                    st.caption(preview_text)
 
             # Validate parameters
             validation_error = False
