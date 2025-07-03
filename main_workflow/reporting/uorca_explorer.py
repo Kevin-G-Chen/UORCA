@@ -173,7 +173,7 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, selected_data
         "AI Assistant",
         "Explore DEG Heatmap",
         "Plot Gene Expression",
-        "Analyze Experiments",
+        "Analyse Experiments",
         "View Dataset Info",
         "View Contrast Info"
     ])

@@ -4,6 +4,7 @@ Contrasts Info Tab for UORCA Explorer.
 This tab allows users to browse and filter contrast details.
 """
 
+import os
 import pandas as pd
 import streamlit as st
 from typing import List, Dict, Any, Set, Tuple
@@ -65,7 +66,7 @@ def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc
     # Display the filtered contrast information
     if not filtered_df.empty:
         log_streamlit_event(f"Displaying {len(filtered_df)} contrasts")
-        _render_contrast_table(filtered_df)
+        _render_contrast_table(filtered_df, pvalue_thresh, lfc_thresh)
         _render_selection_controls(filtered_df)
     else:
         log_streamlit_event("No contrasts match current filters")
@@ -74,41 +75,137 @@ def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc
 
 @log_streamlit_function
 def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float, lfc_thresh: float) -> List[Dict[str, Any]]:
-    """Create a list of contrast information dictionaries for successful analyses only."""
+    """Create a list of contrast information dictionaries by reading from contrasts.csv files."""
     contrast_info = []
+
     # Only include contrasts from datasets that have successful CPM data (indicator of successful analysis)
     for aid in ri.cpm_data.keys():
         if aid not in ri.analysis_info:
             continue
+
         info = ri.analysis_info[aid]
-        for c in info.get("contrasts", []):
-            contrast_id = c["name"]
-            description = c.get("description", "")
+        accession = info.get("accession", aid)
 
-            # Count DEGs for this contrast
-            deg_count = 0
-            df = ri.deg_data.get(aid, {}).get(contrast_id, pd.DataFrame())
-            if not df.empty:
-                # Use exact column names from DEG.csv file - prefer adjusted p-value
-                p_value_col = None
-                if 'adj.P.Val' in df.columns:
-                    p_value_col = 'adj.P.Val'  # Adjusted p-value (preferred)
-                elif 'P.Value' in df.columns:
-                    p_value_col = 'P.Value'  # Unadjusted p-value (fallback)
+        # Get dataset title for formatting
+        dataset_title = ""
+        if hasattr(ri, 'dataset_info') and aid in ri.dataset_info:
+            title = ri.dataset_info[aid].get('title', '')
+            if title and title.startswith('Title:'):
+                title = title[6:].strip()
+            dataset_title = title
 
-                lfc_col = 'logFC' if 'logFC' in df.columns else None
+        # Format dataset display name
+        dataset_display = accession
+        if dataset_title:
+            dataset_display = f"{accession} - {dataset_title}"
 
-                if p_value_col and lfc_col:
-                    deg_count = ((df[p_value_col] < pvalue_thresh) &
-                                 (abs(df[lfc_col]) > lfc_thresh)).sum()
+        # Look for contrasts.csv file
+        contrasts_file = None
+        for contrasts_path in [
+            os.path.join(ri.results_dir, aid, "metadata", "contrasts.csv"),  # New primary location
+            os.path.join(ri.results_dir, aid, "contrasts.csv"),  # Old location for backward compatibility
+        ]:
+            if os.path.exists(contrasts_path):
+                contrasts_file = contrasts_path
+                break
 
-            contrast_info.append({
-                "Accession": info.get("accession", aid),
-                "Contrast": contrast_id,
-                "Original ID": contrast_id,
-                "Description": description,
-                "DEGs": int(deg_count)
-            })
+        if contrasts_file:
+            try:
+                contrasts_df = pd.read_csv(contrasts_file)
+
+                # Process each contrast from the CSV
+                for _, row in contrasts_df.iterrows():
+                    contrast_name = row.get('name', '')
+                    description = row.get('description', '')
+                    justification = row.get('justification', '')
+                    expression = row.get('expression', '')
+
+                    # Count DEGs for this contrast
+                    deg_count = 0
+                    deg_df = ri.deg_data.get(aid, {}).get(contrast_name, pd.DataFrame())
+                    if not deg_df.empty:
+                        # Use exact column names from DEG.csv file - prefer adjusted p-value
+                        p_value_col = None
+                        if 'adj.P.Val' in deg_df.columns:
+                            p_value_col = 'adj.P.Val'  # Adjusted p-value (preferred)
+                        elif 'P.Value' in deg_df.columns:
+                            p_value_col = 'P.Value'  # Unadjusted p-value (fallback)
+
+                        lfc_col = 'logFC' if 'logFC' in deg_df.columns else None
+
+                        if p_value_col and lfc_col:
+                            deg_count = ((deg_df[p_value_col] < pvalue_thresh) &
+                                       (abs(deg_df[lfc_col]) > lfc_thresh)).sum()
+
+                    contrast_info.append({
+                        "Contrast Name": contrast_name,
+                        "Dataset": dataset_display,
+                        "Description": description,
+                        "Justification": justification,
+                        "Expression": expression,
+                        "DEGs": int(deg_count)
+                    })
+
+            except Exception as e:
+                # Fall back to using analysis_info if contrasts.csv is not readable
+                for c in info.get("contrasts", []):
+                    contrast_name = c["name"]
+                    description = c.get("description", "")
+
+                    # Count DEGs for this contrast
+                    deg_count = 0
+                    deg_df = ri.deg_data.get(aid, {}).get(contrast_name, pd.DataFrame())
+                    if not deg_df.empty:
+                        p_value_col = None
+                        if 'adj.P.Val' in deg_df.columns:
+                            p_value_col = 'adj.P.Val'
+                        elif 'P.Value' in deg_df.columns:
+                            p_value_col = 'P.Value'
+
+                        lfc_col = 'logFC' if 'logFC' in deg_df.columns else None
+
+                        if p_value_col and lfc_col:
+                            deg_count = ((deg_df[p_value_col] < pvalue_thresh) &
+                                       (abs(deg_df[lfc_col]) > lfc_thresh)).sum()
+
+                    contrast_info.append({
+                        "Contrast Name": contrast_name,
+                        "Dataset": dataset_display,
+                        "Description": description,
+                        "Justification": "",
+                        "Expression": "",
+                        "DEGs": int(deg_count)
+                    })
+        else:
+            # Fall back to using analysis_info if no contrasts.csv found
+            for c in info.get("contrasts", []):
+                contrast_name = c["name"]
+                description = c.get("description", "")
+
+                # Count DEGs for this contrast
+                deg_count = 0
+                deg_df = ri.deg_data.get(aid, {}).get(contrast_name, pd.DataFrame())
+                if not deg_df.empty:
+                    p_value_col = None
+                    if 'adj.P.Val' in deg_df.columns:
+                        p_value_col = 'adj.P.Val'
+                    elif 'P.Value' in deg_df.columns:
+                        p_value_col = 'P.Value'
+
+                    lfc_col = 'logFC' if 'logFC' in deg_df.columns else None
+
+                    if p_value_col and lfc_col:
+                        deg_count = ((deg_df[p_value_col] < pvalue_thresh) &
+                                   (abs(deg_df[lfc_col]) > lfc_thresh)).sum()
+
+                contrast_info.append({
+                    "Contrast Name": contrast_name,
+                    "Dataset": dataset_display,
+                    "Description": description,
+                    "Justification": "",
+                    "Expression": "",
+                    "DEGs": int(deg_count)
+                })
 
     return contrast_info
 
@@ -121,8 +218,8 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
 
     with col1:
         dataset_filter = st.multiselect(
-            "Filter by Accession",
-            options=sorted(df["Accession"].unique()),
+            "Filter by Dataset",
+            options=sorted(df["Dataset"].unique()),
             default=[],
             key="contrasts_info_dataset_filter"
         )
@@ -136,7 +233,7 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
     # Apply filters
     filtered_df = df
     if dataset_filter:
-        filtered_df = filtered_df[filtered_df["Accession"].isin(dataset_filter)]
+        filtered_df = filtered_df[filtered_df["Dataset"].isin(dataset_filter)]
 
     if min_degs > 0:
         filtered_df = filtered_df[filtered_df["DEGs"] >= min_degs]
@@ -152,10 +249,13 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @log_streamlit_function
-def _render_contrast_table(filtered_df: pd.DataFrame):
+def _render_contrast_table(filtered_df: pd.DataFrame, pvalue_thresh: float, lfc_thresh: float):
     """Render the contrast table for viewing."""
     # Sort by DEG count by default
     filtered_df = filtered_df.sort_values("DEGs", ascending=False)
+
+    # Add parameter info for DEGs column
+    deg_help_text = f"P-value < {pvalue_thresh}, |logFC| > {lfc_thresh}"
 
     # Display contrast information
     st.dataframe(
@@ -163,13 +263,22 @@ def _render_contrast_table(filtered_df: pd.DataFrame):
         hide_index=True,
         use_container_width=True,
         column_config={
-            "Accession": st.column_config.TextColumn("Accession", width="medium"),
-            "Contrast": st.column_config.TextColumn("Contrast", width="medium"),
-            "Original ID": st.column_config.TextColumn("Original ID", width="medium"),
+            "Contrast Name": st.column_config.TextColumn("Contrast Name", width="small"),
+            "Dataset": st.column_config.TextColumn("Dataset", width="medium"),
             "Description": st.column_config.TextColumn("Description", width="large"),
-            "DEGs": st.column_config.NumberColumn("DEGs", format="%d")
+            "Justification": st.column_config.TextColumn("Justification", width="medium"),
+            "Expression": st.column_config.TextColumn("Expression", width="small"),
+            "DEGs": st.column_config.NumberColumn(
+                "DEGs",
+                format="%d",
+                help=deg_help_text,
+                width="small"
+            )
         }
     )
+
+    # Add small text about DEG parameters
+    st.caption(f"DEG counts calculated using: {deg_help_text}")
 
 
 @log_streamlit_function
