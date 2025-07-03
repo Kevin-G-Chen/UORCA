@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 load_environment()
 
 
+def _store_custom_genes() -> None:
+    """Persist custom gene text area contents across reruns."""
+    st.session_state["saved_custom_genes"] = st.session_state.get(
+        "heatmap_custom_genes", ""
+    )
+
+
 @log_streamlit_function
 def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str, Any]:
     """
@@ -257,19 +264,52 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
 def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Dict[str, Any]]:
     """Render the heatmap configuration form."""
     with st.sidebar.expander("Heatmap Parameters", expanded=False):
-        with st.form("heatmap_config"):
-            # Gene selection method (moved to top)
-            st.subheader("Gene Selection")
+        st.subheader("Gene Selection")
 
+        gene_selection_method = st.radio(
+            "Choose gene selection method",
+            options=["Frequent DEGs", "Custom"],
+            key="heatmap_gene_selection_method",
+            help="**Frequent DEGs**: Automatically finds genes that are consistently differentially expressed across multiple contrasts, ranked by how often they appear as significant. \n **Custom**: Use your own gene list for targeted analysis of specific genes of interest.",
+            horizontal=True,
+        )
 
-
-            gene_selection_method = st.radio(
-                "Choose gene selection method",
-                options=["Frequent DEGs", "Custom"],
-                key="heatmap_gene_selection_method",
-                help="**Frequent DEGs**: Automatically finds genes that are consistently differentially expressed across multiple contrasts, ranked by how often they appear as significant. \n **Custom**: Use your own gene list for targeted analysis of specific genes of interest.",
-                horizontal=True
+        if gene_selection_method == "Custom":
+            help_text = (
+                "Enter gene symbols, one per line. For heatmaps, genes will be "
+                "filtered by significance thresholds. For expression plots, all "
+                "available genes will be shown."
             )
+        else:
+            help_text = (
+                "Not used for Frequent DEGs method. Switch to 'Custom' method to "
+                "use this field."
+            )
+
+        custom_genes_text = st.text_area(
+            "Custom Gene List",
+            value=st.session_state.get("saved_custom_genes", ""),
+            height=150,
+            placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
+            help=help_text,
+            key="heatmap_custom_genes",
+            on_change=_store_custom_genes,
+        )
+
+        if gene_selection_method == "Custom" and custom_genes_text.strip():
+            custom_genes_list = [
+                gene.strip()
+                for gene in custom_genes_text.strip().split("\n")
+                if gene.strip()
+            ]
+            if custom_genes_list:
+                st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
+                preview_text = ", ".join(custom_genes_list[:10])
+                if len(custom_genes_list) > 10:
+                    preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
+                st.caption(preview_text)
+
+        with st.form("heatmap_config"):
 
             st.subheader("Significance Thresholds")
 
@@ -309,29 +349,6 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
             with col2:
                 st.write("")  # Empty space for alignment
 
-            # Custom gene input (always visible)
-            if gene_selection_method == "Custom":
-                help_text = "Enter gene symbols, one per line. For heatmaps, genes will be filtered by significance thresholds. For expression plots, all available genes will be shown."
-            else:
-                help_text = "Not used for Frequent DEGs method. Switch to 'Custom' method to use this field."
-
-            custom_genes_input = st.text_area(
-                "Custom Gene List",
-                height=150,
-                placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
-                help=help_text,
-                key="heatmap_custom_genes"
-            )
-
-            # Show preview and validation for custom genes
-            if gene_selection_method == "Custom" and custom_genes_input.strip():
-                custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-                if custom_genes_list:
-                    st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
-                    preview_text = ", ".join(custom_genes_list[:10])
-                    if len(custom_genes_list) > 10:
-                        preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
-                    st.caption(preview_text)
 
             # Validate parameters
             validation_error = False
@@ -359,11 +376,13 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
             # Validate custom genes
             custom_genes_list = []
             if gene_selection_method == "Custom":
-                if not custom_genes_input.strip():
+                if not custom_genes_text.strip():
                     st.error("Please enter at least one gene for custom selection")
                     validation_error = True
                 else:
-                    custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+                    custom_genes_list = [
+                        gene.strip() for gene in custom_genes_text.strip().split("\n") if gene.strip()
+                    ]
                     if not custom_genes_list:
                         st.error("Please enter valid gene names")
                         validation_error = True
@@ -379,6 +398,8 @@ def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Di
                     log_streamlit_user_action(f"Heatmap parameters updated: LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
                 else:
                     log_streamlit_user_action(f"Heatmap parameters updated: LFC={lfc_val}, P={pval_val}, method=Custom, custom_genes={len(custom_genes_list)}")
+
+                _store_custom_genes()
 
                 return {
                     'lfc_thresh': lfc_val,
