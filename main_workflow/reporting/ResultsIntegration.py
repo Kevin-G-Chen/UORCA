@@ -1217,6 +1217,7 @@ class ResultsIntegrator:
                               selector=dict(type='violin'))
             fig.update_traces(side = "both",
                 pointpos = 0,
+                width = 0.4,
                 selector = dict(type='violin'))
         else:
             fig.update_traces(marker=dict(size=0), jitter=0.3)
