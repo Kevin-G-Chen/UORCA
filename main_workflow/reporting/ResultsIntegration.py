@@ -914,7 +914,9 @@ class ResultsIntegrator:
                               show_raw_points: bool = True,
                               legend_position: str = "Bottom",
                               show_grid_lines: bool = True,
-                              grid_opacity: float = 0.3) -> go.Figure:
+                              grid_opacity: float = 0.3,
+                              selected_groups: List[str] = None,
+                              plots_per_row: int = 2) -> go.Figure:
         """
         Create interactive expression plots for selected genes across samples.
 
@@ -940,6 +942,10 @@ class ResultsIntegrator:
             Whether to show grid lines
         grid_opacity : float, optional
             Opacity of grid lines
+        selected_groups : List[str], optional
+            List of sample groups to include. If None, all groups are used.
+        plots_per_row : int, optional
+            Number of plots per row in the layout (default: 2)
 
         Returns:
         --------
@@ -956,8 +962,8 @@ class ResultsIntegrator:
         # Create a tidy (long) dataframe for all expression data
         all_long_data = []
 
-        # Maximum number of genes to process in one page
-        genes_per_page = 30
+        # Maximum number of genes to process in one page (optimized for 2 plots per row)
+        genes_per_page = 20
         # Save original gene list
         gene_list = genes.copy() if genes is not None else []
 
@@ -1095,6 +1101,13 @@ class ResultsIntegrator:
                 # Use analysis ID as group if no mapping available
                 melted_df['Group'] = analysis_id
 
+            # Filter by selected groups if specified
+            if selected_groups:
+                melted_df = melted_df[melted_df['Group'].isin(selected_groups)]
+                if melted_df.empty:
+                    logger.warning(f"No samples found for selected groups in analysis {analysis_id}")
+                    continue
+
             # Create custom hover text with all the information we want (after Group is assigned)
             melted_df['HoverText'] = (
                 "<b>Dataset:</b> " + melted_df['DatasetDisplay'] + "<br>" +
@@ -1120,8 +1133,8 @@ class ResultsIntegrator:
         # Number of genes actually found in data
         genes_found = plot_df['Gene'].nunique()
 
-        # Determine facet column wrapping (3 columns max)
-        facet_col_wrap = min(3, genes_found)
+        # Determine facet column wrapping based on plots_per_row
+        facet_col_wrap = min(plots_per_row, genes_found)
 
         # Calculate rows for height
         n_rows = math.ceil(genes_found / facet_col_wrap)
@@ -1157,7 +1170,7 @@ class ResultsIntegrator:
             facet_col_spacing=facet_col_spacing
         )
 
-        # Layout adjustments optimized for readability
+        # Layout adjustments optimized for readability (2 plots per row)
         fig.update_layout(
             height=525 * n_rows,  # 525px per row (1.5x taller than original 350px)
             width=480 * facet_col_wrap,  # 480px per column (1.5x wider than original 320px)

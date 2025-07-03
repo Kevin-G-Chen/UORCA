@@ -6,10 +6,10 @@ This is the refactored modular version of the UORCA Explorer that separates func
 into individual tab modules for better maintainability and development.
 
 Usage:
-  streamlit run uorca_explorer_modular.py
+  streamlit run uorca_explorer.py
 
 Or with custom port:
-  streamlit run uorca_explorer_modular.py --server.port 8501
+  streamlit run uorca_explorer.py --server.port 8501
 """
 
 import os
@@ -107,11 +107,12 @@ def main():
     st.session_state['results_integrator'] = ri
     st.session_state['results_dir'] = results_dir
 
-    # Render sidebar controls and get parameters
+    # Render sidebar controls and get selected datasets
     sidebar_params = render_sidebar_controls(ri, results_dir)
+    selected_datasets = sidebar_params.get('selected_datasets', [])
 
     # Render main interface
-    render_main_interface(ri, results_dir, sidebar_params)
+    render_main_interface(ri, results_dir, selected_datasets)
 
 
 @log_streamlit_function
@@ -164,10 +165,8 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
 
 
 @log_streamlit_function
-def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_params: Dict[str, Any]):
+def render_main_interface(ri: ResultsIntegrator, results_dir: str, selected_datasets: List[str]):
     """Render the main tabbed interface."""
-
-
 
     # Create main tabs
     tab_ai, tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -179,16 +178,7 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
         "View Contrast Info"
     ])
 
-    # Get current selections from form-based parameters
-    selected_contrasts = sidebar_params.get('selected_contrasts', [])
-    selected_datasets = sidebar_params.get('selected_datasets', [])
-    gene_sel = sidebar_params['gene_sel']
-
-    # Update session state for compatibility with existing tabs
-    st.session_state['selected_contrasts'] = set(selected_contrasts)
-    st.session_state['selected_datasets'] = set(selected_datasets)
-
-    log_streamlit_event(f"Rendering interface: {len(selected_datasets)} datasets, {len(selected_contrasts)} contrasts, {len(gene_sel)} genes")
+    log_streamlit_event(f"Rendering interface with {len(selected_datasets)} selected datasets")
 
     # Tab 1: AI Assistant
     with tab_ai:
@@ -197,27 +187,18 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
             results_dir=results_dir
         )
 
-    # Tab 2: Heatmap
+    # Tab 2: Heatmap (now handles its own contrast and gene selection)
     with tab1:
         render_heatmap_tab(
             ri=ri,
-            gene_sel=gene_sel,
-            selected_contrasts=selected_contrasts,
-            effective_pvalue_thresh=sidebar_params['heatmap_params']['pvalue_thresh'],
-            effective_lfc_thresh=sidebar_params['heatmap_params']['lfc_thresh'],
-            use_dynamic_filtering=True,
-            hide_empty_rows_cols=True,
-            gene_selection_method=sidebar_params['heatmap_params']['gene_selection_method'],
-            custom_genes_count=len(sidebar_params['heatmap_params']['custom_genes'])
+            selected_datasets=selected_datasets
         )
 
-    # Tab 3: Expression Plots
+    # Tab 3: Expression Plots (now handles its own group and gene selection)
     with tab2:
         render_expression_plots_tab(
             ri=ri,
-            gene_sel=gene_sel,
-            selected_datasets=selected_datasets,
-            hide_x_labels=True
+            selected_datasets=selected_datasets
         )
 
     # Tab 4: Analysis Plots
@@ -231,12 +212,12 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, sidebar_param
     with tab4:
         render_datasets_info_tab(ri=ri)
 
-    # Tab 6: Contrast Info
+    # Tab 6: Contrast Info (uses default thresholds since these are now tab-specific)
     with tab5:
         render_contrasts_info_tab(
             ri=ri,
-            pvalue_thresh=sidebar_params['heatmap_params']['pvalue_thresh'],
-            lfc_thresh=sidebar_params['heatmap_params']['lfc_thresh']
+            pvalue_thresh=0.05,  # Default threshold
+            lfc_thresh=1.0       # Default threshold
         )
 
 
@@ -272,24 +253,23 @@ def render_help_info():
             1. The results directory should already be set to `/UORCA_results` in the sidebar
             2. If not, enter `/UORCA_results` as your results directory path
             3. The app will load your data and display interactive visualizations
-            4. Use the sidebar controls to filter genes, datasets, and contrasts
+            4. Use the sidebar to select datasets, then configure analysis parameters in each tab
 
             ### Container Path Mapping
             - **Inside container:** `/UORCA_results`
             - **Host system:** Your actual results directory path
             - Always use `/UORCA_results` when entering paths in this app
 
+            ### New Modular Design
+            **Dataset Selection:** Choose datasets in the sidebar
+            **Heatmap Analysis:** Select contrasts and configure gene selection in the heatmap tab
+            **Expression Analysis:** Choose sample groups and enter custom genes in the expression tab
+
             ### Troubleshooting
             - Make sure the path contains valid UORCA analysis results
             - Each analysis should have a directory structure with:
               - RNAseqAnalysis/ directory with CPM.csv file
               - metadata/ directory with contrasts.csv and edger_analysis_samples.csv files
-
-            ### New Modular Architecture
-            This version of UORCA Explorer has been refactored into separate modules for:
-            - Better maintainability and development
-            - Improved caching of expensive operations (like gene identification)
-            - Cleaner separation of concerns
             """
         )
     else:
@@ -301,8 +281,25 @@ def render_help_info():
 
             ### Getting Started
             1. Enter the path to your UORCA results directory in the sidebar
-            2. The app will load your data and display interactive visualizations
-            3. Use the sidebar controls to filter genes, datasets, and contrasts
+            2. Select datasets for analysis using the sidebar form
+            3. Configure analysis parameters in each tab:
+               - **Heatmap Tab:** Select contrasts and configure gene selection
+               - **Expression Tab:** Choose sample groups and enter custom genes
+            4. View interactive visualizations and results
+
+            ### New Modular Architecture
+            This version has been completely restructured for better usability:
+
+            **Improved Workflow:**
+            - **Step 1:** Dataset selection in sidebar (applies to all tabs)
+            - **Step 2:** Tab-specific configuration (contrasts, genes, groups)
+            - **Step 3:** Independent analysis in each tab
+
+            **Key Improvements:**
+            - **Independent Controls:** Each tab has its own parameter forms
+            - **Flexible Gene Selection:** Heatmaps and expression plots use different gene selection methods
+            - **Better Organization:** Clear separation between dataset selection and analysis configuration
+            - **Enhanced Performance:** Cached operations and optimized rendering
 
             ### Troubleshooting
             - Make sure the path contains valid UORCA analysis results
@@ -310,17 +307,11 @@ def render_help_info():
               - RNAseqAnalysis/ directory with CPM.csv file
               - metadata/ directory with contrasts.csv and edger_analysis_samples.csv files
 
-            ### New Modular Architecture
-            This version of UORCA Explorer has been refactored into separate modules for:
-            - Better maintainability and development
-            - Improved caching of expensive operations (like gene identification)
-            - Cleaner separation of concerns
-
-            ### Key Improvements
-            - **Cached Gene Identification**: The expensive `identify_important_genes` operation is now cached and won't recompute on every app reload
-            - **Modular Design**: Each tab is now in its own module for easier development
-            - **Better Performance**: Fragment isolation prevents unnecessary recomputations
-            - **Improved Structure**: Code is organized into logical modules with clear responsibilities
+            ### Tab-Specific Features
+            - **Heatmap:** Contrast selection + gene selection (frequent DEGs or custom)
+            - **Expression Plots:** Sample group selection + custom gene list only
+            - **Analysis Plots:** Individual dataset QC and DE plots
+            - **AI Assistant:** Intelligent analysis with automated contrast selection
             """
         )
 
