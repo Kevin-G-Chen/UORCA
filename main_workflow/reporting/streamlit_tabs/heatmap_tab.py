@@ -57,8 +57,7 @@ def render_heatmap_tab(
     st.header("Explore DEG Heatmap")
     st.markdown("**Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Hover over cells for details. Use the Dataset & Contrast Selection and Heatmap Parameters forms in the sidebar.")
 
-    # Display settings for heatmap
-    display_settings = _render_display_settings()
+
 
     if not selected_contrasts:
         log_streamlit_event("No contrasts selected for heatmap")
@@ -75,7 +74,7 @@ def render_heatmap_tab(
         log_streamlit_event("No genes selected for heatmap")
         if gene_selection_method == "Custom":
             st.write("❌ **No custom genes available for heatmap**")
-            st.write("**Possible reasons:** Genes not found in datasets, don't meet filtering criteria, or invalid gene symbols. Check the Custom Gene Validation section in the sidebar for details.")
+            st.write("**Possible reasons:** Genes not found in datasets or invalid gene symbols. Check the Custom Gene Validation section in the sidebar for details.")
         else:
             st.write("No genes were automatically selected with the current parameters. Try adjusting the significance thresholds in the sidebar form.")
     else:
@@ -83,11 +82,11 @@ def render_heatmap_tab(
         if gene_selection_method == "Custom":
             success_rate = (len(gene_sel) / custom_genes_count * 100) if custom_genes_count > 0 else 0
             if success_rate == 100:
-                st.write(f"🎯 **Custom Gene Selection**: All {len(gene_sel)} custom genes found and meet filtering criteria")
+                st.write(f"🎯 **Custom Gene Selection**: All {len(gene_sel)} custom genes found in datasets")
             else:
-                st.write(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} of {custom_genes_count} custom genes ({success_rate:.0f}% success rate)")
+                st.write(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} of {custom_genes_count} custom genes ({success_rate:.0f}% found in datasets)")
                 if custom_genes_count > len(gene_sel):
-                    st.write("💡 See 'Custom Gene Validation' in the sidebar for information about missing or filtered genes")
+                    st.write("💡 See 'Custom Gene Validation' in the sidebar for information about missing genes")
         else:
             st.write(f"📊 **Frequent DEGs**: Displaying {len(gene_sel)} most frequently differentially expressed genes")
         log_streamlit_event(f"Heatmap: {len(gene_sel)} genes, {len(selected_contrasts)} contrasts")
@@ -109,7 +108,9 @@ def render_heatmap_tab(
                 effective_lfc_thresh,
                 use_dynamic_filtering,
                 hide_empty_rows_cols,
-                **display_settings
+                font_size=12,
+                show_grid_lines=True,
+                grid_opacity=0.3
             )
         else:
             # Multiple organisms - create sub-tabs
@@ -132,26 +133,16 @@ def render_heatmap_tab(
                             effective_lfc_thresh,
                             use_dynamic_filtering,
                             hide_empty_rows_cols,
-                            **display_settings
+                            font_size=12,
+                            show_grid_lines=True,
+                            grid_opacity=0.3
                         )
                     else:
                         st.warning(f"No genes found for {get_organism_display_name(organism)} with current parameters.")
                         st.info("Try adjusting the significance thresholds in the sidebar or selecting more datasets for this species.")
 
 
-@log_streamlit_function
-def _render_display_settings() -> dict:
-    """Render display settings controls in the sidebar and return the settings."""
-    with st.sidebar.expander("Display Settings", expanded=False):
-        heatmap_font_size = st.slider("Font size", 8, 16, 12, key="heatmap_tab_font")
-        show_grid_lines = st.checkbox("Show grid lines", value=True, key="heatmap_tab_grid")
-        grid_opacity = st.slider("Grid opacity", 0.1, 1.0, 0.3, key="heatmap_tab_grid_opacity")
 
-    return {
-        "font_size": heatmap_font_size,
-        "show_grid_lines": show_grid_lines,
-        "grid_opacity": grid_opacity,
-    }
 
 
 @st.fragment

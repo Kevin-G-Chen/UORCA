@@ -2,6 +2,7 @@
 Expression Plots Tab for UORCA Explorer.
 
 This tab displays violin plots showing gene expression distributions across sample groups.
+Uses the same gene selection as the heatmap tab.
 """
 
 import logging
@@ -35,22 +36,19 @@ def render_expression_plots_tab(
     ri: ResultsIntegrator,
     gene_sel: List[str],
     selected_datasets: List[str],
-    hide_x_labels: bool
+    hide_x_labels: bool = True
 ):
     """
     Render the expression plots tab.
 
     Args:
         ri: ResultsIntegrator instance
-        gene_sel: List of selected genes
+        gene_sel: List of selected genes (same as heatmap)
         selected_datasets: List of selected dataset IDs
         hide_x_labels: Whether to hide x-axis labels
     """
     st.header("Plot Gene Expression")
-    st.markdown("**Violin plots showing gene expression distributions across sample groups.** Each panel represents one gene, with samples grouped by experimental conditions. Select datasets using the Dataset & Contrast Selection form in the sidebar.")
-
-    # Display settings for expression plots
-    display_settings = _render_display_settings()
+    st.markdown("**Violin plots showing gene expression distributions across sample groups.** Each panel represents one gene, with samples grouped by experimental conditions. Uses the same gene selection as the heatmap tab.")
 
     if not selected_datasets:
         log_streamlit_event("No datasets selected for expression plots")
@@ -60,13 +58,15 @@ def render_expression_plots_tab(
         2. **Configure genes** using the "Heatmap Parameters" section (genes auto-selected based on your contrasts)
         3. **View expression plots** here once datasets and genes are selected
 
+        **Note:** This tab uses the same gene selection as the heatmap tab.
+
         **Alternative options:**
         - View individual dataset plots in the **Analyze Experiments** tab
         - Browse dataset information in the **View Dataset Info** tab
         """)
     elif not gene_sel:
         log_streamlit_event("No genes selected for expression plots")
-        st.info("No genes available. Please select datasets and configure parameters in the sidebar to auto-select genes first.")
+        st.info("No genes available. Please select datasets and configure gene parameters in the 'Heatmap Parameters' section of the sidebar.")
     else:
         # Group datasets by organism
         organism_groups = group_datasets_by_organism(ri, selected_datasets)
@@ -92,14 +92,10 @@ def render_expression_plots_tab(
                 organism_datasets,
                 hide_x_labels,
                 current_page,
-                total_pages,
-                **display_settings
+                total_pages
             )
         else:
             # Multiple organisms - create sub-tabs
-
-
-            # Create organism-specific tabs
             organism_names = list(organism_groups.keys())
             tab_names = [get_organism_display_name(org) for org in organism_names]
             tabs = st.tabs(tab_names)
@@ -110,7 +106,6 @@ def render_expression_plots_tab(
                     organism_genes = filter_genes_by_organism_datasets(ri, gene_sel, organism, organism_datasets)
 
                     if organism_genes:
-
                         # Calculate pagination information for this organism
                         total_pages, current_page, genes_per_page, current_genes = calculate_pagination_info(organism_genes)
 
@@ -125,30 +120,11 @@ def render_expression_plots_tab(
                             organism_datasets,
                             hide_x_labels,
                             current_page,
-                            total_pages,
-                            **display_settings
+                            total_pages
                         )
                     else:
                         st.warning(f"No genes found for {get_organism_display_name(organism)} with current parameters.")
                         st.info("Try adjusting the significance thresholds in the sidebar or selecting more datasets for this species.")
-
-
-
-@log_streamlit_function
-def _render_display_settings() -> Dict[str, Any]:
-    """Render display settings controls in the sidebar and return the settings."""
-    with st.sidebar.expander("Display Settings", expanded=False):
-        facet_font_size = st.slider("Facet title size", 8, 16, 10, key="expression_plots_font")
-        lock_y_axis = st.checkbox("Lock y-axis across genes", value=False, key="expression_plots_lock_y")
-        show_raw_points = st.checkbox("Show raw points", value=True, key="expression_plots_points")
-        legend_position = st.selectbox("Legend position", ["Bottom", "Right", "Top"], index=0, key="expression_plots_legend")
-
-    return {
-        "facet_font_size": facet_font_size,
-        "lock_y_axis": lock_y_axis,
-        "show_raw_points": show_raw_points,
-        "legend_position": legend_position,
-    }
 
 
 @log_streamlit_function
@@ -180,11 +156,7 @@ def _draw_expression_plots(
     dataset_selection: List[str],
     hide_labels: bool,
     page_num: int,
-    total_pgs: int,
-    facet_font_size: int,
-    lock_y_axis: bool,
-    show_raw_points: bool,
-    legend_position: str
+    total_pgs: int
 ):
     """
     Create and display the expression plots using fragment isolation.
@@ -196,10 +168,6 @@ def _draw_expression_plots(
         hide_labels: Whether to hide x-axis labels
         page_num: Current page number
         total_pgs: Total number of pages
-        facet_font_size: Font size for facet titles
-        lock_y_axis: Whether to lock y-axis across genes
-        show_raw_points: Whether to show raw data points
-        legend_position: Position of the legend
     """
     # Skip execution if AI is currently generating
     if check_ai_generating():
@@ -213,12 +181,22 @@ def _draw_expression_plots(
             end_idx = min(start_idx + genes_per_page, len(gene_selection))
             current_genes = gene_selection[start_idx:end_idx]
 
+            # Fixed parameters for expression plots (no more sidebar controls)
+            facet_font_size = 10
+            lock_y_axis = False
+            show_raw_points = True
+            legend_position = "Bottom"
+            show_grid_lines = True
+            grid_opacity = 0.3
+
+
+
             # Use cached figure creation for better performance
             fig2 = cached_figure_creation(
                 "create_expression_plots",
                 ri.results_dir,
                 current_genes,
-                "violin",
+                "violin",  # plot_type
                 dataset_selection,
                 None,  # output_file
                 hide_labels,
@@ -227,16 +205,56 @@ def _draw_expression_plots(
                 lock_y_axis,
                 show_raw_points,
                 legend_position,
-                True,  # show_grid_lines
-                0.3    # grid_opacity
+                show_grid_lines,
+                grid_opacity
             )
 
             if fig2:
                 log_streamlit_event("Expression plots generated successfully")
-                st.plotly_chart(fig2, use_container_width=True)
+
+                # Display information about the plots
+                st.info(f"**Expression plots for {len(current_genes)} genes** - Page {page_num} of {total_pgs}")
+
+                # Display the plot with custom configuration for 3 plots per row
+                # Note: The actual plot layout is controlled by the plotting function
+                # in ResultsIntegration.py, but we can suggest the layout here
+                st.plotly_chart(fig2)
+
+                # Add informational notes
+                with st.expander("About Expression Plots", expanded=False):
+                    st.markdown("""
+                    **How to interpret these plots:**
+                    - Each panel shows one gene's expression across samples
+                    - Samples are grouped by experimental conditions
+                    - Violin plots show the distribution of expression values
+                    - Points represent individual samples
+
+                    **Sample grouping:**
+                    - Samples are grouped based on the experimental design
+                    - Groups are determined from the analysis metadata
+                    - Each group represents a different experimental condition
+
+                    **Navigation:**
+                    - Use the pagination controls above to view different genes
+                    - Large gene sets are automatically split into pages
+                    """)
             else:
                 log_streamlit_event("Failed to generate expression plots")
                 st.error("Could not generate expression plots. Please check your selections.")
+
+                # Provide troubleshooting information
+                with st.expander("Troubleshooting", expanded=True):
+                    st.markdown("""
+                    **Common issues:**
+                    - Selected genes not found in the datasets
+                    - Sample grouping information missing
+                    - Dataset compatibility issues
+
+                    **Solutions:**
+                    - Try selecting different genes or datasets
+                    - Check that your datasets have completed analysis
+                    - Verify that expression data is available
+                    """)
 
         except Exception as e:
             logger.error(f"Error generating expression plots: {str(e)}", exc_info=True)
@@ -249,3 +267,9 @@ def _display_expression_plot_error_details(error: Exception):
     """Display detailed error information in an expandable section."""
     with st.expander("Expression Plot Error Details", expanded=False):
         st.code(traceback.format_exc())
+        st.markdown("""
+        **Common issues:**
+        - Selected genes not found in the datasets
+        - Sample grouping information missing from analysis metadata
+        - Dataset compatibility issues across different analyses
+        """)

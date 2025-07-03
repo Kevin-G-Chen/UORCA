@@ -57,15 +57,8 @@ def load_sample_groups(results_dir: str, analysis_id: str, cpm_df: pd.DataFrame,
         has_index = first_col == "" or first_col.startswith("Unnamed")
         sample_df = pd.read_csv(sample_file, index_col=0 if has_index else None)
         group_col = None
-        if analysis_info and "analysis_column" in analysis_info:
-            group_col = analysis_info["analysis_column"]
-        elif "merged_analysis_group" in sample_df.columns:
-            group_col = "merged_analysis_group"
-        else:
-            for col in sample_df.columns:
-                if "group" in col.lower() or "condition" in col.lower():
-                    group_col = col
-                    break
+        if analysis_info and "merged_column" in analysis_info:
+            group_col = analysis_info["merged_column"]
         if group_col and group_col in sample_df.columns:
             sample_pattern = [c for c in sample_cols if c.startswith("Sample")]
             mapping = {}

@@ -1030,20 +1030,11 @@ class ResultsIntegrator:
                     sample_mapping_df = pd.read_csv(edger_samples_file, index_col=0 if has_index else None)
                     logger.info(f"Loaded sample mapping with columns: {', '.join(sample_mapping_df.columns)}")
 
-                    # Find the group column
+                    # Find the group column from analysis_info
                     group_col = None
-                    if self.analysis_info and analysis_id in self.analysis_info and 'analysis_column' in self.analysis_info[analysis_id]:
-                        group_col = self.analysis_info[analysis_id]['analysis_column']
-                        logger.info(f"Using analysis column '{group_col}' from analysis_info")
-                    elif 'merged_analysis_group' in sample_mapping_df.columns:
-                        group_col = 'merged_analysis_group'
-                        logger.info(f"Using 'merged_analysis_group' column")
-                    else:
-                        for col in sample_mapping_df.columns:
-                            if 'group' in col.lower() or 'condition' in col.lower():
-                                group_col = col
-                                logger.info(f"Using '{col}' column as group")
-                                break
+                    if self.analysis_info and analysis_id in self.analysis_info and 'merged_column' in self.analysis_info[analysis_id]:
+                        group_col = self.analysis_info[analysis_id]['merged_column']
+                        logger.info(f"Using merged column '{group_col}' from analysis_info")
 
                     if group_col and group_col in sample_mapping_df.columns:
                         # Look for a 'Sample1', 'Sample2', etc. naming pattern in CPM columns
@@ -1111,8 +1102,8 @@ class ResultsIntegrator:
         # Number of genes actually found in data
         genes_found = plot_df['Gene'].nunique()
 
-        # Determine facet column wrapping (4 columns max)
-        facet_col_wrap = min(4, genes_found)
+        # Determine facet column wrapping (3 columns max)
+        facet_col_wrap = min(3, genes_found)
 
         # Calculate rows for height
         n_rows = math.ceil(genes_found / facet_col_wrap)
