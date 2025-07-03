@@ -149,15 +149,12 @@ def _get_group_dataset_combinations(ri: ResultsIntegrator, selected_datasets: Li
                 unique_group = f"{original_group} ({item['Dataset']})"
                 item["Sample Group"] = unique_group
 
-    # Apply select/clear all actions
-    if st.session_state.get('expression_select_all_groups', False):
+    # Pre-select based on session state (similar to sidebar pattern)
+    if 'selected_groups_from_expression' in st.session_state:
+        selected_groups = st.session_state['selected_groups_from_expression']
         for item in group_dataset_combinations:
-            item['Select'] = True
-        st.session_state['expression_select_all_groups'] = False
-    elif st.session_state.get('expression_clear_all_groups', False):
-        for item in group_dataset_combinations:
-            item['Select'] = False
-        st.session_state['expression_clear_all_groups'] = False
+            group_id = f"{item['Sample Group']}_{item['Dataset']}"
+            item['Select'] = group_id in selected_groups
 
     return group_dataset_combinations
 
@@ -208,16 +205,40 @@ def _get_sample_count_for_group(ri: ResultsIntegrator, dataset_id: str, group_na
 def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -> Optional[Dict[str, Any]]:
     """Render the combined form for sample group and gene selection."""
 
+    # Initialize session state for selected groups
+    if 'selected_groups_from_expression' not in st.session_state:
+        st.session_state['selected_groups_from_expression'] = set()
+
+    # Check if datasets have changed and auto-select all groups by default
+    current_datasets = set(selected_datasets)
+    if 'previous_datasets_expression' not in st.session_state:
+        st.session_state['previous_datasets_expression'] = set()
+
+    if current_datasets != st.session_state['previous_datasets_expression']:
+        # Datasets changed - select all groups by default
+        temp_combinations = _get_group_dataset_combinations(ri, selected_datasets)
+        all_groups = set()
+        for item in temp_combinations:
+            group_id = f"{item['Sample Group']}_{item['Dataset']}"
+            all_groups.add(group_id)
+        st.session_state['selected_groups_from_expression'] = all_groups
+        st.session_state['previous_datasets_expression'] = current_datasets
+
     # Quick selection buttons (outside form)
     if group_dataset_combinations := _get_group_dataset_combinations(ri, selected_datasets):
         col1, col2 = st.columns(2)
         with col1:
             if st.button("Select All Groups", key="select_all_groups_expression"):
-                st.session_state['expression_select_all_groups'] = True
+                # Select all group IDs (similar to sidebar pattern)
+                all_groups = set()
+                for item in group_dataset_combinations:
+                    group_id = f"{item['Sample Group']}_{item['Dataset']}"
+                    all_groups.add(group_id)
+                st.session_state['selected_groups_from_expression'] = all_groups
                 st.rerun()
         with col2:
             if st.button("Clear All Groups", key="clear_all_groups_expression"):
-                st.session_state['expression_clear_all_groups'] = True
+                st.session_state['selected_groups_from_expression'] = set()
                 st.rerun()
 
     with st.form("expression_combined_form"):
@@ -296,6 +317,9 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
                 for _, row in selected_rows.iterrows():
                     group_id = f"{row['Sample Group']}_{row['Dataset']}"
                     selected_groups.append(group_id)
+
+                # Update session state with current selections
+                st.session_state['selected_groups_from_expression'] = set(selected_groups)
 
             # Get genes from current form state
             selected_genes = []
