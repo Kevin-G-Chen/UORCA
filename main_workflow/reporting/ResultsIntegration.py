@@ -1193,9 +1193,8 @@ class ResultsIntegrator:
         else:  # Default to bottom
             fig.update_layout(legend=dict(orientation="h", y=-0.35, x=0.5, xanchor="center", yanchor="top"))
 
-        # Improve axis appearance and hide x-axis labels/title completely
-        fig.update_xaxes(categoryorder="category ascending", showticklabels=False, title_text="")
-        fig.update_layout(xaxis_title="")
+        # Remove x-axis completely from all facets - no processing at all
+        fig.update_xaxes(visible=False)
 
         # Configure grid lines and ensure y-axis ticks are shown on each plot
         if show_grid_lines:
@@ -1244,8 +1243,7 @@ class ResultsIntegrator:
             # Each facet gets its own y-axis scale (default behavior we want to ensure)
             fig.update_yaxes(matches=None)
 
-        # X-axis labels and titles are already hidden above
-        # This section is no longer needed as we always hide x-axis labels
+        # X-axis is completely removed above
         pass
 
         # Add note about number of genes
