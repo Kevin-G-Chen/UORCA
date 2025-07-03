@@ -141,9 +141,7 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                 st.form_submit_button("Apply Dataset Selection", disabled=True)
 
         # Show current selection summary
-        if st.session_state['selected_datasets_from_sidebar']:
-            st.success(f"✅ {len(st.session_state['selected_datasets_from_sidebar'])} datasets selected")
-        else:
+        if not st.session_state['selected_datasets_from_sidebar']:
             st.info("No datasets selected")
 
         # Return results if we have selections
