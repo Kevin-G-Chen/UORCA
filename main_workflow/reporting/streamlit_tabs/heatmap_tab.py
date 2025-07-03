@@ -2,20 +2,24 @@
 Heatmap Tab for UORCA Explorer.
 
 This tab displays interactive heatmaps showing log2 fold changes for selected genes across contrasts.
+Includes contrast selection and gene selection forms at the top.
 """
 
 import logging
 import streamlit as st
+import pandas as pd
 import traceback
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 
 from .helpers import (
     check_ai_generating,
     setup_fragment_decorator,
     cached_figure_creation,
+    cached_identify_important_genes,
     log_streamlit_tab,
     log_streamlit_function,
     log_streamlit_event,
+    log_streamlit_user_action,
     group_contrasts_by_organism,
     filter_genes_by_organism,
     get_organism_display_name
@@ -29,69 +33,67 @@ logger = logging.getLogger(__name__)
 
 
 @log_streamlit_tab("Heatmap")
-def render_heatmap_tab(
-    ri: ResultsIntegrator,
-    gene_sel: List[str],
-    selected_contrasts: List[Tuple[str, str]],
-    effective_pvalue_thresh: Optional[float],
-    effective_lfc_thresh: Optional[float],
-    use_dynamic_filtering: bool,
-    hide_empty_rows_cols: bool,
-    gene_selection_method: str = "Frequent DEGs",
-    custom_genes_count: int = 0
-):
+def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kwargs):
     """
-    Render the heatmap tab.
+    Render the heatmap tab with contrast and gene selection forms.
 
     Args:
         ri: ResultsIntegrator instance
-        gene_sel: List of selected genes
-        selected_contrasts: List of (analysis_id, contrast_id) tuples
-        effective_pvalue_thresh: P-value threshold for filtering
-        effective_lfc_thresh: Log fold change threshold for filtering
-        use_dynamic_filtering: Whether to use dynamic filtering
-        hide_empty_rows_cols: Whether to hide empty rows/columns
-        gene_selection_method: Method used for gene selection ("Frequent DEGs" or "Custom")
-        custom_genes_count: Number of custom genes provided (if applicable)
+        selected_datasets: List of selected dataset IDs from sidebar
+        **kwargs: Additional arguments (maintained for compatibility)
     """
     st.header("Explore DEG Heatmap")
-    st.markdown("**Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Hover over cells for details. Use the Dataset & Contrast Selection and Heatmap Parameters forms in the sidebar.")
+    st.markdown("**Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Configure your analysis parameters below, then view the heatmap.")
 
+    # Get selected datasets from sidebar
+    if not selected_datasets:
+        selected_datasets = st.session_state.get('selected_datasets_from_sidebar', [])
 
-
-    if not selected_contrasts:
-        log_streamlit_event("No contrasts selected for heatmap")
+    if not selected_datasets:
         st.info("**Getting Started:**")
         st.markdown("""
-        1. **Select Datasets** in the "Dataset & Contrast Selection" section in the sidebar
-        2. **Select Contrasts** using the second form (auto-populated from your datasets)
-        3. **Configure Parameters** in the "Heatmap Parameters" section (thresholds and gene count)
-        4. **View Results** - genes are automatically selected and heatmap generated
+        1. **Select Datasets** in the sidebar first
+        2. **Choose Contrasts** using the form below (populated from your datasets)
+        3. **Configure Gene Selection** using the gene selection form
+        4. **View Results** - heatmap will be generated automatically
 
-        **Tip:** Start with dataset selection - this will automatically populate available contrasts.
+        **Tip:** Start with dataset selection in the sidebar to populate the forms below.
         """)
-    elif not gene_sel:
-        log_streamlit_event("No genes selected for heatmap")
-        if gene_selection_method == "Custom":
-            st.write("❌ **No custom genes available for heatmap**")
-            st.write("**Possible reasons:** Genes not found in datasets or invalid gene symbols. Check the Custom Gene Validation section in the sidebar for details.")
-        else:
-            st.write("No genes were automatically selected with the current parameters. Try adjusting the significance thresholds in the sidebar form.")
-    else:
+        return
+
+    # Render contrast selection form
+    selected_contrasts = _render_contrast_selection_form(ri, selected_datasets)
+
+    # Render gene selection form
+    gene_params = _render_gene_selection_form(ri, ri.results_dir)
+
+    # Auto-select genes if we have contrasts and gene parameters
+    gene_sel = []
+    if selected_contrasts and gene_params:
+        gene_sel = _auto_select_genes(ri, ri.results_dir, selected_contrasts, gene_params)
+
+    # Display current selections summary
+    if selected_contrasts and gene_sel:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Datasets", len(selected_datasets))
+        with col2:
+            st.metric("Contrasts", len(selected_contrasts))
+        with col3:
+            st.metric("Genes", len(gene_sel))
+
         # Display gene selection method information
-        if gene_selection_method == "Custom":
+        if gene_params.get('gene_selection_method') == "Custom":
+            custom_genes_count = len(gene_params.get('custom_genes', []))
             success_rate = (len(gene_sel) / custom_genes_count * 100) if custom_genes_count > 0 else 0
             if success_rate == 100:
-                st.write(f"🎯 **Custom Gene Selection**: All {len(gene_sel)} custom genes found in datasets")
+                st.success(f"🎯 **Custom Gene Selection**: All {len(gene_sel)} custom genes found in datasets")
             else:
-                st.write(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} of {custom_genes_count} custom genes ({success_rate:.0f}% found in datasets)")
-                if custom_genes_count > len(gene_sel):
-                    st.write("💡 See 'Custom Gene Validation' in the sidebar for information about missing genes")
+                st.info(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} of {custom_genes_count} custom genes ({success_rate:.0f}% found in datasets)")
         else:
-            st.write(f"📊 **Frequent DEGs**: Displaying {len(gene_sel)} most frequently differentially expressed genes")
-        log_streamlit_event(f"Heatmap: {len(gene_sel)} genes, {len(selected_contrasts)} contrasts")
+            st.info(f"📊 **Frequent DEGs**: Displaying {len(gene_sel)} most frequently differentially expressed genes")
 
-        # Group contrasts by organism
+        # Group contrasts by organism and render heatmaps
         organism_groups = group_contrasts_by_organism(ri, selected_contrasts)
 
         if len(organism_groups) == 1:
@@ -104,17 +106,16 @@ def render_heatmap_tab(
                 ri,
                 organism_genes,
                 organism_contrasts,
-                effective_pvalue_thresh,
-                effective_lfc_thresh,
-                use_dynamic_filtering,
-                hide_empty_rows_cols,
+                gene_params.get('pvalue_thresh', 0.05),
+                gene_params.get('lfc_thresh', 1.0),
+                use_dynamic_filtering=True,
+                hide_empty_rows_cols=True,
                 font_size=12,
                 show_grid_lines=True,
                 grid_opacity=0.3
             )
         else:
             # Multiple organisms - create sub-tabs
-            # Create organism-specific tabs
             organism_names = list(organism_groups.keys())
             tab_names = [get_organism_display_name(org) for org in organism_names]
             tabs = st.tabs(tab_names)
@@ -129,20 +130,359 @@ def render_heatmap_tab(
                             ri,
                             organism_genes,
                             organism_contrasts,
-                            effective_pvalue_thresh,
-                            effective_lfc_thresh,
-                            use_dynamic_filtering,
-                            hide_empty_rows_cols,
+                            gene_params.get('pvalue_thresh', 0.05),
+                            gene_params.get('lfc_thresh', 1.0),
+                            use_dynamic_filtering=True,
+                            hide_empty_rows_cols=True,
                             font_size=12,
                             show_grid_lines=True,
                             grid_opacity=0.3
                         )
                     else:
                         st.warning(f"No genes found for {get_organism_display_name(organism)} with current parameters.")
-                        st.info("Try adjusting the significance thresholds in the sidebar or selecting more datasets for this species.")
+                        st.info("Try adjusting the significance thresholds in the gene selection form or selecting more datasets for this species.")
+
+    elif selected_contrasts and not gene_sel:
+        st.warning("No genes selected. Please configure gene selection parameters above.")
+    elif not selected_contrasts:
+        st.info("Please select contrasts using the form above.")
 
 
+@log_streamlit_function
+def _render_contrast_selection_form(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[Tuple[str, str]]:
+    """Render the contrast selection form."""
+    st.subheader("1. Select Contrasts")
 
+    # Initialize session state
+    if 'selected_contrasts_heatmap' not in st.session_state:
+        st.session_state['selected_contrasts_heatmap'] = set()
+
+    with st.form("heatmap_contrast_selection"):
+        contrast_data = _create_contrast_table_data_filtered(ri, selected_datasets)
+
+        if contrast_data:
+            df = pd.DataFrame(contrast_data)
+            # Pre-select based on session state
+            df['Select'] = df.apply(
+                lambda row: (row['Accession'], row['Contrast']) in st.session_state['selected_contrasts_heatmap'],
+                axis=1
+            )
+
+            st.info(f"Available contrasts from {len(selected_datasets)} selected datasets")
+
+            edited_df = st.data_editor(
+                df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Select": st.column_config.CheckboxColumn(
+                        "",
+                        help="Check to include this contrast in the heatmap",
+                        default=False
+                    ),
+                    "Accession": st.column_config.TextColumn(
+                        "Dataset",
+                        help="GEO accession number",
+                        width=100
+                    ),
+                    "Contrast": st.column_config.TextColumn(
+                        "Contrast",
+                        help="Contrast identifier",
+                        width=200
+                    ),
+                    "Description": st.column_config.TextColumn(
+                        "Description",
+                        help="Contrast description",
+                        width=400
+                    )
+                },
+                key="heatmap_contrast_selection_table"
+            )
+
+            # Quick selection buttons
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                select_all = st.form_submit_button("Select All", type="secondary")
+            with col2:
+                clear_all = st.form_submit_button("Clear All", type="secondary")
+            with col3:
+                apply_selection = st.form_submit_button("Apply Selection", type="primary")
+            with col4:
+                st.write("")  # Spacer
+
+            if select_all:
+                # Select all contrasts
+                all_contrasts = set([
+                    (row["Accession"], row["Contrast"])
+                    for _, row in df.iterrows()
+                ])
+                st.session_state['selected_contrasts_heatmap'] = all_contrasts
+                log_streamlit_user_action(f"Selected all {len(all_contrasts)} contrasts for heatmap")
+                st.rerun()
+
+            elif clear_all:
+                # Clear all selections
+                st.session_state['selected_contrasts_heatmap'] = set()
+                log_streamlit_user_action("Cleared all contrast selections for heatmap")
+                st.rerun()
+
+            elif apply_selection:
+                # Apply current selections
+                selected_contrasts = set()
+                if not edited_df.empty:
+                    selected_rows = edited_df[edited_df["Select"] == True]
+                    selected_contrasts = set([
+                        (row["Accession"], row["Contrast"])
+                        for _, row in selected_rows.iterrows()
+                    ])
+
+                st.session_state['selected_contrasts_heatmap'] = selected_contrasts
+                log_streamlit_user_action(f"Applied {len(selected_contrasts)} contrast selections for heatmap")
+                st.rerun()
+
+        else:
+            st.info("No contrasts available for selected datasets")
+            st.form_submit_button("Apply Selection", disabled=True)
+
+    # Return current selections as list of tuples
+    return list(st.session_state['selected_contrasts_heatmap'])
+
+
+@log_streamlit_function
+def _render_gene_selection_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Dict[str, Any]]:
+    """Render the gene selection form."""
+    st.subheader("2. Configure Gene Selection")
+
+    with st.form("heatmap_gene_selection"):
+        # Gene selection method
+        gene_selection_method = st.radio(
+            "Choose gene selection method",
+            options=["Frequent DEGs", "Custom"],
+            key="heatmap_gene_selection_method",
+            help="**Frequent DEGs**: Automatically finds genes that are consistently differentially expressed across multiple contrasts. **Custom**: Use your own gene list for targeted analysis.",
+            horizontal=True
+        )
+
+        st.subheader("Significance Thresholds")
+        col1, col2 = st.columns(2)
+        with col1:
+            lfc_thresh = st.text_input(
+                "Log2FC Threshold",
+                value="1.0",
+                help="Absolute log2 fold change threshold for significance",
+                key="heatmap_lfc_threshold"
+            )
+        with col2:
+            pvalue_thresh = st.text_input(
+                "P-value Threshold",
+                value="0.05",
+                help="Adjusted p-value threshold for significance",
+                key="heatmap_pvalue_threshold"
+            )
+
+        # Gene count (for Frequent DEGs)
+        if gene_selection_method == "Frequent DEGs":
+            gene_count_input = st.text_input(
+                "Number of genes to display",
+                value="50",
+                help="Number of top frequently differentially expressed genes to include",
+                key="heatmap_gene_count"
+            )
+        else:
+            gene_count_input = "50"  # Default, not used for custom
+
+        # Custom gene input
+        if gene_selection_method == "Custom":
+            custom_genes_input = st.text_area(
+                "Custom Gene List",
+                height=150,
+                placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
+                help="Enter gene symbols, one per line. Genes will be filtered by significance thresholds.",
+                key="heatmap_custom_genes"
+            )
+
+            # Show preview for custom genes
+            if custom_genes_input.strip():
+                custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+                if custom_genes_list:
+                    st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
+                    preview_text = ", ".join(custom_genes_list[:10])
+                    if len(custom_genes_list) > 10:
+                        preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
+                    st.caption(preview_text)
+        else:
+            custom_genes_input = ""
+
+        # Validate parameters
+        validation_error = False
+        try:
+            lfc_val = float(lfc_thresh)
+            pval_val = float(pvalue_thresh)
+        except ValueError:
+            st.error("Please enter valid numeric values for thresholds")
+            lfc_val, pval_val = 1.0, 0.05
+            validation_error = True
+
+        # Validate gene count
+        if gene_selection_method == "Frequent DEGs":
+            try:
+                gene_count = int(gene_count_input)
+                if gene_count <= 0:
+                    raise ValueError("Gene count must be positive")
+            except ValueError:
+                st.error("Please enter a valid positive number for gene count")
+                gene_count = 50
+                validation_error = True
+        else:
+            gene_count = 50
+
+        # Validate custom genes
+        custom_genes_list = []
+        if gene_selection_method == "Custom":
+            if not custom_genes_input.strip():
+                st.error("Please enter at least one gene for custom selection")
+                validation_error = True
+            else:
+                custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+                if not custom_genes_list:
+                    st.error("Please enter valid gene names")
+                    validation_error = True
+
+        # Submit button
+        submitted = st.form_submit_button("Apply Gene Selection", type="primary")
+
+        if submitted and not validation_error:
+            if gene_selection_method == "Frequent DEGs":
+                log_streamlit_user_action(f"Heatmap gene parameters: LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
+            else:
+                log_streamlit_user_action(f"Heatmap gene parameters: LFC={lfc_val}, P={pval_val}, method=Custom, custom_genes={len(custom_genes_list)}")
+
+            return {
+                'lfc_thresh': lfc_val,
+                'pvalue_thresh': pval_val,
+                'gene_count': gene_count,
+                'gene_selection_method': gene_selection_method,
+                'custom_genes': custom_genes_list
+            }
+
+    return None
+
+
+@log_streamlit_function
+def _create_contrast_table_data_filtered(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[Dict[str, Any]]:
+    """Create data for the contrast selection table, filtered by selected datasets."""
+    contrast_data = []
+
+    for analysis_id in selected_datasets:
+        if analysis_id in ri.analysis_info:
+            info = ri.analysis_info[analysis_id]
+            accession = info.get("accession", analysis_id)
+
+            for contrast in info.get("contrasts", []):
+                contrast_id = contrast["name"]
+                description = contrast.get("description", "")
+
+                contrast_data.append({
+                    "Select": False,
+                    "Accession": accession,
+                    "Contrast": contrast_id,
+                    "Description": description
+                })
+
+    return contrast_data
+
+
+@log_streamlit_function
+def _auto_select_genes(
+    ri: ResultsIntegrator,
+    results_dir: str,
+    selected_contrasts: List[Tuple[str, str]],
+    gene_params: Dict[str, Any]
+) -> List[str]:
+    """Select genes based on gene parameters and selected contrasts."""
+    if not selected_contrasts:
+        return []
+
+    gene_selection_method = gene_params.get('gene_selection_method', 'Frequent DEGs')
+
+    try:
+        # Group contrasts by organism
+        organism_groups = group_contrasts_by_organism(ri, selected_contrasts)
+
+        if gene_selection_method == 'Custom':
+            # Custom gene selection
+            custom_genes = gene_params.get('custom_genes', [])
+            if not custom_genes:
+                return []
+
+            # Collect all available genes from selected contrasts
+            available_genes = set()
+            for organism_contrasts in organism_groups.values():
+                for analysis_id, contrast_id in organism_contrasts:
+                    if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
+                        deg_df = ri.deg_data[analysis_id][contrast_id]
+                        if 'Gene' in deg_df.columns:
+                            available_genes.update(deg_df['Gene'].tolist())
+
+            # Filter custom genes to only those available
+            available_custom_genes = [gene for gene in custom_genes if gene in available_genes]
+            missing_genes = [gene for gene in custom_genes if gene not in available_genes]
+
+            # Show validation in an expander
+            with st.expander("Custom Gene Validation", expanded=bool(missing_genes)):
+                st.write(f"**Total custom genes:** {len(custom_genes)}")
+                st.write(f"**Found in selected contrasts:** {len(available_custom_genes)}")
+
+                if missing_genes:
+                    st.warning(f"**{len(missing_genes)} genes not found in selected contrasts:**")
+                    if len(missing_genes) <= 15:
+                        st.write(", ".join(missing_genes))
+                    else:
+                        st.write(f"{', '.join(missing_genes[:15])}, ... (+{len(missing_genes)-15} more)")
+
+            log_streamlit_event(f"Custom gene selection: {len(available_custom_genes)} of {len(custom_genes)} genes available")
+            return available_custom_genes
+
+        else:
+            # Frequent DEGs selection
+            if len(organism_groups) == 1:
+                # Single organism
+                organism = list(organism_groups.keys())[0]
+                organism_contrasts = organism_groups[organism]
+
+                top_genes = cached_identify_important_genes(
+                    results_dir=results_dir,
+                    selected_contrasts=organism_contrasts,
+                    top_frequent=gene_params.get('gene_count', 50),
+                    p_value_threshold=gene_params['pvalue_thresh'],
+                    lfc_threshold=gene_params['lfc_thresh']
+                )
+
+                log_streamlit_event(f"Auto-selected {len(top_genes)} frequent DEGs for {organism}")
+                return top_genes
+
+            else:
+                # Multiple organisms - combine genes from each
+                all_selected_genes = []
+                gene_count_per_organism = gene_params.get('gene_count', 50)
+
+                for organism, organism_contrasts in organism_groups.items():
+                    organism_genes = cached_identify_important_genes(
+                        results_dir=results_dir,
+                        selected_contrasts=organism_contrasts,
+                        top_frequent=gene_count_per_organism,
+                        p_value_threshold=gene_params['pvalue_thresh'],
+                        lfc_threshold=gene_params['lfc_thresh']
+                    )
+                    all_selected_genes.extend(organism_genes)
+
+                log_streamlit_event(f"Auto-selected {len(all_selected_genes)} frequent DEGs across {len(organism_groups)} organisms")
+                return all_selected_genes
+
+    except Exception as e:
+        logger.error(f"Error in gene selection: {e}")
+        st.error(f"Error selecting genes: {str(e)}")
+        return []
 
 
 @st.fragment
@@ -161,18 +501,6 @@ def _draw_heatmap(
 ):
     """
     Create and display the heatmap using fragment isolation.
-
-    Args:
-        ri: ResultsIntegrator instance
-        gene_selection: List of selected genes
-        contrast_pairs: List of (analysis_id, contrast_id) tuples
-        p_thresh: P-value threshold for filtering
-        lfc_thresh_val: Log fold change threshold for filtering
-        use_dynamic_filtering: Whether to use dynamic filtering
-        hide_empty_rows_cols: Whether to hide empty rows/columns
-        font_size: Font size for heatmap
-        show_grid_lines: Whether to show grid lines
-        grid_opacity: Opacity of grid lines
     """
     # Skip execution if AI is currently generating
     if check_ai_generating():
@@ -200,7 +528,7 @@ def _draw_heatmap(
 
             if fig:
                 log_streamlit_event("Heatmap generated successfully")
-                _display_heatmap_info()
+                st.info("**Heatmap Tips:** Hover over cells to see contrast descriptions and gene information. Use the forms above to modify your analysis.")
                 st.plotly_chart(fig, use_container_width=True)
 
                 # Display information about filtered genes/contrasts if hide_empty_rows_cols is True
@@ -208,18 +536,12 @@ def _draw_heatmap(
                     _display_filtered_elements_info(ri)
             else:
                 log_streamlit_event("Failed to generate heatmap")
-                st.error("Could not generate heatmap. Please check your selections and try adjusting the parameters in the sidebar form.")
+                st.error("Could not generate heatmap. Please check your selections and try adjusting the parameters above.")
 
         except Exception as e:
             logger.error(f"Error generating heatmap: {str(e)}", exc_info=True)
             st.error(f"Error generating heatmap: {str(e)}")
             _display_heatmap_error_details(e)
-
-
-@log_streamlit_function
-def _display_heatmap_info():
-    """Display informational messages about the heatmap."""
-    st.info("**Heatmap Tips:** Hover over cells to see contrast descriptions and gene information. Use the Dataset & Contrast Selection and Heatmap Parameters forms in the sidebar to modify your analysis.")
 
 
 @log_streamlit_function
@@ -235,7 +557,6 @@ def _display_filtered_elements_info(ri: ResultsIntegrator):
                 if filtered_genes:
                     st.subheader("Hidden Genes")
                     st.write(f"**{len(filtered_genes)} genes** hidden because they have no significant values in any selected contrasts:")
-                    # Display genes in a more compact format
                     genes_text = ", ".join(filtered_genes)
                     st.text_area("Genes:", value=genes_text, height=100, disabled=True, key="heatmap_filtered_genes_display")
 
@@ -245,8 +566,6 @@ def _display_filtered_elements_info(ri: ResultsIntegrator):
                     for contrast in filtered_contrasts:
                         st.write(f"• {contrast}")
 
-                if not filtered_genes and not filtered_contrasts:
-                    st.info("No elements were hidden - all genes and contrasts have at least one significant value.")
     except Exception as e:
         logger.warning(f"Could not display filtered elements info: {e}")
 

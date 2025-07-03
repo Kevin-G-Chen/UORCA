@@ -1,25 +1,21 @@
 """
-Sidebar Controls for UORCA Explorer - Form-Based Version with Dataset Selection.
+Sidebar Controls for UORCA Explorer - Dataset Selection Only.
 
-This module handles all sidebar controls using Streamlit forms with expandable sections
-for dataset selection, heatmap and expression plots configuration.
+This module handles dataset selection in the sidebar. Contrast and gene selection
+have been moved to their respective tabs.
 """
 
 import os
 import logging
 import streamlit as st
 import pandas as pd
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 
 from .helpers import (
-    cached_identify_important_genes,
     load_environment,
     log_streamlit_function,
     log_streamlit_event,
-    log_streamlit_user_action,
-    group_contrasts_by_organism,
-    filter_genes_by_organism,
-    get_organism_display_name
+    log_streamlit_user_action
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -32,89 +28,49 @@ load_environment()
 @log_streamlit_function
 def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str, Any]:
     """
-    Render all sidebar controls using forms and return the selected parameters.
+    Render sidebar controls for dataset selection only.
 
     Args:
         ri: ResultsIntegrator instance
         results_dir: Path to results directory
 
     Returns:
-        Dictionary containing all selected parameters and gene selections
+        Dictionary containing selected datasets
     """
     st.sidebar.title("UORCA Explorer")
 
-
-
     # Initialize return parameters with defaults
     params = {
-        'gene_sel': [],
-        'selected_contrasts': [],
-        'selected_datasets': [],
-        'heatmap_params': {
-            'lfc_thresh': 1.0,
-            'pvalue_thresh': 0.05,
-            'gene_count': 50,
-            'gene_selection_method': 'Frequent DEGs',
-            'custom_genes': [],
-            'contrasts': [],
-            'datasets': []
-        },
-
+        'selected_datasets': []
     }
 
-    # Dataset Selection Forms
+    # Dataset Selection Form
     dataset_params = _render_dataset_selection_section(ri, results_dir)
     if dataset_params:
         params['selected_datasets'] = dataset_params.get('datasets', [])
-        params['selected_contrasts'] = dataset_params.get('contrasts', [])
-        params['heatmap_params']['datasets'] = dataset_params.get('datasets', [])
-        params['heatmap_params']['contrasts'] = dataset_params.get('contrasts', [])
-
-    # Heatmap Configuration Form
-    heatmap_params = _render_heatmap_form(ri, results_dir)
-    if heatmap_params:
-        params['heatmap_params'].update(heatmap_params)
-        # Use contrasts from dataset selection if available, otherwise from heatmap
-        if not params['selected_contrasts']:
-            params['selected_contrasts'] = heatmap_params.get('contrasts', [])
-
-
-
-
-
-    # Auto-select genes if we have contrasts
-    if params['selected_contrasts']:
-        gene_sel = _auto_select_genes(ri, results_dir, params['heatmap_params'])
-        params['gene_sel'] = gene_sel
 
     return params
 
 
-
-
-
 @log_streamlit_function
 def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -> Optional[Dict[str, Any]]:
-    """Render the dataset selection section with two coordinated forms."""
-    with st.sidebar.expander("Dataset & Contrast Selection", expanded=True):
-        st.markdown("**Select your datasets and contrasts for analysis**")
-        st.info("Selecting datasets will automatically update the contrast table below.")
+    """Render the dataset selection section."""
+    with st.sidebar.expander("Dataset Selection", expanded=True):
+        st.markdown("**Select datasets for analysis**")
+        st.info("Choose which datasets to include in your analysis. Contrast and gene selection are available in each tab.")
 
-        # Initialize session state for coordination
-        if 'selected_datasets_from_form' not in st.session_state:
-            st.session_state['selected_datasets_from_form'] = set()
-        if 'selected_contrasts_from_form' not in st.session_state:
-            st.session_state['selected_contrasts_from_form'] = set()
+        # Initialize session state for dataset selection
+        if 'selected_datasets_from_sidebar' not in st.session_state:
+            st.session_state['selected_datasets_from_sidebar'] = set()
 
-        # Form 1: Dataset Selection
-        st.subheader("1. Select Datasets")
-        with st.form("dataset_selection"):
+        # Dataset Selection Form
+        with st.form("dataset_selection_sidebar"):
             dataset_data = _create_dataset_table_data(ri)
 
             if dataset_data:
                 df = pd.DataFrame(dataset_data)
                 # Pre-select based on session state
-                df['Select'] = df['Accession'].isin(st.session_state['selected_datasets_from_form'])
+                df['Select'] = df['Accession'].isin(st.session_state['selected_datasets_from_sidebar'])
 
                 edited_df = st.data_editor(
                     df,
@@ -147,10 +103,10 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                             width=85
                         )
                     },
-                    key="dataset_selection_table"
+                    key="dataset_selection_sidebar_table"
                 )
 
-                dataset_submitted = st.form_submit_button("Apply", type="primary")
+                dataset_submitted = st.form_submit_button("Apply Dataset Selection", type="primary")
 
                 if dataset_submitted:
                     # Get selected datasets
@@ -160,238 +116,43 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                         selected_datasets = set(selected_rows["Accession"].tolist())
 
                     # Update session state
-                    st.session_state['selected_datasets_from_form'] = selected_datasets
+                    st.session_state['selected_datasets_from_sidebar'] = selected_datasets
 
-                    # Auto-update contrasts based on selected datasets
-                    if selected_datasets:
-                        auto_contrasts = set()
-                        for dataset in selected_datasets:
-                            for contrast in ri.analysis_info.get(dataset, {}).get("contrasts", []):
-                                auto_contrasts.add((dataset, contrast["name"]))
-                        st.session_state['selected_contrasts_from_form'] = auto_contrasts
-                    else:
-                        st.session_state['selected_contrasts_from_form'] = set()
-
-                    log_streamlit_user_action(f"Dataset form submitted: {len(selected_datasets)} datasets selected")
+                    log_streamlit_user_action(f"Dataset selection updated: {len(selected_datasets)} datasets selected")
                     st.rerun()
             else:
                 st.info("No datasets available")
-                st.form_submit_button("Update Datasets", disabled=True)
+                st.form_submit_button("Apply Dataset Selection", disabled=True)
 
-        # Form 2: Contrast Selection
-        st.subheader("2. Select Contrasts")
-        with st.form("contrast_selection"):
-            # Filter contrasts based on selected datasets
-            if st.session_state['selected_datasets_from_form']:
-                contrast_data = _create_contrast_table_data_filtered(
-                    ri, st.session_state['selected_datasets_from_form']
-                )
-            else:
-                contrast_data = []
+        # Show current selection summary
+        if st.session_state['selected_datasets_from_sidebar']:
+            st.success(f"✅ {len(st.session_state['selected_datasets_from_sidebar'])} datasets selected")
 
-            if contrast_data:
-                df = pd.DataFrame(contrast_data)
-                # Pre-select based on session state
-                df['Select'] = df.apply(
-                    lambda row: (row['Accession'], row['Contrast']) in st.session_state['selected_contrasts_from_form'],
-                    axis=1
-                )
-
-                edited_df = st.data_editor(
-                    df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Select": st.column_config.CheckboxColumn(
-                            "",
-                            help="Check to include this contrast",
-                            default=False
-                        ),
-                        "Accession": st.column_config.TextColumn(
-                            "Accession",
-                            help="GEO accession number"
-                        ),
-                        "Contrast": st.column_config.TextColumn(
-                            "Contrast",
-                            help="Contrast identifier"
-                        )
-                    },
-                    key="contrast_selection_table"
-                )
-
-                contrast_submitted = st.form_submit_button("Apply", type="secondary")
-
-                if contrast_submitted:
-                    # Get selected contrasts
-                    selected_contrasts = set()
-                    if not edited_df.empty:
-                        selected_rows = edited_df[edited_df["Select"] == True]
-                        selected_contrasts = set([
-                            (row["Accession"], row["Contrast"])
-                            for _, row in selected_rows.iterrows()
-                        ])
-
-                    # Update session state (but don't change dataset selection)
-                    st.session_state['selected_contrasts_from_form'] = selected_contrasts
-
-                    log_streamlit_user_action(f"Contrast form submitted: {len(selected_contrasts)} contrasts selected")
+            # Quick actions
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("Select All", key="select_all_datasets"):
+                    all_datasets = set()
+                    dataset_data = _create_dataset_table_data(ri)
+                    if dataset_data:
+                        all_datasets = set([d['Accession'] for d in dataset_data])
+                    st.session_state['selected_datasets_from_sidebar'] = all_datasets
                     st.rerun()
-            else:
-                if st.session_state['selected_datasets_from_form']:
-                    st.info("No contrasts available for selected datasets")
-                else:
-                    st.info("Please select datasets first")
-                st.form_submit_button("Update Contrasts", disabled=True)
+
+            with col2:
+                if st.button("Clear All", key="clear_all_datasets"):
+                    st.session_state['selected_datasets_from_sidebar'] = set()
+                    st.rerun()
+        else:
+            st.info("No datasets selected")
 
         # Return results if we have selections
-        if st.session_state['selected_datasets_from_form'] or st.session_state['selected_contrasts_from_form']:
+        if st.session_state['selected_datasets_from_sidebar']:
             return {
-                'datasets': list(st.session_state['selected_datasets_from_form']),
-                'contrasts': list(st.session_state['selected_contrasts_from_form'])
+                'datasets': list(st.session_state['selected_datasets_from_sidebar'])
             }
 
     return None
-
-
-@log_streamlit_function
-def _render_heatmap_form(ri: ResultsIntegrator, results_dir: str) -> Optional[Dict[str, Any]]:
-    """Render the heatmap configuration form."""
-    with st.sidebar.expander("Heatmap Parameters", expanded=False):
-        with st.form("heatmap_config"):
-            # Gene selection method (moved to top)
-            st.subheader("Gene Selection")
-
-
-
-            gene_selection_method = st.radio(
-                "Choose gene selection method",
-                options=["Frequent DEGs", "Custom"],
-                key="heatmap_gene_selection_method",
-                help="**Frequent DEGs**: Automatically finds genes that are consistently differentially expressed across multiple contrasts, ranked by how often they appear as significant. \n **Custom**: Use your own gene list for targeted analysis of specific genes of interest.",
-                horizontal=True
-            )
-
-            st.subheader("Significance Thresholds")
-
-            # Parameter inputs
-            col1, col2 = st.columns(2)
-            with col1:
-                lfc_thresh = st.text_input(
-                    "Log2FC Threshold",
-                    value="1.0",
-                    help="Absolute log2 fold change threshold (applies to Frequent DEGs and heatmap filtering only)",
-                    key="heatmap_lfc_threshold"
-                )
-            with col2:
-                pvalue_thresh = st.text_input(
-                    "P-value Threshold",
-                    value="0.05",
-                    help="Adjusted p-value threshold (applies to Frequent DEGs and heatmap filtering only)",
-                    key="heatmap_pvalue_threshold"
-                )
-
-            # Always show both inputs with clear help text
-            col1, col2 = st.columns([1, 1])
-
-            with col1:
-                if gene_selection_method == "Frequent DEGs":
-                    help_text = "Number of top frequently differentially expressed genes to include in the heatmap"
-                else:
-                    help_text = "This setting does not apply when using custom gene selection"
-
-                gene_count_input = st.text_input(
-                    "Number of genes to display",
-                    value="50",
-                    help=help_text,
-                    key="heatmap_gene_count"
-                )
-
-            with col2:
-                st.write("")  # Empty space for alignment
-
-            # Custom gene input (always visible)
-            if gene_selection_method == "Custom":
-                help_text = "Enter gene symbols, one per line. For heatmaps, genes will be filtered by significance thresholds. For expression plots, all available genes will be shown."
-            else:
-                help_text = "Not used for Frequent DEGs method. Switch to 'Custom' method to use this field."
-
-            custom_genes_input = st.text_area(
-                "Custom Gene List",
-                height=150,
-                placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
-                help=help_text,
-                key="heatmap_custom_genes"
-            )
-
-            # Show preview and validation for custom genes
-            if gene_selection_method == "Custom" and custom_genes_input.strip():
-                custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-                if custom_genes_list:
-                    st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
-                    preview_text = ", ".join(custom_genes_list[:10])
-                    if len(custom_genes_list) > 10:
-                        preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
-                    st.caption(preview_text)
-
-            # Validate parameters
-            validation_error = False
-            try:
-                lfc_val = float(lfc_thresh)
-                pval_val = float(pvalue_thresh)
-            except ValueError:
-                st.error("Please enter valid numeric values for thresholds")
-                lfc_val, pval_val = 1.0, 0.05
-                validation_error = True
-
-            # Validate gene count for Frequent DEGs
-            if gene_selection_method == "Frequent DEGs":
-                try:
-                    gene_count = int(gene_count_input)
-                    if gene_count <= 0:
-                        raise ValueError("Gene count must be positive")
-                except ValueError:
-                    st.error("Please enter a valid positive number for gene count")
-                    gene_count = 50
-                    validation_error = True
-            else:
-                gene_count = 50  # Not used for custom genes
-
-            # Validate custom genes
-            custom_genes_list = []
-            if gene_selection_method == "Custom":
-                if not custom_genes_input.strip():
-                    st.error("Please enter at least one gene for custom selection")
-                    validation_error = True
-                else:
-                    custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-                    if not custom_genes_list:
-                        st.error("Please enter valid gene names")
-                        validation_error = True
-
-            # Submit button
-            submitted = st.form_submit_button("Apply", type="primary")
-
-
-
-            # Only return valid parameters if validation passed
-            if submitted and not validation_error:
-                if gene_selection_method == "Frequent DEGs":
-                    log_streamlit_user_action(f"Heatmap parameters updated: LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
-                else:
-                    log_streamlit_user_action(f"Heatmap parameters updated: LFC={lfc_val}, P={pval_val}, method=Custom, custom_genes={len(custom_genes_list)}")
-
-                return {
-                    'lfc_thresh': lfc_val,
-                    'pvalue_thresh': pval_val,
-                    'gene_count': gene_count,
-                    'gene_selection_method': gene_selection_method,
-                    'custom_genes': custom_genes_list
-                }
-
-    return None
-
-
-
 
 
 @log_streamlit_function
@@ -412,150 +173,3 @@ def _create_dataset_table_data(ri: ResultsIntegrator) -> List[Dict[str, Any]]:
             })
 
     return dataset_data
-
-
-@log_streamlit_function
-def _create_contrast_table_data_filtered(ri: ResultsIntegrator, selected_datasets: set) -> List[Dict[str, Any]]:
-    """Create data for the contrast selection table, filtered by selected datasets."""
-    contrast_data = []
-
-    for analysis_id in selected_datasets:
-        if analysis_id in ri.analysis_info:
-            info = ri.analysis_info[analysis_id]
-            for contrast in info.get("contrasts", []):
-                contrast_id = contrast["name"]
-
-                contrast_data.append({
-                    "Select": False,  # Default to unselected
-                    "Accession": ri.analysis_info[analysis_id].get("accession", analysis_id),
-                    "Contrast": contrast_id
-                })
-
-    return contrast_data
-
-
-@log_streamlit_function
-def _auto_select_genes(
-    ri: ResultsIntegrator,
-    results_dir: str,
-    heatmap_params: Dict[str, Any]
-) -> List[str]:
-    """Select genes based on heatmap parameters (frequent DEGs or custom), considering species separation."""
-    if not heatmap_params.get('contrasts'):
-        return []
-
-    # Check gene selection method
-    gene_selection_method = heatmap_params.get('gene_selection_method', 'Frequent DEGs')
-
-    try:
-        # Group contrasts by organism first
-        organism_groups = group_contrasts_by_organism(ri, heatmap_params['contrasts'])
-
-        if gene_selection_method == 'Custom':
-            # Custom gene selection - use provided gene list
-            custom_genes = heatmap_params.get('custom_genes', [])
-            if not custom_genes:
-                st.sidebar.warning("No custom genes provided")
-                return []
-
-            # Collect all available genes (no filtering for custom genes)
-            available_genes = set()
-
-            for organism_contrasts in organism_groups.values():
-                for analysis_id, contrast_id in organism_contrasts:
-                    if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
-                        deg_df = ri.deg_data[analysis_id][contrast_id]
-                        if 'Gene' in deg_df.columns:
-                            available_genes.update(deg_df['Gene'].tolist())
-
-                    if analysis_id in ri.cpm_data:
-                        cpm_df = ri.cpm_data[analysis_id]
-                        if 'Gene' in cpm_df.columns:
-                            available_genes.update(cpm_df['Gene'].tolist())
-
-            # For custom genes, return all that are available (no significance filtering)
-            missing_genes = [gene for gene in custom_genes if gene not in available_genes]
-            available_custom_genes = [gene for gene in custom_genes if gene in available_genes]
-
-            # Display validation messages
-            with st.sidebar.expander("Custom Gene Validation", expanded=True):
-                st.write(f"**Total custom genes:** {len(custom_genes)}")
-                st.write(f"**Found in data:** {len(available_custom_genes)}")
-                st.info("Custom genes are not filtered by significance thresholds. All available genes will be shown in both heatmap and expression plots.")
-
-                if missing_genes:
-                    gene_word = "gene" if len(missing_genes) == 1 else "genes"
-                    st.write(f"**{len(missing_genes)} {gene_word} not found in datasets:**")
-                    if len(missing_genes) <= 15:
-                        st.write(", ".join(missing_genes))
-                    else:
-                        st.write(f"{', '.join(missing_genes[:15])}, ... (+{len(missing_genes)-15} more)")
-
-            log_streamlit_event(f"Custom gene selection: {len(available_custom_genes)} of {len(custom_genes)} genes available")
-            return available_custom_genes
-
-        else:
-            # Frequent DEGs selection - use existing logic
-            if len(organism_groups) == 1:
-                # Single organism - use selected contrasts only
-                organism = list(organism_groups.keys())[0]
-                organism_contrasts = organism_groups[organism]
-
-                top_genes = cached_identify_important_genes(
-                    results_dir=results_dir,
-                    selected_contrasts=organism_contrasts,
-                    top_frequent=heatmap_params.get('gene_count', 50),
-                    p_value_threshold=heatmap_params['pvalue_thresh'],
-                    lfc_threshold=heatmap_params['lfc_thresh']
-                )
-
-                organism_display = get_organism_display_name(organism)
-
-                # Display which contrasts were used for gene selection
-                with st.sidebar.expander("Contrasts Used for Gene Selection", expanded=False):
-                    st.write(f"**{organism_display}** - {len(organism_contrasts)} contrasts:")
-                    for analysis_id, contrast_id in organism_contrasts:
-                        # Get dataset accession for display
-                        accession = ri.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
-                        st.write(f"• {accession}: {contrast_id}")
-
-                log_streamlit_event(f"Auto-selected {len(top_genes)} frequent DEGs for {organism}")
-                return top_genes
-
-            else:
-                # Multiple organisms - select genes for each and combine
-                all_selected_genes = []
-                gene_count_per_organism = heatmap_params.get('gene_count', 50)
-                organism_summaries = []
-
-                for organism, organism_contrasts in organism_groups.items():
-                    # Get genes for this organism's contrasts only
-                    organism_genes = cached_identify_important_genes(
-                        results_dir=results_dir,
-                        selected_contrasts=organism_contrasts,
-                        top_frequent=gene_count_per_organism,
-                        p_value_threshold=heatmap_params['pvalue_thresh'],
-                        lfc_threshold=heatmap_params['lfc_thresh']
-                    )
-
-                    all_selected_genes.extend(organism_genes)
-                    organism_display = get_organism_display_name(organism)
-                    organism_summaries.append(f"{len(organism_genes)} genes from {organism_display}")
-
-                # Display which contrasts were used for gene selection
-                with st.sidebar.expander("Contrasts Used for Gene Selection", expanded=False):
-                    for organism, organism_contrasts in organism_groups.items():
-                        organism_display = get_organism_display_name(organism)
-                        st.write(f"**{organism_display}** - {len(organism_contrasts)} contrasts:")
-                        for analysis_id, contrast_id in organism_contrasts:
-                            # Get dataset accession for display
-                            accession = ri.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
-                            st.write(f"• {accession}: {contrast_id}")
-
-                log_streamlit_event(f"Auto-selected {len(all_selected_genes)} frequent DEGs across {len(organism_groups)} organisms")
-                return all_selected_genes
-
-    except Exception as e:
-        logger.error(f"Error in gene selection: {e}")
-        st.sidebar.error(f"Error selecting genes: {str(e)}")
-        return []
