@@ -62,7 +62,6 @@ def _render_datasets_interface(ri: ResultsIntegrator):
         log_streamlit_event(f"Displaying {len(filtered_df)} datasets")
         _render_dataset_table(filtered_df)
         _render_dataset_details(filtered_df)
-        _render_selection_controls(filtered_df)
     else:
         log_streamlit_event("No datasets match current filters")
         st.info("No datasets match the current filters.")
@@ -172,7 +171,7 @@ def _render_dataset_details(filtered_df: pd.DataFrame):
             title = row.get("Title", "")
 
             # Create expander title with accession and title
-            expander_title = f"Details for {accession}"
+            expander_title = accession
             if title and pd.notna(title):
                 expander_title += f" - {title}"
 
@@ -187,17 +186,3 @@ def _render_dataset_details(filtered_df: pd.DataFrame):
                 if "Design" in filtered_df.columns and pd.notna(row.get("Design")):
                     st.subheader("Overall Design")
                     st.markdown(str(row["Design"]))
-
-
-@log_streamlit_function
-def _render_selection_controls(display_df: pd.DataFrame):
-    """Render controls for selecting all visible datasets."""
-    # Add quick selection button
-    if st.button("Select all visible datasets", key="datasets_info_select_all"):
-        visible_datasets = set(display_df["Accession"].tolist())
-        st.session_state['selected_datasets'] = visible_datasets
-        # Reset page number when changing datasets
-        st.session_state.page_num = 1
-        log_streamlit_event(f"User selected all {len(visible_datasets)} visible datasets")
-        st.success(f"Selected {len(visible_datasets)} datasets for analysis!")
-        st.info("Switch to the Heat-map or Expression tab to view updated visualizations.")

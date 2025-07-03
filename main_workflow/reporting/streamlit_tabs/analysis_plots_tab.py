@@ -49,8 +49,8 @@ def render_analysis_plots_tab(ri: ResultsIntegrator, results_dir: str):
         ri: ResultsIntegrator instance
         results_dir: Path to the results directory
     """
-    st.header("Analyze Experiments")
-    st.markdown("**Quality control and differential expression plots from individual datasets.** View MDS plots, normalization diagnostics, volcano plots, and MA plots for detailed analysis.")
+    st.header("Analyse Experiments")
+    st.markdown("**Quality control and differential expression plots from individual datasets.** View MDS plots, normalisation diagnostics, volcano plots, and MA plots for detailed analysis.")
 
 
 
@@ -153,7 +153,7 @@ def _load_sample_groups(ri: ResultsIntegrator, selected_dataset: str) -> Optiona
 @log_streamlit_function
 def _render_qc_plots(ri: ResultsIntegrator, selected_dataset: str, base_path: str, groups: Optional[Dict]):
     """Render quality control plots section."""
-    st.subheader("Quality Control and Normalization")
+    st.subheader("Quality Control and Normalisation")
 
     # Define QC plot files and descriptions
     qc_plot_files = {
