@@ -270,37 +270,33 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
             horizontal=True
         )
 
-        # Custom gene input (show immediately when Custom is selected)
-        custom_genes_input = ""
-        if gene_selection_method == "Custom":
-            custom_genes_input = st.text_area(
-                "Custom Gene List",
-                height=150,
-                placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
-                help="Enter gene symbols, one per line. Genes will be filtered by significance thresholds.",
-                key="heatmap_combined_custom_genes"
-            )
-
-            # Show preview for custom genes
-            if custom_genes_input.strip():
-                custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-                if custom_genes_list:
-                    st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
-                    preview_text = ", ".join(custom_genes_list[:10])
-                    if len(custom_genes_list) > 10:
-                        preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
-                    st.caption(preview_text)
-
+        # Always show both gene selection options
         # Gene count (for Frequent DEGs)
-        if gene_selection_method == "Frequent DEGs":
-            gene_count_input = st.text_input(
-                "Number of genes to display",
-                value="50",
-                help="Number of top frequently differentially expressed genes to include",
-                key="heatmap_combined_gene_count"
-            )
-        else:
-            gene_count_input = "50"  # Default, not used for custom
+        gene_count_input = st.text_input(
+            "Number of genes to display (Frequent DEGs)",
+            value="50",
+            help="Number of top frequently differentially expressed genes to include",
+            key="heatmap_combined_gene_count"
+        )
+
+        # Custom gene input (always visible)
+        custom_genes_input = st.text_area(
+            "Custom Gene List",
+            height=150,
+            placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
+            help="Enter gene symbols, one per line. Genes will be filtered by significance thresholds.",
+            key="heatmap_combined_custom_genes"
+        )
+
+        # Show preview for custom genes (always check for content)
+        if custom_genes_input.strip():
+            custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+            if custom_genes_list:
+                st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
+                preview_text = ", ".join(custom_genes_list[:10])
+                if len(custom_genes_list) > 10:
+                    preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
+                st.caption(preview_text)
 
         # Significance Thresholds
         st.markdown("**Significance Thresholds**")
@@ -330,30 +326,26 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
             lfc_val, pval_val = 1.0, 0.05
             validation_error = True
 
-        # Validate gene count
-        if gene_selection_method == "Frequent DEGs":
-            try:
-                gene_count = int(gene_count_input)
-                if gene_count <= 0:
-                    raise ValueError("Gene count must be positive")
-            except ValueError:
-                st.error("Please enter a valid positive number for gene count")
-                gene_count = 50
-                validation_error = True
-        else:
+        # Validate gene count (always validate since it's always shown)
+        try:
+            gene_count = int(gene_count_input)
+            if gene_count <= 0:
+                raise ValueError("Gene count must be positive")
+        except ValueError:
+            st.error("Please enter a valid positive number for gene count")
             gene_count = 50
+            validation_error = True
 
-        # Validate custom genes
+        # Validate custom genes (always parse since it's always shown)
         custom_genes_list = []
+        if custom_genes_input.strip():
+            custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+
+        # Method-specific validation
         if gene_selection_method == "Custom":
-            if not custom_genes_input.strip():
+            if not custom_genes_list:
                 st.error("Please enter at least one gene for custom selection")
                 validation_error = True
-            else:
-                custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-                if not custom_genes_list:
-                    st.error("Please enter valid gene names")
-                    validation_error = True
 
         # Single submit button
         submitted = st.form_submit_button("Generate Heatmap Analysis", type="primary")
