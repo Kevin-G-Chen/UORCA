@@ -193,31 +193,24 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
 
         # Check for duplicate group names and make them unique
         if group_dataset_combinations:
-            # Track group names we've seen
-            seen_groups = {}
-            duplicates_found = []
-
+            # First pass: count occurrences of each group name
+            group_counts = {}
             for item in group_dataset_combinations:
                 original_group = item["Sample Group"]
+                group_counts[original_group] = group_counts.get(original_group, 0) + 1
 
-                if original_group in seen_groups:
+            # Second pass: rename items that have duplicates
+            duplicates_found = []
+            for item in group_dataset_combinations:
+                original_group = item["Sample Group"]
+                if group_counts[original_group] > 1:
                     # Duplicate found - make unique by appending dataset
                     unique_group = f"{original_group} ({item['Dataset']})"
                     item["Sample Group"] = unique_group
 
-                    # Also update the first occurrence
-                    first_item = seen_groups[original_group]
-                    if first_item["Sample Group"] == original_group:  # Only if not already renamed
-                        first_item["Sample Group"] = f"{original_group} ({first_item['Dataset']})"
-
-                    # Track duplicates for warning
+                    # Track duplicates for warning (avoid duplicates in the list)
                     if original_group not in duplicates_found:
                         duplicates_found.append(original_group)
-
-                    # Update tracking
-                    seen_groups[original_group] = "multiple"
-                else:
-                    seen_groups[original_group] = item
 
             # Show warning if duplicates were found
             if duplicates_found:
