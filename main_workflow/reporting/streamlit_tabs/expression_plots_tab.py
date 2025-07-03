@@ -33,29 +33,21 @@ logger = logging.getLogger(__name__)
 
 
 @log_streamlit_tab("Expression Plots")
-def render_expression_plots_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kwargs):
+def render_expression_plots_tab(ri: ResultsIntegrator, selected_datasets: List[str]):
     """
     Render the expression plots tab with combined form for group and gene selection.
 
     Args:
         ri: ResultsIntegrator instance
         selected_datasets: List of selected dataset IDs from sidebar
-        **kwargs: Additional arguments (maintained for compatibility)
     """
-    st.header("Plot Gene Expression")
-    st.markdown("**Violin plots showing gene expression distributions across sample groups.** Configure your analysis below.")
+    st.header("Expression Plots")
 
     # Get selected datasets from sidebar
     if not selected_datasets:
         selected_datasets = st.session_state.get('selected_datasets_from_sidebar', [])
 
     if not selected_datasets:
-        st.info("**Getting Started with Expression Plots:**")
-        st.markdown("""
-        1. **Select Datasets** in the sidebar first
-        2. **Choose Sample Groups and Enter Genes** using the form below
-        3. **View Results** - expression plots will be generated automatically
-        """)
         return
 
     # Render combined form for groups and genes
@@ -112,6 +104,65 @@ def render_expression_plots_tab(ri: ResultsIntegrator, selected_datasets: List[s
 
 
 @log_streamlit_function
+def _get_group_dataset_combinations(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[Dict[str, Any]]:
+    """Get all unique group-dataset combinations with duplicate handling."""
+    group_dataset_combinations = []
+
+    for dataset_id in selected_datasets:
+        if dataset_id in ri.analysis_info:
+            info = ri.analysis_info[dataset_id]
+            accession = info.get("accession", dataset_id)
+            unique_groups = info.get("unique_groups", [])
+
+            # Get dataset title
+            dataset_title = ""
+            if hasattr(ri, 'dataset_info') and dataset_id in ri.dataset_info:
+                title = ri.dataset_info[dataset_id].get('title', '')
+                if title and title.startswith('Title:'):
+                    title = title[6:].strip()
+                dataset_title = title
+
+            for group in unique_groups:
+                sample_count = _get_sample_count_for_group(ri, dataset_id, group)
+                group_dataset_combinations.append({
+                    "Select": True,  # Default to selected
+                    "Sample Group": group,
+                    "Dataset": accession,
+                    "Title": dataset_title,
+                    "Species": info.get("organism", "Unknown"),
+                    "Samples": sample_count
+                })
+
+    # Check for duplicate group names and make them unique
+    if group_dataset_combinations:
+        # First pass: count occurrences of each group name
+        group_counts = {}
+        for item in group_dataset_combinations:
+            original_group = item["Sample Group"]
+            group_counts[original_group] = group_counts.get(original_group, 0) + 1
+
+        # Second pass: rename items that have duplicates
+        for item in group_dataset_combinations:
+            original_group = item["Sample Group"]
+            if group_counts[original_group] > 1:
+                # Duplicate found - make unique by appending dataset
+                unique_group = f"{original_group} ({item['Dataset']})"
+                item["Sample Group"] = unique_group
+
+    # Apply select/clear all actions
+    if st.session_state.get('expression_select_all_groups', False):
+        for item in group_dataset_combinations:
+            item['Select'] = True
+        st.session_state['expression_select_all_groups'] = False
+    elif st.session_state.get('expression_clear_all_groups', False):
+        for item in group_dataset_combinations:
+            item['Select'] = False
+        st.session_state['expression_clear_all_groups'] = False
+
+    return group_dataset_combinations
+
+
+@log_streamlit_function
 def _get_sample_count_for_group(ri: ResultsIntegrator, dataset_id: str, group_name: str) -> int:
     """Get the number of samples in a specific group for a dataset."""
     try:
@@ -157,70 +208,29 @@ def _get_sample_count_for_group(ri: ResultsIntegrator, dataset_id: str, group_na
 def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -> Optional[Dict[str, Any]]:
     """Render the combined form for sample group and gene selection."""
 
+    # Quick selection buttons (outside form)
+    if group_dataset_combinations := _get_group_dataset_combinations(ri, selected_datasets):
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Select All Groups", key="select_all_groups_expression"):
+                st.session_state['expression_select_all_groups'] = True
+                st.rerun()
+        with col2:
+            if st.button("Clear All Groups", key="clear_all_groups_expression"):
+                st.session_state['expression_clear_all_groups'] = True
+                st.rerun()
+
     with st.form("expression_combined_form"):
-        st.subheader("Configure Expression Analysis")
+        st.subheader("Configuration")
 
         # Sample Group Selection
-        st.markdown("**1. Select Sample Groups**")
+        st.markdown("**Sample Groups**")
 
         # Get all unique group-dataset combinations
-        group_dataset_combinations = []
-
-        for dataset_id in selected_datasets:
-            if dataset_id in ri.analysis_info:
-                info = ri.analysis_info[dataset_id]
-                accession = info.get("accession", dataset_id)
-                unique_groups = info.get("unique_groups", [])
-
-                # Get dataset title
-                dataset_title = ""
-                if hasattr(ri, 'dataset_info') and dataset_id in ri.dataset_info:
-                    title = ri.dataset_info[dataset_id].get('title', '')
-                    if title and title.startswith('Title:'):
-                        title = title[6:].strip()
-                    dataset_title = title
-
-                for group in unique_groups:
-                    sample_count = _get_sample_count_for_group(ri, dataset_id, group)
-                    group_dataset_combinations.append({
-                        "Select": True,  # Default to selected
-                        "Sample Group": group,
-                        "Dataset": accession,
-                        "Title": dataset_title,
-                        "Species": info.get("organism", "Unknown"),
-                        "Samples": sample_count
-                    })
-
-        # Check for duplicate group names and make them unique
-        if group_dataset_combinations:
-            # First pass: count occurrences of each group name
-            group_counts = {}
-            for item in group_dataset_combinations:
-                original_group = item["Sample Group"]
-                group_counts[original_group] = group_counts.get(original_group, 0) + 1
-
-            # Second pass: rename items that have duplicates
-            duplicates_found = []
-            for item in group_dataset_combinations:
-                original_group = item["Sample Group"]
-                if group_counts[original_group] > 1:
-                    # Duplicate found - make unique by appending dataset
-                    unique_group = f"{original_group} ({item['Dataset']})"
-                    item["Sample Group"] = unique_group
-
-                    # Track duplicates for warning (avoid duplicates in the list)
-                    if original_group not in duplicates_found:
-                        duplicates_found.append(original_group)
-
-            # Show warning if duplicates were found
-            if duplicates_found:
-                st.warning(f"⚠️ Duplicate group names detected and automatically renamed: {', '.join(duplicates_found)}")
-                st.info("Groups with the same name have been renamed to include their dataset accession for clarity.")
+        group_dataset_combinations = _get_group_dataset_combinations(ri, selected_datasets)
 
         if group_dataset_combinations:
             df = pd.DataFrame(group_dataset_combinations)
-
-            st.info(f"Available sample groups from {len(selected_datasets)} selected datasets")
 
             edited_df = st.data_editor(
                 df,
@@ -261,11 +271,10 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
                 key="expression_combined_group_table"
             )
         else:
-            st.info("No sample groups found in selected datasets")
             edited_df = pd.DataFrame()
 
         # Gene Selection
-        st.markdown("**2. Enter Genes**")
+        st.markdown("**Genes**")
 
         custom_genes_input = st.text_area(
             "Gene List",
@@ -420,19 +429,16 @@ def _draw_expression_plots(
                 st.error("Could not generate expression plots. Please check your selections.")
 
                 # Provide troubleshooting information
-                with st.expander("Troubleshooting", expanded=True):
+                with st.expander("Troubleshooting", expanded=False):
                     st.markdown("""
                     **Common issues:**
                     - Selected genes not found in the datasets
                     - Sample grouping information missing
                     - No samples matching selected groups
-                    - Dataset compatibility issues
 
                     **Solutions:**
                     - Try selecting different genes or datasets
-                    - Check that your datasets have completed analysis
                     - Verify that expression data is available
-                    - Ensure sample groups exist in selected datasets
                     """)
 
         except Exception as e:
@@ -444,12 +450,5 @@ def _draw_expression_plots(
 @log_streamlit_function
 def _display_expression_plot_error_details(error: Exception):
     """Display detailed error information in an expandable section."""
-    with st.expander("Expression Plot Error Details", expanded=False):
+    with st.expander("Error Details", expanded=False):
         st.code(traceback.format_exc())
-        st.markdown("""
-        **Common issues:**
-        - Selected genes not found in the datasets
-        - Sample grouping information missing from analysis metadata
-        - No samples found for selected groups
-        - Dataset compatibility issues across different analyses
-        """)

@@ -63,6 +63,22 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
         if 'selected_datasets_from_sidebar' not in st.session_state:
             st.session_state['selected_datasets_from_sidebar'] = set()
 
+        # Quick selection buttons (always available)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Select All", key="select_all_datasets_top"):
+                all_datasets = set()
+                dataset_data = _create_dataset_table_data(ri)
+                if dataset_data:
+                    all_datasets = set([d['Accession'] for d in dataset_data])
+                st.session_state['selected_datasets_from_sidebar'] = all_datasets
+                st.rerun()
+
+        with col2:
+            if st.button("Clear All", key="clear_all_datasets_top"):
+                st.session_state['selected_datasets_from_sidebar'] = set()
+                st.rerun()
+
         # Dataset Selection Form
         with st.form("dataset_selection_sidebar"):
             dataset_data = _create_dataset_table_data(ri)
@@ -127,22 +143,6 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
         # Show current selection summary
         if st.session_state['selected_datasets_from_sidebar']:
             st.success(f"✅ {len(st.session_state['selected_datasets_from_sidebar'])} datasets selected")
-
-            # Quick actions
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("Select All", key="select_all_datasets"):
-                    all_datasets = set()
-                    dataset_data = _create_dataset_table_data(ri)
-                    if dataset_data:
-                        all_datasets = set([d['Accession'] for d in dataset_data])
-                    st.session_state['selected_datasets_from_sidebar'] = all_datasets
-                    st.rerun()
-
-            with col2:
-                if st.button("Clear All", key="clear_all_datasets"):
-                    st.session_state['selected_datasets_from_sidebar'] = set()
-                    st.rerun()
         else:
             st.info("No datasets selected")
 
