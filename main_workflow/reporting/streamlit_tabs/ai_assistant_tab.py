@@ -85,7 +85,7 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
         results_dir: Path to the results directory
     """
     st.header("AI Assistant")
-    st.markdown("**Ask questions and get insights from your RNA-seq data using AI.**")
+    st.markdown("Ask questions and get AI-powered insights from your data.")
 
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
@@ -134,8 +134,8 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
 def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
     """Render the streamlined AI analysis workflow."""
 
-    # Initialize caching system
-    _initialize_ai_cache()
+    # Initialise caching system
+    _initialise_ai_cache()
 
     # Check if we should restore cached results
     if _should_restore_cached_analysis():
@@ -155,7 +155,7 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
         help_text = "Using the research question from your dataset identification. You can modify this or enter a new question focusing on specific aspects of your data."
     else:
         placeholder_text = default_placeholder
-        help_text = "Describe your research question or area of interest. The AI will score each contrast based on how relevant it is to this query, then analyze key genes."
+        help_text = "Describe your research question or area of interest. The AI will score each contrast based on how relevant it is to this query, then analyse key genes."
 
     # Research query input
     research_query = st.text_input(
@@ -351,8 +351,8 @@ Please perform the analysis using your four tools, choose all thresholds reasona
             st.code(traceback.format_exc())
 
 
-def _initialize_ai_cache():
-    """Initialize the AI analysis caching system."""
+def _initialise_ai_cache():
+    """Initialise the AI analysis caching system."""
     if 'ai_analysis_cache' not in st.session_state:
         st.session_state['ai_analysis_cache'] = {}
     if 'current_analysis_id' not in st.session_state:
@@ -413,10 +413,10 @@ def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str
     analysis_id = st.session_state['current_analysis_id']
     cached_data = st.session_state['ai_analysis_cache'][analysis_id]
 
-    # Show new analysis button only
+    # Add a header to show this is cached
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.write("")  # Empty space
+        st.info(f"Cached results from {cached_data['cached_at'].strftime('%H:%M:%S')}")
     with col2:
         if st.button("New Analysis", help="Start a new analysis", key="ai_new_analysis_button"):
             st.session_state['show_cached_results'] = False
@@ -651,7 +651,7 @@ def _display_unified_ai_results(
         st.markdown(str(result_output))
         return
 
-    genes = set(parsed.genes)  # normalize + dedupe
+    genes = set(parsed.genes)  # normalise + dedupe
     contrasts = [(item['analysis_id'], item['contrast_id']) for item in selected_contrast_dicts]
 
     # --- AI Interpretation (at the very top)
@@ -734,7 +734,7 @@ def _display_unified_ai_results(
             except Exception as e:
                 st.warning(f"Error generating heatmap: {str(e)}")
         else:
-            st.warning("No expression data available for heatmap visualization.")
+            st.warning("No expression data available for heatmap visualisation.")
 
     # Tab 3: Expression Table
     with table_tab:
@@ -807,7 +807,7 @@ def _display_unified_ai_results(
                 )
         else:
             # Show basic contrast list
-            st.markdown("*Contrasts analyzed*")
+            st.markdown("*Contrasts analysed*")
 
             # Prepare contrast display data
             contrast_display_data = []
@@ -857,9 +857,9 @@ def _display_unified_ai_results(
                 contrast_download_key = f"download_contrasts_{_generate_analysis_id(research_question, selected_contrast_dicts)}"
 
                 st.download_button(
-                    label="Download Analyzed Contrasts (CSV)",
+                    label="Download Analysed Contrasts (CSV)",
                     data=contrast_table_csv,
-                    file_name="analyzed_contrasts.csv",
+                    file_name="analysed_contrasts.csv",
                     mime="text/csv",
                     help="Download the contrasts table",
                     key=contrast_download_key
@@ -889,7 +889,7 @@ def _display_unified_ai_results(
 
 **Research Question:** {research_question}
 
-**Contrasts Analyzed:** {len(selected_contrast_dicts)}
+**Contrasts Analysed:** {len(selected_contrast_dicts)}
 
 ## Selected Genes
 {', '.join(sorted(genes))}
@@ -993,7 +993,7 @@ def _get_tool_description(tool_name: str) -> str:
 
         'summarize_contrast': "Provides an overview of a specific experimental comparison, including the most important genes and overall patterns of change."
     }
-    return descriptions.get(tool_name, "This tool analyzes your gene expression data to provide insights.")
+    return descriptions.get(tool_name, "This tool analyses your gene expression data to provide insights.")
 
 def _get_tool_code_snippets(tool_name: str, parameters: dict) -> tuple:
     """Get R and Python code snippets to reproduce tool functionality."""

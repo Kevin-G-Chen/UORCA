@@ -33,7 +33,7 @@ def render_contrasts_info_tab(ri: ResultsIntegrator, pvalue_thresh: float, lfc_t
         lfc_thresh: Log fold change threshold for DEG counting
     """
     st.header("View Contrast Info")
-    st.markdown("**Browse and filter contrast details.** View contrast descriptions, DEG counts, and filter by dataset or significance. Use this to understand what each comparison represents.")
+    st.markdown("Browse contrast details and filter by dataset or significance.")
 
     # Render the main contrasts interface
     _render_contrasts_interface(ri, pvalue_thresh, lfc_thresh)
@@ -284,4 +284,4 @@ def _render_contrast_table(filtered_df: pd.DataFrame, pvalue_thresh: float, lfc_
 @log_streamlit_function
 def _render_selection_controls(filtered_df: pd.DataFrame):
     """Render information about contrast selection."""
-    st.info("Use the sidebar Dataset & Contrast Selection forms to select contrasts for analysis.")
+    pass  # Removed info message about sidebar selection

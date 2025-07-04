@@ -43,7 +43,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
         **kwargs: Additional arguments (maintained for compatibility)
     """
     st.header("Explore DEG Heatmap")
-    st.markdown("**Interactive heatmap showing log2 fold changes for selected genes across contrasts.** Configure your analysis parameters below, then view the heatmap.")
+    st.markdown("Construct a heatmap of selected genes and contrasts.")
 
     # Get selected datasets from sidebar
     if not selected_datasets:
@@ -81,7 +81,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
         st.session_state['previous_datasets_heatmap'] = current_datasets
 
     # Quick selection buttons (outside form)
-    st.subheader("1. Select Contrasts")
+    st.subheader("Select Contrasts")
     contrast_data = _create_contrast_table_data_filtered(ri, selected_datasets)
 
     if contrast_data:
@@ -206,7 +206,7 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
                 axis=1
             )
 
-            st.info(f"Available contrasts from {len(selected_datasets)} selected datasets")
+
 
             edited_df = st.data_editor(
                 df,
@@ -514,9 +514,8 @@ def _draw_heatmap(
                 log_streamlit_event("Heatmap generated successfully")
                 st.plotly_chart(fig, use_container_width=True)
 
-                # Display information about filtered genes/contrasts if hide_empty_rows_cols is True
-                if hide_empty_rows_cols:
-                    _display_filtered_elements_info(ri)
+                # Display comprehensive filtering information
+                _display_comprehensive_filtering_info(ri, gene_sel, analysis_contrasts)
             else:
                 log_streamlit_event("Failed to generate heatmap")
                 st.error("Could not generate heatmap. Please check your selections and try adjusting the parameters above.")
@@ -526,6 +525,66 @@ def _draw_heatmap(
             st.error(f"Error generating heatmap: {str(e)}")
             _display_heatmap_error_details(e)
 
+
+@log_streamlit_function
+def _display_comprehensive_filtering_info(ri: ResultsIntegrator, requested_genes: List[str], selected_contrasts: List[Tuple[str, str]]):
+    """Display comprehensive information about genes and contrasts removed from the heatmap."""
+    try:
+        # Get filtered info from the heatmap creation
+        filtered_info = ri.get_last_heatmap_filtered_info() if hasattr(ri, 'get_last_heatmap_filtered_info') else {}
+        heatmap_filtered_genes = filtered_info.get('genes', [])
+        heatmap_filtered_contrasts = filtered_info.get('contrasts', [])
+
+        # Analyse gene availability and filtering
+        genes_not_found = []
+        genes_filtered_out = []
+        genes_displayed = []
+
+        # Collect all available genes from selected contrasts
+        available_genes = set()
+        for analysis_id, contrast_id in selected_contrasts:
+            if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
+                deg_df = ri.deg_data[analysis_id][contrast_id]
+                if 'Gene' in deg_df.columns:
+                    available_genes.update(deg_df['Gene'].tolist())
+
+        # Categorise requested genes
+        for gene in requested_genes:
+            if gene not in available_genes:
+                genes_not_found.append(gene)
+            elif gene in heatmap_filtered_genes:
+                genes_filtered_out.append(gene)
+            else:
+                genes_displayed.append(gene)
+
+        # Show filtering information if anything was removed
+        if genes_not_found or genes_filtered_out or heatmap_filtered_contrasts:
+            with st.expander("Filtering Summary", expanded=False):
+                st.markdown("**Summary of genes and contrasts excluded from the heatmap**")
+
+                if genes_displayed:
+                    st.success(f"✅ **{len(genes_displayed)} genes displayed** in the heatmap")
+
+                if genes_not_found:
+                    st.warning(f"❌ **{len(genes_not_found)} genes not found** in any selected contrasts:")
+                    genes_text = ", ".join(genes_not_found)
+                    st.text_area("Genes not found in datasets:", value=genes_text, height=80, disabled=True, key="genes_not_found_display")
+
+                if genes_filtered_out:
+                    st.info(f"🔍 **{len(genes_filtered_out)} genes filtered out** (never significant in selected contrasts):")
+                    genes_text = ", ".join(genes_filtered_out)
+                    st.text_area("Genes filtered for lack of significance:", value=genes_text, height=80, disabled=True, key="genes_filtered_display")
+
+                if heatmap_filtered_contrasts:
+                    st.info(f"📊 **{len(heatmap_filtered_contrasts)} contrasts hidden** (no significant genes found):")
+                    for contrast in heatmap_filtered_contrasts:
+                        st.write(f"• {contrast}")
+
+                if not (genes_not_found or genes_filtered_out or heatmap_filtered_contrasts):
+                    st.success("✅ All requested genes and contrasts are displayed in the heatmap")
+
+    except Exception as e:
+        logger.warning(f"Could not display comprehensive filtering info: {e}")
 
 @log_streamlit_function
 def _display_filtered_elements_info(ri: ResultsIntegrator):
