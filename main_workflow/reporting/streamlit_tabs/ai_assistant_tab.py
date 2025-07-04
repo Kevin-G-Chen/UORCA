@@ -413,10 +413,10 @@ def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str
     analysis_id = st.session_state['current_analysis_id']
     cached_data = st.session_state['ai_analysis_cache'][analysis_id]
 
-    # Add a header to show this is cached
+    # Show new analysis button only
     col1, col2 = st.columns([3, 1])
     with col1:
-        st.info(f"Cached results from {cached_data['cached_at'].strftime('%H:%M:%S')}")
+        st.write("")  # Empty space
     with col2:
         if st.button("New Analysis", help="Start a new analysis", key="ai_new_analysis_button"):
             st.session_state['show_cached_results'] = False
@@ -1195,18 +1195,19 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
 
     for i, call in enumerate(tool_calls, 1):
         # Format success indicator
-        status_icon = "SUCCESS" if call.get('success', True) else "FAILED"
+        status_icon = "FAILED" if not call.get('success', True) else ""
         tool_name = call.get('tool_name', 'Unknown Tool')
         timestamp = call.get('timestamp', 'Unknown time')
 
-        with st.expander(f"{status_icon} **{tool_name}** (Call #{i}) - {timestamp}", expanded=False):
+        # Create expander title without SUCCESS prefix
+        expander_title = f"**{tool_name}** (Call #{i}) - {timestamp}"
+        if status_icon:
+            expander_title = f"{status_icon} {expander_title}"
+
+        with st.expander(expander_title, expanded=False):
 
             # Add tool description at the top
-            st.markdown("#### What this tool does")
-            st.info(_get_tool_description(tool_name))
-
-            # Add code snippets for reproducibility
-            st.markdown("#### Reproduce this analysis")
+            st.markdown(_get_tool_description(tool_name))
             r_code, python_code = _get_tool_code_snippets(tool_name, call.get('parameters', {}))
 
             code_tab1, code_tab2 = st.tabs(["R Code", "Python Code"])
@@ -1250,8 +1251,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                             output_for_parsing = output_snippet
                             is_truncated = "truncated" in output_snippet
 
-                        if is_truncated:
-                            st.warning("Output truncated for display")
+
 
                         # Clean output for parsing (remove truncation text if present)
                         if is_truncated and full_output is None:
@@ -1337,57 +1337,10 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                 else:
                                     st.code(clean_output)
 
-                            if is_truncated:
-                                st.caption("*Output truncated - see raw log for complete results*")
+
 
                         except Exception as e:
-                            # Handle truncated output specially
-                            if is_truncated and "truncated" in output_snippet:
-                                st.warning("Output was truncated and cannot be fully parsed")
-
-                                # For truncated output, try to extract what we can
-                                if tool_name == 'get_most_common_genes':
-                                    # Try to extract partial gene list from truncated output
-                                    try:
-                                        # Look for complete gene entries before truncation
-                                        import re
-                                        gene_pattern = r"\{'gene': '([^']+)', 'count': (\d+)\}"
-                                        matches = re.findall(gene_pattern, clean_output)
-                                        if matches:
-                                            st.info(f"Showing first {len(matches)} genes (output was truncated)")
-                                            import pandas as pd
-                                            df_data = [{'Gene': gene, 'Count': int(count)} for gene, count in matches]
-                                            df = pd.DataFrame(df_data)
-                                            st.dataframe(df, use_container_width=True)
-                                            st.caption("*See raw log for complete results*")
-                                        else:
-                                            st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
-                                    except:
-                                        st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
-
-                                elif tool_name == 'filter_genes_by_contrast_sets':
-                                    # Try to extract partial gene list
-                                    try:
-                                        import re
-                                        # Look for genes in the format ['gene1', 'gene2', ...]
-                                        gene_pattern = r"'([A-Za-z0-9_]+)'"
-                                        matches = re.findall(gene_pattern, clean_output)
-                                        if matches:
-                                            st.info(f"Showing first {len(matches)} genes (output was truncated)")
-                                            gene_text = ', '.join(matches)
-                                            st.text_area("Partial Gene List:", value=gene_text, height=100, disabled=True)
-                                            st.caption("*See raw log for complete results*")
-                                        else:
-                                            st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
-                                    except:
-                                        st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
-
-                                else:
-                                    # For other tools, just show the truncated output
-                                    st.text_area("Truncated Output:", value=output_snippet, height=100, disabled=True)
-
-                            else:
-                                # Non-truncated parsing error
+                            # Parsing error
                                 st.warning(f"Could not parse output: {e}")
 
                                 # Try JSON parsing as fallback
@@ -1395,15 +1348,12 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                     import json as json_module
                                     parsed_json = json_module.loads(clean_output.replace("'", '"'))
                                     st.json(parsed_json)
-                                    st.caption("*Successfully parsed using JSON fallback*")
                                 except:
                                     # Display as formatted text
                                     if clean_output.strip().startswith(('{', '[')):
                                         st.code(clean_output, language='json')
-                                        st.caption("*Displaying as formatted code (parsing failed)*")
                                     else:
                                         st.text_area("Raw Output:", value=clean_output, height=100, disabled=True)
-                                        st.caption("*Displaying as raw text*")
                     elif not output_snippet or not output_snippet.strip():
                         st.info("Tool completed successfully but returned no output")
                     else:
