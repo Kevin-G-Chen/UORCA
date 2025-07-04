@@ -50,7 +50,7 @@ def render_analysis_plots_tab(ri: ResultsIntegrator, results_dir: str):
         results_dir: Path to the results directory
     """
     st.header("Analyse Experiments")
-    st.markdown("**Quality control and differential expression plots from individual datasets.** View MDS plots, normalisation diagnostics, volcano plots, and MA plots for detailed analysis.")
+    st.markdown("Explore QC plots and analysis results for individual datasets.")
 
 
 
@@ -165,22 +165,22 @@ def _render_qc_plots(ri: ResultsIntegrator, selected_dataset: str, base_path: st
             "file": os.path.join(base_path, "filtering_density.png"),
             "description": "**Density plot** showing distribution of gene expression levels (log-CPM) before and after filtering low-expression genes.\n\n- **What to look for**: After filtering (red curve), the left peak of very low-expressed genes should be reduced or eliminated.\n\n- **Technical details**: Low-expression genes are filtered out because they provide little statistical power for differential expression analysis and can increase the multiple testing burden."
         },
-        "Normalization Boxplots": {
+        "Normalisation Boxplots": {
             "file": os.path.join(base_path, "normalization_boxplots.png"),
-            "description": "**Boxplots** showing expression distributions before (left) and after (right) normalization.\n\n- **What to look for**: After normalization, all samples should have similar median expression and comparable distributions.\n\n- **Technical details**: Normalization adjusts for technical differences in sequencing depth and composition between libraries to make samples comparable."
+            "description": "**Boxplots** showing expression distributions before (left) and after (right) normalisation.\n\n- **What to look for**: After normalisation, all samples should have similar median expression and comparable distributions.\n\n- **Technical details**: Normalisation adjusts for technical differences in sequencing depth and composition between libraries to make samples comparable."
         },
         "Mean-Variance Relationship (voom)": {
             "file": os.path.join(base_path, "voom_mean_variance.png"),
-            "description": "**Voom transformation plot** showing how the variance of gene expression depends on the mean expression level.\n\n- **What to look for**: A smooth decreasing trend where variance is higher for low-expressed genes and stabilizes for highly-expressed genes.\n\n- **Technical details**: The voom method transforms count data to log-CPM values and estimates the mean-variance relationship to assign appropriate weights for linear modeling."
+            "description": "**Voom transformation plot** showing how the variance of gene expression depends on the mean expression level.\n\n- **What to look for**: A smooth decreasing trend where variance is higher for low-expressed genes and stabilises for highly-expressed genes.\n\n- **Technical details**: The voom method transforms count data to log-CPM values and estimates the mean-variance relationship to assign appropriate weights for linear modelling."
         },
         "SA Plot": {
             "file": os.path.join(base_path, "sa_plot.png"),
-            "description": "**Sigma vs Average plot** showing the standard deviation of normalized expression values against their average expression.\n\n- **What to look for**: A smooth trend without unusual patterns or outliers.\n\n- **Technical details**: This diagnostic plot from limma helps visualize how gene-wise variances change with expression level after fitting the linear model."
+            "description": "**Sigma vs Average plot** showing the standard deviation of normalised expression values against their average expression.\n\n- **What to look for**: A smooth trend without unusual patterns or outliers.\n\n- **Technical details**: This diagnostic plot from limma helps visualise how gene-wise variances change with expression level after fitting the linear model."
         }
     }
 
     # Display QC plots in tabs
-    plot_tabs = st.tabs(["Quality Overview", "Expression Filtering", "Normalization", "Variance Modeling"])
+    plot_tabs = st.tabs(["Quality Overview", "Expression Filtering", "Normalisation", "Variance Modeling"])
 
     # Tab 1: Quality Overview (interactive PCA plot replacing MDS)
     with plot_tabs[0]:
@@ -190,9 +190,9 @@ def _render_qc_plots(ri: ResultsIntegrator, selected_dataset: str, base_path: st
     with plot_tabs[1]:
         _render_filtering_tab(qc_plot_files)
 
-    # Tab 3: Normalization
+    # Tab 3: Normalisation
     with plot_tabs[2]:
-        _render_normalization_tab(qc_plot_files)
+        _render_normalisation_tab(qc_plot_files)
 
     # Tab 4: Variance Modeling
     with plot_tabs[3]:
@@ -234,14 +234,14 @@ def _render_filtering_tab(qc_plot_files: Dict):
 
 
 @log_streamlit_function
-def _render_normalization_tab(qc_plot_files: Dict):
-    """Render the normalization tab."""
-    if os.path.exists(qc_plot_files["Normalization Boxplots"]["file"]):
-        st.image(qc_plot_files["Normalization Boxplots"]["file"])
+def _render_normalisation_tab(qc_plot_files: Dict):
+    """Render the normalisation tab."""
+    if os.path.exists(qc_plot_files["Normalisation Boxplots"]["file"]):
+        st.image(qc_plot_files["Normalisation Boxplots"]["file"])
         with st.expander("What does this plot mean?", expanded=True):
-            st.markdown(qc_plot_files["Normalization Boxplots"]["description"])
+            st.markdown(qc_plot_files["Normalisation Boxplots"]["description"])
     else:
-        st.info("Normalization boxplots not available for this dataset.")
+        st.info("Normalisation boxplots not available for this dataset.")
 
 
 @log_streamlit_function
@@ -344,7 +344,7 @@ def _render_de_plot_tabs(ri: ResultsIntegrator, selected_dataset: str, selected_
         },
         "MA Plot": {
             "file": os.path.join(contrast_path, "ma_plot.png"),
-            "description": "**MA plot** showing the relationship between average expression level (x-axis) and log2 fold change (y-axis).\n\n- **What to look for**: Symmetrical distribution around y=0 with significant genes (red points) distributed across expression levels. Asymmetry might indicate normalization issues.\n\n- **Technical details**: Each point represents a gene. M (y-axis) is the log-ratio of expression (log2 fold change), and A (x-axis) is the average expression. Red points are statistically significant DEGs."
+            "description": "**MA plot** showing the relationship between average expression level (x-axis) and log2 fold change (y-axis).\n\n- **What to look for**: Symmetrical distribution around y=0 with significant genes (red points) distributed across expression levels. Asymmetry might indicate normalisation issues.\n\n- **Technical details**: Each point represents a gene. M (y-axis) is the log-ratio of expression (log2 fold change), and A (x-axis) is the average expression. Red points are statistically significant DEGs."
         },
         "Volcano Plot": {
             "file": os.path.join(contrast_path, "volcano_plot.png"),

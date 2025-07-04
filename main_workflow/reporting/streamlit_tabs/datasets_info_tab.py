@@ -30,7 +30,7 @@ def render_datasets_info_tab(ri: ResultsIntegrator):
         ri: ResultsIntegrator instance
     """
     st.header("View Dataset Info")
-    st.markdown("**Browse and filter dataset metadata.** View study details, organism information, sample counts, and experimental descriptions. Use filters to find specific datasets of interest.")
+    st.markdown("Browse dataset metadata and study details.")
 
     # Render the main datasets interface
     _render_datasets_interface(ri)

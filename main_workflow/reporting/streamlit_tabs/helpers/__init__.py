@@ -95,7 +95,7 @@ def cached_identify_important_genes(
 
     Args:
         results_dir: Path to results directory
-        selected_contrasts: List of (analysis_id, contrast_id) tuples to analyze
+        selected_contrasts: List of (analysis_id, contrast_id) tuples to analyse
         top_frequent: Number of top frequently DE genes to return
         p_value_threshold: P-value threshold for significance
         lfc_threshold: Log fold change threshold for significance
