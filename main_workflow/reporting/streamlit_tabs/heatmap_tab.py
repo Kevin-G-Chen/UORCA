@@ -129,26 +129,9 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
         if analysis_contrasts and gene_params:
             gene_sel = _auto_select_genes(ri, ri.results_dir, analysis_contrasts, gene_params)
 
-        # Display current selections summary
+        # Display current selections summary (removed metrics and gene selection info)
         if analysis_contrasts and gene_sel:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Datasets", len(selected_datasets))
-            with col2:
-                st.metric("Contrasts", len(analysis_contrasts))
-            with col3:
-                st.metric("Genes", len(gene_sel))
-
-            # Display gene selection method information
-            if gene_params.get('gene_selection_method') == "Custom":
-                custom_genes_count = len(gene_params.get('custom_genes', []))
-                success_rate = (len(gene_sel) / custom_genes_count * 100) if custom_genes_count > 0 else 0
-                if success_rate == 100:
-                    st.success(f"🎯 **Custom Gene Selection**: All {len(gene_sel)} custom genes found in datasets")
-                else:
-                    st.info(f"🎯 **Custom Gene Selection**: Displaying {len(gene_sel)} of {custom_genes_count} custom genes ({success_rate:.0f}% found in datasets)")
-            else:
-                st.info(f"📊 **Frequent DEGs**: Displaying {len(gene_sel)} most frequently differentially expressed genes")
+            pass  # Metrics and info messages removed
 
             # Group contrasts by organism and render heatmaps
             organism_groups = group_contrasts_by_organism(ri, analysis_contrasts)
@@ -288,15 +271,10 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
             key="heatmap_combined_custom_genes"
         )
 
-        # Show preview for custom genes (always check for content)
+        # Parse custom genes without preview display
+        custom_genes_list = []
         if custom_genes_input.strip():
             custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-            if custom_genes_list:
-                st.write(f"**Preview:** {len(custom_genes_list)} genes entered")
-                preview_text = ", ".join(custom_genes_list[:10])
-                if len(custom_genes_list) > 10:
-                    preview_text += f", ... (+{len(custom_genes_list) - 10} more)"
-                st.caption(preview_text)
 
         # Significance Thresholds
         st.markdown("**Significance Thresholds**")
@@ -336,11 +314,6 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
             gene_count = 50
             validation_error = True
 
-        # Validate custom genes (always parse since it's always shown)
-        custom_genes_list = []
-        if custom_genes_input.strip():
-            custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
-
         # Method-specific validation
         if gene_selection_method == "Custom":
             if not custom_genes_list:
@@ -368,41 +341,10 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
                 st.error("Please select at least one contrast")
                 return None
 
-            # Gene validation with detailed checking
-            if gene_selection_method == "Custom":
-                with st.expander("Gene Validation", expanded=False):
-                    st.write(f"**Total genes entered:** {len(custom_genes_list)}")
-
-                    # Check which genes are actually found in the selected contrasts
-                    available_genes = set()
-                    for accession, contrast_id in selected_contrasts:
-                        # Find the analysis_id for this accession
-                        analysis_id = None
-                        for aid in ri.analysis_info:
-                            if ri.analysis_info[aid].get('accession') == accession:
-                                analysis_id = aid
-                                break
-
-                        if analysis_id and analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
-                            deg_df = ri.deg_data[analysis_id][contrast_id]
-                            if 'Gene' in deg_df.columns:
-                                available_genes.update(deg_df['Gene'].tolist())
-
-                    found_genes = [gene for gene in custom_genes_list if gene in available_genes]
-                    missing_genes = [gene for gene in custom_genes_list if gene not in available_genes]
-
-                    if missing_genes:
-                        st.warning(f"**{len(missing_genes)} genes not found in selected contrasts:**")
-                        if len(missing_genes) <= 10:
-                            st.write(", ".join(missing_genes))
-                        else:
-                            st.write(f"{', '.join(missing_genes[:10])}, ... (+{len(missing_genes)-10} more)")
-
-                    if found_genes:
-                        st.success(f"**{len(found_genes)} genes found and will be displayed**")
-                    else:
-                        st.error("No genes found in selected contrasts!")
-                        return None
+            # Simple validation for custom genes (removed detailed validation expandable)
+            if gene_selection_method == "Custom" and not custom_genes_list:
+                st.error("Please enter at least one gene for custom selection")
+                return None
 
             if gene_selection_method == "Frequent DEGs":
                 log_streamlit_user_action(f"Heatmap analysis: {len(selected_contrasts)} contrasts, LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
@@ -479,21 +421,8 @@ def _auto_select_genes(
                         if 'Gene' in deg_df.columns:
                             available_genes.update(deg_df['Gene'].tolist())
 
-            # Filter custom genes to only those available
+            # Filter custom genes to only those available (removed validation expandable)
             available_custom_genes = [gene for gene in custom_genes if gene in available_genes]
-            missing_genes = [gene for gene in custom_genes if gene not in available_genes]
-
-            # Show validation in an expander
-            with st.expander("Custom Gene Validation", expanded=bool(missing_genes)):
-                st.write(f"**Total custom genes:** {len(custom_genes)}")
-                st.write(f"**Found in selected contrasts:** {len(available_custom_genes)}")
-
-                if missing_genes:
-                    st.warning(f"**{len(missing_genes)} genes not found in selected contrasts:**")
-                    if len(missing_genes) <= 15:
-                        st.write(", ".join(missing_genes))
-                    else:
-                        st.write(f"{', '.join(missing_genes[:15])}, ... (+{len(missing_genes)-15} more)")
 
             log_streamlit_event(f"Custom gene selection: {len(available_custom_genes)} of {len(custom_genes)} genes available")
             return available_custom_genes
@@ -583,7 +512,6 @@ def _draw_heatmap(
 
             if fig:
                 log_streamlit_event("Heatmap generated successfully")
-                st.info("**Heatmap Tips:** Hover over cells to see contrast descriptions and gene information. Use the forms above to modify your analysis.")
                 st.plotly_chart(fig, use_container_width=True)
 
                 # Display information about filtered genes/contrasts if hide_empty_rows_cols is True
