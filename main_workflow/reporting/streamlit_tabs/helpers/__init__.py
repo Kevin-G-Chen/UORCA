@@ -171,14 +171,14 @@ def cached_identify_important_genes(
 
 
 # Add a cache for figure objects to improve performance
-@st.cache_data(show_spinner=False, ttl=1800, hash_funcs={go.Figure: lambda _: None, ResultsIntegrator: lambda _: None})
+@st.cache_data(show_spinner=False, ttl=3600, hash_funcs={go.Figure: lambda _: None, ResultsIntegrator: lambda _: None})
 @log_streamlit_function
 def cached_figure_creation(
     func_name: str,
     results_dir: str,  # Use results_dir instead of RI instance for better caching
     *args,
     **kwargs) -> Optional[go.Figure]:
-    """Cache figure objects to avoid recreating them. Cache expires after 30 minutes."""
+    """Cache figure objects to avoid recreating them. Cache expires after 1 hour."""
     ri, error = get_integrator(results_dir)
     if error or not ri:
         return None
