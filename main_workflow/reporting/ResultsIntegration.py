@@ -902,6 +902,8 @@ class ResultsIntegrator:
             'contrasts': getattr(self, 'last_heatmap_filtered_contrasts', [])
         }
 
+
+
     def create_expression_plots(self,
                               genes: List[str],
                               plot_type: str = 'violin',
@@ -1156,8 +1158,8 @@ class ResultsIntegrator:
         facet_row_spacing = 0.03
         facet_col_spacing = 0.03
 
-        # Create violin plot using Plotly Express with adjusted spacing
-        fig = px.violin(
+        # Create boxplot (proof of concept - simple implementation)
+        fig = px.box(
             plot_df,
             x='Group',
             y='LogExpression',
@@ -1165,19 +1167,17 @@ class ResultsIntegrator:
             facet_col='Gene',
             facet_col_wrap=facet_col_wrap,
             custom_data=['HoverText'],
-            box=show_box,
             points="all",
             title=f"Gene Expression Across Samples (Page {page_number} of {len(gene_pages)})",
             labels={'LogExpression': y_axis_title, 'Group': 'Group', 'DatasetDisplay': 'Dataset'},
             facet_row_spacing=facet_row_spacing,
-            facet_col_spacing=facet_col_spacing,
-            violinmode = "overlay"
+            facet_col_spacing=facet_col_spacing
         )
 
         # Layout adjustments optimized for readability (2 plots per row)
         fig.update_layout(
             height=525 * n_rows,  # 525px per row (1.5x taller than original 350px)
-            width=480 * facet_col_wrap,  # 480px per column (1.5x wider than original 320px)
+            width=600 * facet_col_wrap,  # 600px per column (wider for better boxplot visibility)
             legend_title_text="Dataset",
             margin=dict(l=40, r=20, t=80, b=40),
             font_family="Inter, sans-serif",
@@ -1211,16 +1211,13 @@ class ResultsIntegrator:
                 title_standoff=6
             )
 
-        # Configure points visibility and transparency
+        # Configure points visibility and transparency for boxplots
         if show_raw_points:
-            fig.update_traces(marker=dict(size=4, opacity=0.5), jitter=0.3,
-                              selector=dict(type='violin'))
-            fig.update_traces(side = "both",
-                pointpos = 0,
-                width = 0.4,
-                selector = dict(type='violin'))
+            fig.update_traces(marker=dict(size=4, opacity=0.6),
+                              selector=dict(type='box'))
         else:
-            fig.update_traces(marker=dict(size=0), jitter=0.3)
+            fig.update_traces(marker=dict(size=0),
+                              selector=dict(type='box'))
 
         # Use the custom hover text we created in the data
         fig.update_traces(
