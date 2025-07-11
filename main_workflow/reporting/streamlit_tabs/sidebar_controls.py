@@ -39,6 +39,11 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
     """
     st.sidebar.title("UORCA Explorer")
 
+    # Help sections
+    _render_tab_descriptions()
+    _render_heatmap_help()
+    _render_expression_plots_help()
+
     # Initialize return parameters with defaults
     params = {
         'selected_datasets': []
@@ -56,8 +61,8 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
 def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -> Optional[Dict[str, Any]]:
     """Render the dataset selection section."""
     with st.sidebar.expander("Dataset Selection", expanded=True):
-        st.markdown("**Select datasets for analysis**")
-        st.info("Choose which datasets to include in your analysis. Contrast and gene selection are available in each tab.")
+        st.subheader("Select Datasets")
+        st.markdown("Choose which datasets to include in your analysis")
 
         # Initialize session state for dataset selection
         if 'selected_datasets_from_sidebar' not in st.session_state:
@@ -79,12 +84,24 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                 st.session_state['selected_datasets_from_sidebar'] = set()
                 st.rerun()
 
+        # Add search bar
+        search_filter = st.text_input("Search datasets", "", key="sidebar_dataset_search")
+
         # Dataset Selection Form
         with st.form("dataset_selection_sidebar"):
             dataset_data = _create_dataset_table_data(ri)
 
             if dataset_data:
                 df = pd.DataFrame(dataset_data)
+
+                # Apply search filter
+                if search_filter:
+                    search_mask = df.apply(
+                        lambda row: any(search_filter.lower() in str(val).lower() for val in row),
+                        axis=1
+                    )
+                    df = df[search_mask]
+
                 # Pre-select based on session state
                 df['Select'] = df['Accession'].isin(st.session_state['selected_datasets_from_sidebar'])
 
@@ -117,6 +134,16 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                             "Contrasts",
                             help="Number of contrasts",
                             width=85
+                        ),
+                        "Title": st.column_config.TextColumn(
+                            "Title",
+                            help="Dataset title",
+                            width=250
+                        ),
+                        "Description": st.column_config.TextColumn(
+                            "Description",
+                            help="Dataset description/summary",
+                            width=300
                         )
                     },
                     key="dataset_selection_sidebar_table"
@@ -160,12 +187,77 @@ def _create_dataset_table_data(ri: ResultsIntegrator) -> List[Dict[str, Any]]:
     for analysis_id in ri.cpm_data.keys():
         if analysis_id in ri.analysis_info:
             info = ri.analysis_info[analysis_id]
+
+            # Get dataset title and description (same as dataset info tab)
+            title = ""
+            description = ""
+            if hasattr(ri, "dataset_info") and analysis_id in getattr(ri, "dataset_info", {}):
+                title = ri.dataset_info[analysis_id].get("title", "")
+                if isinstance(title, str) and title.startswith("Title:"):
+                    title = title[6:].strip()
+                description = ri.dataset_info[analysis_id].get("summary", "")
+
             dataset_data.append({
                 "Select": False,  # Default to unselected
                 "Accession": info.get("accession", analysis_id),
                 "Organism": info.get("organism", "Unknown"),
                 "Samples": info.get("number_of_samples", 0),
-                "Contrasts": info.get("number_of_contrasts", 0)
+                "Contrasts": info.get("number_of_contrasts", 0),
+                "Title": title,
+                "Description": description
             })
 
     return dataset_data
+
+
+@log_streamlit_function
+def _render_tab_descriptions():
+    """Render expandable pane describing all tabs."""
+    with st.sidebar.expander("Tab Guide", expanded=False):
+        st.markdown("""
+        **AI Assistant** - Ask questions and get AI-powered insights from your data. Automatically selects relevant contrasts and identifies key gene patterns with biological interpretation.
+
+        **Explore DEG Heatmap** - Create interactive clustered heatmaps showing log2 fold changes for selected genes across multiple contrasts. Choose between frequent DEGs or custom gene lists.
+
+        **Plot Gene Expression** - Generate violin plots displaying gene expression distributions across sample groups. Enter custom genes and select which sample groups to compare.
+
+        **Analyse Experiments** - Explore quality control and differential expression plots for individual datasets. View PCA plots, volcano plots, MA plots, and DEG heatmaps.
+
+        **View Dataset Info** - Browse dataset metadata including study titles, summaries, experimental designs, and organism information. Filter and search datasets.
+
+        **View Contrast Info** - Browse all available contrasts with descriptions and DEG counts. Filter by dataset, significance thresholds, or search for specific contrasts.
+        """)
+
+
+@log_streamlit_function
+def _render_heatmap_help():
+    """Render expandable pane describing heatmap creation."""
+    with st.sidebar.expander("Creating Heatmaps", expanded=False):
+        st.markdown("""
+        **Quick Start:**
+        1. Select datasets in the sidebar (e.g., GSE123456, GSE789012)
+        2. Click "Apply Dataset Selection" - this will cause all contrasts associated with the datasets to appear
+        3. Go to **Heatmap** tab
+        4. Choose contrasts from your selected datasets
+        5. Configure gene selection (Frequent DEGs or Custom)
+        6. Click "Generate Heatmap Analysis"
+
+        **Example:** If you select datasets for human T-cell studies, the contrast table will show comparisons like "activated_vs_naive" and "stimulated_vs_control" only from those datasets.
+        """)
+
+
+@log_streamlit_function
+def _render_expression_plots_help():
+    """Render expandable pane describing expression plot creation."""
+    with st.sidebar.expander("Creating Expression Plots", expanded=False):
+        st.markdown("""
+        **Quick Start:**
+        1. Select datasets in the sidebar (e.g., GSE123456, GSE789012)
+        2. Click "Apply Dataset Selection" - this will cause all sample groups associated with the datasets to appear
+        3. Go to **Expression Plots** tab
+        4. Choose sample groups from your selected datasets
+        5. Enter genes of interest (e.g., TP53, EGFR, MYC)
+        6. Click "Generate Expression Plots"
+
+        **Example:** If you select mouse liver datasets, the sample groups table will show groups like "treated_liver" and "control_liver" only from those datasets.
+        """)

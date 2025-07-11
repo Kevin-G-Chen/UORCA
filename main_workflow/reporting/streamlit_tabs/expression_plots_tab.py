@@ -440,10 +440,16 @@ def _draw_expression_plots(
             if fig2:
                 log_streamlit_event("Expression plots generated successfully")
 
-                # Add shared y-axis title
+                # Add shared y-axis title and formatting
                 fig2.update_layout(
-                    yaxis_title="log₂CPM",
+                    yaxis_title="log2(CPM)",
                     showlegend=False  # Remove legend
+                )
+
+                # Apply y-axis formatting to all subplots
+                fig2.update_yaxes(
+                    title_text="log2(CPM)",
+                    tickformat=".1f"  # Limit y-axis to 1 decimal place
                 )
 
                 # Display the plot
