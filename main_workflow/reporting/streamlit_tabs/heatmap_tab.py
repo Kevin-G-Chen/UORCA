@@ -341,10 +341,67 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
                 st.error("Please select at least one contrast")
                 return None
 
-            # Simple validation for custom genes (removed detailed validation expandable)
-            if gene_selection_method == "Custom" and not custom_genes_list:
-                st.error("Please enter at least one gene for custom selection")
-                return None
+            # Gene validation with detailed checking (like expression plots)
+            if gene_selection_method == "Custom":
+                if not custom_genes_list:
+                    st.error("Please enter at least one gene for custom selection")
+                    return None
+
+                # Show gene validation with detailed checking
+                with st.expander("Gene Validation", expanded=False):
+                    st.write(f"**Total genes entered:** {len(custom_genes_list)}")
+
+                    # Check which genes are actually found in the selected contrasts
+                    available_genes = set()
+                    significant_genes = set()
+
+                    for accession, contrast_id in selected_contrasts:
+                        # Find the analysis_id for this accession
+                        analysis_id = None
+                        for aid in ri.analysis_info:
+                            if ri.analysis_info[aid].get('accession') == accession:
+                                analysis_id = aid
+                                break
+
+                        if analysis_id and analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
+                            deg_df = ri.deg_data[analysis_id][contrast_id]
+                            if 'Gene' in deg_df.columns:
+                                all_contrast_genes = set(deg_df['Gene'].tolist())
+                                available_genes.update(all_contrast_genes)
+
+                                # Also track genes that are significant in this contrast
+                                if 'adj.P.Val' in deg_df.columns and 'logFC' in deg_df.columns:
+                                    significant_contrast_genes = deg_df[
+                                        (deg_df['adj.P.Val'] < pval_val) &
+                                        (abs(deg_df['logFC']) > lfc_val)
+                                    ]['Gene'].tolist()
+                                    significant_genes.update(significant_contrast_genes)
+
+                    # Categorise genes
+                    found_genes = [gene for gene in custom_genes_list if gene in available_genes]
+                    missing_genes = [gene for gene in custom_genes_list if gene not in available_genes]
+                    found_but_filtered = [gene for gene in found_genes if gene not in significant_genes]
+                    will_display = [gene for gene in found_genes if gene in significant_genes]
+
+                    if missing_genes:
+                        st.warning(f"**{len(missing_genes)} genes not found in selected contrasts:**")
+                        if len(missing_genes) <= 10:
+                            st.write(", ".join(missing_genes))
+                        else:
+                            st.write(f"{', '.join(missing_genes[:10])}, ... (+{len(missing_genes)-10} more)")
+
+                    if found_but_filtered:
+                        st.info(f"**{len(found_but_filtered)} genes found but will be filtered out** (never significant in selected contrasts):")
+                        if len(found_but_filtered) <= 10:
+                            st.write(", ".join(found_but_filtered))
+                        else:
+                            st.write(f"{', '.join(found_but_filtered[:10])}, ... (+{len(found_but_filtered)-10} more)")
+
+                    if will_display:
+                        st.success(f"**{len(will_display)} genes will be displayed** in the heatmap")
+                    else:
+                        st.error("No genes will be displayed! All custom genes are either missing or never significant.")
+                        return None
 
             if gene_selection_method == "Frequent DEGs":
                 log_streamlit_user_action(f"Heatmap analysis: {len(selected_contrasts)} contrasts, LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
@@ -515,7 +572,7 @@ def _draw_heatmap(
                 st.plotly_chart(fig, use_container_width=True)
 
                 # Display comprehensive filtering information
-                _display_comprehensive_filtering_info(ri, gene_sel, analysis_contrasts)
+                _display_comprehensive_filtering_info(ri, gene_selection, contrast_pairs)
             else:
                 log_streamlit_event("Failed to generate heatmap")
                 st.error("Could not generate heatmap. Please check your selections and try adjusting the parameters above.")
@@ -563,25 +620,25 @@ def _display_comprehensive_filtering_info(ri: ResultsIntegrator, requested_genes
                 st.markdown("**Summary of genes and contrasts excluded from the heatmap**")
 
                 if genes_displayed:
-                    st.success(f"✅ **{len(genes_displayed)} genes displayed** in the heatmap")
+                    st.success(f"**{len(genes_displayed)} genes displayed** in the heatmap")
 
                 if genes_not_found:
-                    st.warning(f"❌ **{len(genes_not_found)} genes not found** in any selected contrasts:")
+                    st.warning(f"**{len(genes_not_found)} genes not found** in any selected contrasts:")
                     genes_text = ", ".join(genes_not_found)
-                    st.text_area("Genes not found in datasets:", value=genes_text, height=80, disabled=True, key="genes_not_found_display")
+                    st.write(genes_text)
 
                 if genes_filtered_out:
-                    st.info(f"🔍 **{len(genes_filtered_out)} genes filtered out** (never significant in selected contrasts):")
+                    st.info(f"**{len(genes_filtered_out)} genes filtered out** (never significant in selected contrasts):")
                     genes_text = ", ".join(genes_filtered_out)
-                    st.text_area("Genes filtered for lack of significance:", value=genes_text, height=80, disabled=True, key="genes_filtered_display")
+                    st.write(genes_text)
 
                 if heatmap_filtered_contrasts:
-                    st.info(f"📊 **{len(heatmap_filtered_contrasts)} contrasts hidden** (no significant genes found):")
+                    st.info(f"**{len(heatmap_filtered_contrasts)} contrasts hidden** (no significant genes found):")
                     for contrast in heatmap_filtered_contrasts:
                         st.write(f"• {contrast}")
 
                 if not (genes_not_found or genes_filtered_out or heatmap_filtered_contrasts):
-                    st.success("✅ All requested genes and contrasts are displayed in the heatmap")
+                    st.success("All requested genes and contrasts are displayed in the heatmap")
 
     except Exception as e:
         logger.warning(f"Could not display comprehensive filtering info: {e}")
