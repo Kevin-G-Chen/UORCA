@@ -68,7 +68,7 @@ class AIAgentToolLogger:
         logger.info("AI Agent analysis started: %s (log: %s)",
                    self.current_analysis_id, self.log_file)
 
-    def _truncate_output(self, output: Any, max_length: int = 500) -> str:
+    def _truncate_output(self, output: Any, max_length: int = 1000) -> str:
         """Truncate large outputs to manageable snippets for logging."""
         if output is None:
             return None
@@ -79,8 +79,22 @@ class AIAgentToolLogger:
         if len(output_str) <= max_length:
             return output_str
 
-        # Truncate and add indicator
-        return output_str[:max_length] + f"... [truncated, total length: {len(output_str)}]"
+        # Try to truncate at a sensible boundary (comma, closing brace/bracket)
+        truncated = output_str[:max_length]
+
+        # Look for good break points in the last 100 characters
+        good_breaks = [', ', '], ', '}, ']
+        best_break = -1
+
+        for break_pattern in good_breaks:
+            last_occurrence = truncated.rfind(break_pattern)
+            if last_occurrence > max_length - 200:  # Within last 200 chars
+                best_break = max(best_break, last_occurrence + len(break_pattern))
+
+        if best_break > 0:
+            truncated = output_str[:best_break]
+
+        return truncated + f"... [truncated, total length: {len(output_str)}]"
 
     def log_tool_call(self, tool_name: str, parameters: Dict[str, Any],
                      output: Any = None, success: bool = True, error: str = None):
