@@ -36,6 +36,12 @@ dependencies = [
     "jiter>=0.10.0",
 ]
 
+[project.scripts]
+uorca = "uorca.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["uorca*"]
+
 [tool.uv.workspace]
 members = [
     "lib/memory",
