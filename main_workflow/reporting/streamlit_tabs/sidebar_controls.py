@@ -215,17 +215,17 @@ def _render_tab_descriptions():
     """Render expandable pane describing all tabs."""
     with st.sidebar.expander("Tab Guide", expanded=False):
         st.markdown("""
-        **AI Assistant** - Ask questions and get AI-powered insights from your data. Automatically selects relevant contrasts and identifies key gene patterns with biological interpretation.
+        **AI Assistant** - Use an AI agent to automatically analyse the data. You will be able to see the steps the AI took to arrive at its findings.
 
-        **Explore DEG Heatmap** - Create interactive clustered heatmaps showing log2 fold changes for selected genes across multiple contrasts. Choose between frequent DEGs or custom gene lists.
+        **Explore DEG Heatmap** - Create heatmaps showing log2 fold changes for selected genes across multiple contrasts.
 
-        **Plot Gene Expression** - Generate violin plots displaying gene expression distributions across sample groups. Enter custom genes and select which sample groups to compare.
+        **Plot Gene Expression** - Generate boxplots displaying gene expression distributions across sample groups.
 
         **Analyse Experiments** - Explore quality control and differential expression plots for individual datasets. View PCA plots, volcano plots, MA plots, and DEG heatmaps.
 
-        **View Dataset Info** - Browse dataset metadata including study titles, summaries, experimental designs, and organism information. Filter and search datasets.
+        **View Dataset Info** - Browse dataset information including study titles, summaries, experimental designs, and organism information.
 
-        **View Contrast Info** - Browse all available contrasts with descriptions and DEG counts. Filter by dataset, significance thresholds, or search for specific contrasts.
+        **View Contrast Info** - Browse all available contrasts across all datasets to get an overview of the comparisons available for analysis.
         """)
 
 
@@ -234,15 +234,12 @@ def _render_heatmap_help():
     """Render expandable pane describing heatmap creation."""
     with st.sidebar.expander("Creating Heatmaps", expanded=False):
         st.markdown("""
-        **Quick Start:**
         1. Select datasets in the sidebar (e.g., GSE123456, GSE789012)
-        2. Click "Apply Dataset Selection" - this will cause all contrasts associated with the datasets to appear
+        2. Click "**Apply Dataset Selection**" - this will cause all contrasts associated with the datasets to appear in the **Explore DEG Heatmap** tab
         3. Go to **Heatmap** tab
         4. Choose contrasts from your selected datasets
         5. Configure gene selection (Frequent DEGs or Custom)
         6. Click "Generate Heatmap Analysis"
-
-        **Example:** If you select datasets for human T-cell studies, the contrast table will show comparisons like "activated_vs_naive" and "stimulated_vs_control" only from those datasets.
         """)
 
 
@@ -251,13 +248,10 @@ def _render_expression_plots_help():
     """Render expandable pane describing expression plot creation."""
     with st.sidebar.expander("Creating Expression Plots", expanded=False):
         st.markdown("""
-        **Quick Start:**
         1. Select datasets in the sidebar (e.g., GSE123456, GSE789012)
-        2. Click "Apply Dataset Selection" - this will cause all sample groups associated with the datasets to appear
-        3. Go to **Expression Plots** tab
+        2. Click "**Apply Dataset Selection**" - this will cause all sample groups associated with the datasets to appear in the **Plot Gene Expression** tab
+        3. Go to **Plot Gene Expression** tab
         4. Choose sample groups from your selected datasets
         5. Enter genes of interest (e.g., TP53, EGFR, MYC)
         6. Click "Generate Expression Plots"
-
-        **Example:** If you select mouse liver datasets, the sample groups table will show groups like "treated_liver" and "control_liver" only from those datasets.
         """)
