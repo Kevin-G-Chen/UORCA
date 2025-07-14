@@ -263,7 +263,7 @@ async def calculate_gene_correlation(genes: list) -> str:
             correlation_dict[gene1] = {}
             for gene2 in correlation_matrix.columns:
                 corr_val = correlation_matrix.loc[gene1, gene2]
-                correlation_dict[gene1][gene2] = None if pd.isna(corr_val) else round(float(corr_val), 2)
+                correlation_dict[gene1][gene2] = None if pd.isna(corr_val) else float(corr_val)
 
         # Extract strong correlations (> 0.5 or < -0.5) excluding self-correlations
         strong_correlations = []
@@ -275,7 +275,7 @@ async def calculate_gene_correlation(genes: list) -> str:
                         strong_correlations.append({
                             "gene1": gene1,
                             "gene2": gene2,
-                            "correlation": round(float(corr_val), 2)
+                            "correlation": float(corr_val)
                         })
 
         result = {
@@ -340,10 +340,10 @@ async def calculate_expression_variability(genes: list, contrasts: list = None) 
             variability_stats.append({
                 "gene": gene,
                 "std_dev": 0.0,  # By definition
-                "mean_logFC": round(logfc, 2),
-                "median_logFC": round(logfc, 2),
-                "min_logFC": round(logfc, 2),
-                "max_logFC": round(logfc, 2),
+                "mean_logFC": logfc,
+                "median_logFC": logfc,
+                "min_logFC": logfc,
+                "max_logFC": logfc,
                 "contrast_count": 1,
                 "note": "Single data point - std_dev is 0"
             })
@@ -352,11 +352,11 @@ async def calculate_expression_variability(genes: list, contrasts: list = None) 
             logfc_values = gene_subset['logFC']
             variability_stats.append({
                 "gene": gene,
-                "std_dev": round(float(logfc_values.std()), 2),
-                "mean_logFC": round(float(logfc_values.mean()), 2),
-                "median_logFC": round(float(logfc_values.median()), 2),
-                "min_logFC": round(float(logfc_values.min()), 2),
-                "max_logFC": round(float(logfc_values.max()), 2),
+                "std_dev": float(logfc_values.std()),
+                "mean_logFC": float(logfc_values.mean()),
+                "median_logFC": float(logfc_values.median()),
+                "min_logFC": float(logfc_values.min()),
+                "max_logFC": float(logfc_values.max()),
                 "contrast_count": len(gene_subset)
             })
 
