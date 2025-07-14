@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic import BaseModel, ConfigDict
 from typing import List, Dict, Any, Tuple
 import asyncio
@@ -17,7 +19,7 @@ except ImportError:
         pass
 
 from streamlit_tabs.helpers import log_streamlit_agent
-from config_loader import get_contrast_relevance_config
+from config_loader import get_contrast_relevance_with_selection_config
 
 
 # Load environment variables
@@ -42,7 +44,7 @@ def call_openai_json(prompt: str, schema: Dict[str, Any], name: str) -> dict:
     if client is None:
         raise RuntimeError("OpenAI client not available - API key not configured")
 
-    config = get_contrast_relevance_config()
+    config = get_contrast_relevance_with_selection_config()
     response = client.chat.completions.create(
         model=config.model,
         messages=[

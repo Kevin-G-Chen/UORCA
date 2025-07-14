@@ -29,16 +29,6 @@ class AIAgentConfig:
 
 
 @dataclass
-class ContrastRelevanceConfig:
-    """Configuration for contrast relevance assessment."""
-    model: str = "openai:gpt-4o-mini"
-    temperature: float = 0.1
-    repeats: int = 3
-    batch_size: int = 50
-    parallel_jobs: int = 4
-
-
-@dataclass
 class ContrastRelevanceWithSelectionConfig:
     """Configuration for contrast relevance with intelligent selection."""
     model: str = "openai:gpt-4o-mini"
@@ -108,13 +98,7 @@ class AIAssistantConfigLoader:
                     "request_limit": self.ai_agent.request_limit,
                     "timeout": self.ai_agent.timeout
                 },
-                "contrast_relevance": {
-                    "model": self.contrast_relevance.model,
-                    "temperature": self.contrast_relevance.temperature,
-                    "repeats": self.contrast_relevance.repeats,
-                    "batch_size": self.contrast_relevance.batch_size,
-                    "parallel_jobs": self.contrast_relevance.parallel_jobs
-                },
+
                 "contrast_relevance_with_selection": {
                     "model": self.contrast_relevance_with_selection.model,
                     "temperature": self.contrast_relevance_with_selection.temperature,
@@ -149,18 +133,6 @@ class AIAssistantConfigLoader:
             temperature=config_data.get("temperature", 0.1),
             request_limit=config_data.get("request_limit", 100),
             timeout=config_data.get("timeout", 180)
-        )
-
-    @property
-    def contrast_relevance(self) -> ContrastRelevanceConfig:
-        """Get contrast relevance configuration."""
-        config_data = self._config_data.get("contrast_relevance", {})
-        return ContrastRelevanceConfig(
-            model=config_data.get("model", "openai:gpt-4o-mini"),
-            temperature=config_data.get("temperature", 0.1),
-            repeats=config_data.get("repeats", 3),
-            batch_size=config_data.get("batch_size", 50),
-            parallel_jobs=config_data.get("parallel_jobs", 4)
         )
 
     @property
@@ -208,20 +180,6 @@ class AIAssistantConfigLoader:
             if hasattr(current, key):
                 self._config_data["ai_agent"][key] = value
 
-    def update_contrast_relevance(self, **kwargs) -> None:
-        """Update contrast relevance configuration."""
-        current = self.contrast_relevance
-        for key, value in kwargs.items():
-            if hasattr(current, key):
-                setattr(current, key, value)
-
-        if "contrast_relevance" not in self._config_data:
-            self._config_data["contrast_relevance"] = {}
-
-        for key, value in kwargs.items():
-            if hasattr(current, key):
-                self._config_data["contrast_relevance"][key] = value
-
     def get_config_summary(self) -> str:
         """Get a human-readable summary of the current configuration."""
         summary = []
@@ -231,10 +189,7 @@ class AIAssistantConfigLoader:
         summary.append(f"AI Agent Temperature: {self.ai_agent.temperature}")
         summary.append(f"AI Agent Request Limit: {self.ai_agent.request_limit}")
         summary.append("")
-        summary.append(f"Contrast Relevance Model: {self.contrast_relevance.model}")
-        summary.append(f"Contrast Relevance Temperature: {self.contrast_relevance.temperature}")
-        summary.append(f"Contrast Relevance Repeats: {self.contrast_relevance.repeats}")
-        summary.append("")
+
         summary.append(f"Default LFC Threshold: {self.ui_settings.default_lfc_threshold}")
         summary.append(f"Default P-value Threshold: {self.ui_settings.default_p_threshold}")
 
@@ -264,11 +219,6 @@ def reload_config() -> AIAssistantConfigLoader:
 def get_ai_agent_config() -> AIAgentConfig:
     """Get AI agent configuration."""
     return get_ai_config().ai_agent
-
-
-def get_contrast_relevance_config() -> ContrastRelevanceConfig:
-    """Get contrast relevance configuration."""
-    return get_ai_config().contrast_relevance
 
 
 def get_contrast_relevance_with_selection_config() -> ContrastRelevanceWithSelectionConfig:

@@ -3,6 +3,7 @@ AI Assistant Tab for UORCA Explorer.
 
 This tab provides AI-powered analysis and exploration capabilities.
 """
+from __future__ import annotations
 
 import os
 import json
@@ -14,7 +15,7 @@ import pydantic
 from pydantic_ai.usage import UsageLimits
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-from config_loader import get_contrast_relevance_config, get_contrast_relevance_with_selection_config, get_ai_agent_config
+from config_loader import get_contrast_relevance_with_selection_config, get_ai_agent_config
 
 
 from .helpers import (
@@ -234,7 +235,7 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                         return
                 else:
                     # Fall back to original approach
-                    relevance_config = get_contrast_relevance_config()
+                    relevance_config = get_contrast_relevance_with_selection_config()
                     results_df = run_contrast_relevance(
                         ri,
                         query=research_query,

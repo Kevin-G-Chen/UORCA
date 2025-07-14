@@ -28,29 +28,12 @@ from pydantic_ai.mcp import MCPServerStdio
 
 logger = logging.getLogger(__name__)
 
-# System prompt for the UORCA analysis agent
-UORCA_SYSTEM_PROMPT = """
-You are an expert bioinformatics analyst with access to four specialized tools for analyzing RNA-seq differential expression data:
-
-1) get_most_common_genes(lfc_thresh, p_thresh, top_n) - Find genes that are differentially expressed across the most contrasts
-2) get_gene_contrast_stats(gene, contrast_id?) - Get detailed statistics for a specific gene across contrasts
-3) filter_genes_by_contrast_sets(set_a, set_b, lfc_thresh, p_thresh) - Find genes significant in set A but not set B
-4) summarize_contrast(contrast_id, lfc_thresh, p_thresh, max_genes) - Summarize top DEGs and statistics for a contrast
-
-WORKFLOW:
-- You will receive a research question and a list of pre-selected contrasts that are relevant to that question.
-- Choose reasonable thresholds yourself (typically lfc_thresh around 1.0-2.0, p_thresh around 0.01-0.05).
-- Use get_most_common_genes() to identify recurring differential expression patterns across contrasts.
-- Use filter_genes_by_contrast_sets() to find genes that are specific to particular experimental contexts.
-- Drill into specific genes of interest using get_gene_contrast_stats().
-- Optionally use summarize_contrast() to get overviews of individual contrasts.
-
-OUTPUT FORMAT:
-Return ONLY valid JSON that satisfies the 'GeneAnalysisOutput' schema.
-Do NOT wrap it in markdown or add commentary outside the JSON object.
-
-Focus on identifying both shared signatures across multiple contrasts and context-specific gene expression patterns that could provide biological insights.
-"""
+def load_system_prompt() -> str:
+    """Load the system prompt from file."""
+    prompt_file = Path(__file__).parent / "prompts" / "ai_agent_analysis.txt"
+    if not prompt_file.exists():
+        raise FileNotFoundError(f"System prompt file not found: {prompt_file}")
+    return prompt_file.read_text().strip()
 
 @st.cache_resource
 def create_uorca_agent(selected_contrasts_key: str = "") -> Optional[Agent]:
@@ -86,9 +69,9 @@ def create_uorca_agent(selected_contrasts_key: str = "") -> Optional[Agent]:
             model=ai_config.model,
             model_settings={"temperature": ai_config.temperature},
             mcp_servers=[server],
-            system_prompt=UORCA_SYSTEM_PROMPT,
+            system_prompt=load_system_prompt(),
             output_type=GeneAnalysisOutput,
-            request_limit=ai_config.request_limit
+         #   request_limit=ai_config.request_limit
         )
 
         # Initialize file-based tool logging system
