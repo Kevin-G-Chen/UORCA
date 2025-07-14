@@ -351,17 +351,18 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
                 found_genes = [gene for gene in selected_genes if gene in available_genes]
                 missing_genes = [gene for gene in selected_genes if gene not in available_genes]
 
+                if found_genes:
+                    st.write(f"\n**{len(found_genes)} genes found and will be displayed**")
+
                 if missing_genes:
-                    st.warning(f"**{len(missing_genes)} genes not found in ANY selected datasets:**")
+                    st.write(f"\n**{len(missing_genes)} genes not found in ANY selected datasets:**")
                     if len(missing_genes) <= 10:
                         st.write(", ".join(missing_genes))
                     else:
                         st.write(f"{', '.join(missing_genes[:10])}, ... (+{len(missing_genes)-10} more)")
 
-                if found_genes:
-                    st.success(f"**{len(found_genes)} genes found and will be displayed**")
-                else:
-                    st.error("No genes found in selected datasets!")
+                if not found_genes:
+                    st.write(f"\n**ERROR:** No genes found in selected datasets!")
                     return None
 
             log_streamlit_user_action(f"Expression plots: {len(selected_groups)} groups, {len(selected_genes)} genes")
