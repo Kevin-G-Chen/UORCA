@@ -1216,7 +1216,7 @@ for(i in 1:nrow(strong_corr)) {{
   gene1 <- rownames(correlation_matrix)[strong_corr[i,1]]
   gene2 <- colnames(correlation_matrix)[strong_corr[i,2]]
   corr_val <- correlation_matrix[strong_corr[i,1], strong_corr[i,2]]
-  cat(gene1, "vs", gene2, ":", corr_val, "\\n")
+  cat(gene1, "vs", gene2, ":", round(corr_val, 4), "\\n")
 }}'''
 
         python_code = f'''# Load data
@@ -1253,7 +1253,7 @@ for gene1 in correlation_matrix.columns:
         if gene1 != gene2:
             corr_val = correlation_matrix.loc[gene1, gene2]
             if not pd.isna(corr_val) and abs(corr_val) > 0.5:
-                print(f"{{gene1}} vs {{gene2}}: {{corr_val}}")'''
+                print(f"{{gene1}} vs {{gene2}}: {{corr_val:.4f}}")'''
 
     elif tool_name == 'calculate_expression_variability':
         genes = parameters.get('genes', ['GENE1'])
