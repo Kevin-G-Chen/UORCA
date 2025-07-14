@@ -992,7 +992,11 @@ def _get_tool_description(tool_name: str) -> str:
 
         'get_gene_contrast_stats': "Looks up detailed information about how a specific gene behaves across different experimental conditions, including how much it changed and how confident we are in that change.",
 
-        'summarize_contrast': "Provides an overview of a specific experimental comparison, including the most important genes and overall patterns of change."
+        'summarize_contrast': "Provides an overview of a specific experimental comparison, including the most important genes and overall patterns of change.",
+
+        'calculate_gene_correlation': "Calculates how similarly genes are expressed across different experimental conditions using their average expression levels. This helps identify genes that work together in biological pathways or are co-regulated.",
+
+        'calculate_expression_variability': "Measures how consistently genes change across different experimental conditions by calculating the variability of their fold changes. Low variability indicates reliable, consistent responses while high variability suggests context-dependent regulation."
     }
     return descriptions.get(tool_name, "This tool analyses your gene expression data to provide insights.")
 
@@ -1179,6 +1183,160 @@ print(f"Mean logFC: {{mean_lfc}}")
 print(f"Median logFC: {{median_lfc}}")
 print("Top genes:")
 print(top_genes)'''
+
+    elif tool_name == 'calculate_gene_correlation':
+        genes = parameters.get('genes', ['GENE1', 'GENE2'])
+        genes_str = "c(" + ", ".join([f'"{g}"' for g in genes]) + ")"
+        genes_py = str(genes)
+
+        r_code = f'''# Load data
+data <- read.csv("ai_agent_working_dataset.csv")
+
+# Filter for specified genes
+genes_of_interest <- {genes_str}
+gene_data <- data[data$Gene %in% genes_of_interest, ]
+
+# Create matrix with genes as columns and experiments as rows
+library(reshape2)
+expr_matrix <- dcast(gene_data, analysis_id + contrast_id ~ Gene, value.var = "AveExpr")
+
+# Remove ID columns for correlation
+expr_matrix_clean <- expr_matrix[, !(names(expr_matrix) %in% c("analysis_id", "contrast_id"))]
+
+# Calculate Spearman correlation
+correlation_matrix <- cor(expr_matrix_clean, method = "spearman", use = "complete.obs")
+print("Correlation Matrix:")
+print(correlation_matrix)
+
+# Find strong correlations (> 0.5 or < -0.5)
+strong_corr <- which(abs(correlation_matrix) > 0.5 & correlation_matrix != 1, arr.ind = TRUE)
+cat("\\nStrong correlations:\\n")
+for(i in 1:nrow(strong_corr)) {{
+  gene1 <- rownames(correlation_matrix)[strong_corr[i,1]]
+  gene2 <- colnames(correlation_matrix)[strong_corr[i,2]]
+  corr_val <- correlation_matrix[strong_corr[i,1], strong_corr[i,2]]
+  cat(gene1, "vs", gene2, ":", round(corr_val, 3), "\\n")
+}}'''
+
+        python_code = f'''# Load data
+import pandas as pd
+import numpy as np
+from scipy.stats import spearmanr
+
+data = pd.read_csv("ai_agent_working_dataset.csv")
+
+# Filter for specified genes
+genes_of_interest = {genes_py}
+gene_data = data[data['Gene'].isin(genes_of_interest)]
+
+# Create pivot table with genes as columns
+pivot_data = gene_data.pivot_table(
+    index=['analysis_id', 'contrast_id'],
+    columns='Gene',
+    values='AveExpr',
+    aggfunc='mean'
+)
+
+# Remove rows with too much missing data
+pivot_data = pivot_data.dropna(thresh=len(pivot_data.columns)*0.5)
+
+# Calculate Spearman correlation
+correlation_matrix = pivot_data.corr(method='spearman')
+print("Correlation Matrix:")
+print(correlation_matrix)
+
+# Find strong correlations (> 0.5 or < -0.5)
+print("\\nStrong correlations:")
+for gene1 in correlation_matrix.columns:
+    for gene2 in correlation_matrix.columns:
+        if gene1 != gene2:
+            corr_val = correlation_matrix.loc[gene1, gene2]
+            if not pd.isna(corr_val) and abs(corr_val) > 0.5:
+                print(f"{{gene1}} vs {{gene2}}: {{corr_val:.3f}}")'''
+
+    elif tool_name == 'calculate_expression_variability':
+        genes = parameters.get('genes', ['GENE1'])
+        contrasts = parameters.get('contrasts', None)
+        genes_str = "c(" + ", ".join([f'"{g}"' for g in genes]) + ")"
+        genes_py = str(genes)
+
+        if contrasts:
+            contrasts_str = "c(" + ", ".join([f'"{c}"' for c in contrasts]) + ")"
+            contrasts_py = str(contrasts)
+            contrast_filter_r = f'data$contrast_id %in% {contrasts_str} &'
+            contrast_filter_py = f'(data["contrast_id"].isin({contrasts_py})) &'
+        else:
+            contrast_filter_r = ''
+            contrast_filter_py = ''
+
+        r_code = f'''# Load data
+data <- read.csv("ai_agent_working_dataset.csv")
+
+# Filter for specified genes{' and contrasts' if contrasts else ''}
+genes_of_interest <- {genes_str}
+filtered_data <- data[{contrast_filter_r}data$Gene %in% genes_of_interest, ]
+
+# Calculate variability statistics for each gene
+variability_stats <- data.frame()
+for(gene in genes_of_interest) {{
+  gene_subset <- filtered_data[filtered_data$Gene == gene, ]
+
+  if(nrow(gene_subset) > 0) {{
+    stats <- data.frame(
+      Gene = gene,
+      std_dev = sd(gene_subset$logFC, na.rm = TRUE),
+      mean_logFC = mean(gene_subset$logFC, na.rm = TRUE),
+      median_logFC = median(gene_subset$logFC, na.rm = TRUE),
+      min_logFC = min(gene_subset$logFC, na.rm = TRUE),
+      max_logFC = max(gene_subset$logFC, na.rm = TRUE),
+      contrast_count = nrow(gene_subset)
+    )
+    variability_stats <- rbind(variability_stats, stats)
+  }}
+}}
+
+# Sort by standard deviation (most consistent first)
+variability_stats <- variability_stats[order(variability_stats$std_dev), ]
+print(variability_stats)
+
+cat("\\nMost consistent gene:", variability_stats$Gene[1], "\\n")
+cat("Most variable gene:", variability_stats$Gene[nrow(variability_stats)], "\\n")'''
+
+        python_code = f'''# Load data
+import pandas as pd
+import numpy as np
+
+data = pd.read_csv("ai_agent_working_dataset.csv")
+
+# Filter for specified genes{' and contrasts' if contrasts else ''}
+genes_of_interest = {genes_py}
+filtered_data = data[{contrast_filter_py}data['Gene'].isin(genes_of_interest)]
+
+# Calculate variability statistics for each gene
+variability_stats = []
+for gene in genes_of_interest:
+    gene_subset = filtered_data[filtered_data['Gene'] == gene]
+
+    if len(gene_subset) > 0:
+        stats = {{
+            'Gene': gene,
+            'std_dev': gene_subset['logFC'].std(),
+            'mean_logFC': gene_subset['logFC'].mean(),
+            'median_logFC': gene_subset['logFC'].median(),
+            'min_logFC': gene_subset['logFC'].min(),
+            'max_logFC': gene_subset['logFC'].max(),
+            'contrast_count': len(gene_subset)
+        }}
+        variability_stats.append(stats)
+
+# Convert to DataFrame and sort by standard deviation
+variability_df = pd.DataFrame(variability_stats)
+variability_df = variability_df.sort_values('std_dev')
+print(variability_df)
+
+if len(variability_df) > 0:
+    print(f"\\nMost consistent gene: {{variability_df.iloc[0]['Gene']}}")
+    print(f"Most variable gene: {{variability_df.iloc[-1]['Gene']}}")'''
 
     else:
         r_code = "# Code snippet not available for this tool"
