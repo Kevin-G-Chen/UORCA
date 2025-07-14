@@ -176,6 +176,10 @@ def _render_dataset_details(filtered_df: pd.DataFrame):
                 expander_title += f" - {title}"
 
             with st.expander(expander_title, expanded=False):
+                # Add GEO submission link
+                geo_url = f"https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc={accession}"
+                st.markdown(f"[View GEO submission]({geo_url})")
+
                 if "Title" in filtered_df.columns and pd.notna(row.get("Title")):
                     st.subheader(str(row["Title"]))
 

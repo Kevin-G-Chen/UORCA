@@ -40,7 +40,7 @@ setup_fragment_decorator()
 logger = logging.getLogger(__name__)
 
 
-@log_streamlit_tab("Analysis Plots")
+@log_streamlit_tab("View Dataset Analyses")
 def render_analysis_plots_tab(ri: ResultsIntegrator, results_dir: str):
     """
     Render the analysis plots tab.
@@ -49,8 +49,8 @@ def render_analysis_plots_tab(ri: ResultsIntegrator, results_dir: str):
         ri: ResultsIntegrator instance
         results_dir: Path to the results directory
     """
-    st.header("Analyse Experiments")
-    st.markdown("Explore QC plots and analysis results for individual datasets.")
+    st.header("View Dataset Analyses")
+    st.markdown("Explore QC plots, analysis results, and metadata for individual datasets.")
 
 
 
@@ -129,6 +129,9 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
 
     # Display differential expression plots
     _render_de_plots(ri, selected_dataset, base_path, groups)
+
+    # Display metadata section
+    _render_metadata_section(ri, selected_dataset)
 
 
 @log_streamlit_function
@@ -528,3 +531,45 @@ def _render_deg_table(selected_dataset: str, selected_contrast: str, contrast_pa
 
         except Exception as e:
             st.error(f"Error loading DEG file: {str(e)}")
+
+
+@log_streamlit_function
+def _render_metadata_section(ri: ResultsIntegrator, selected_dataset: str):
+    """Render the metadata section showing the original dataset metadata."""
+    st.markdown("---")
+
+    # Get accession for the selected dataset
+    accession = selected_dataset
+    if selected_dataset in ri.analysis_info:
+        accession = ri.analysis_info[selected_dataset].get('accession', selected_dataset)
+
+    # Look for metadata file
+    metadata_file = os.path.join(ri.results_dir, selected_dataset, "metadata", f"{accession}_metadata.csv")
+
+    if not os.path.exists(metadata_file):
+        return
+
+    with st.expander("View Original Dataset Metadata", expanded=False):
+        try:
+            metadata_df = pd.read_csv(metadata_file)
+
+            st.subheader(f"Original Metadata for {accession}")
+            st.markdown(f"*Source file: {accession}_metadata.csv*")
+
+            # Display the metadata table
+            st.dataframe(
+                metadata_df,
+                use_container_width=True
+            )
+
+            # Add download button for metadata
+            csv = metadata_df.to_csv(index=False)
+            st.download_button(
+                label="Download Metadata as CSV",
+                data=csv,
+                file_name=f"{accession}_metadata.csv",
+                mime="text/csv"
+            )
+
+        except Exception as e:
+            st.error(f"Error loading metadata file: {str(e)}")
