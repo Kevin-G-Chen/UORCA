@@ -175,7 +175,7 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
         log_streamlit_event(f"User started complete AI analysis: '{research_query.strip()}'")
         _run_complete_ai_analysis(ri, results_dir, research_query.strip())
 
-    # Show cached results if available (below the form)
+    # Show cached results if available (below the form) - but not if we just ran a fresh analysis
     if _should_restore_cached_analysis():
         st.markdown("---")
         _restore_and_display_cached_analysis(ri, results_dir)
@@ -361,6 +361,8 @@ def _initialise_ai_cache():
         st.session_state['current_analysis_id'] = None
     if 'show_cached_results' not in st.session_state:
         st.session_state['show_cached_results'] = False
+    if 'just_ran_fresh_analysis' not in st.session_state:
+        st.session_state['just_ran_fresh_analysis'] = False
 
 
 def _generate_analysis_id(research_question: str, selected_contrasts: List[Dict]) -> str:
@@ -399,10 +401,30 @@ def _cache_ai_analysis(
     }
     st.session_state['current_analysis_id'] = analysis_id
     st.session_state['show_cached_results'] = True
+    st.session_state['just_ran_fresh_analysis'] = True  # Flag to prevent immediate cached display
 
 
 def _should_restore_cached_analysis() -> bool:
-    """Check if we should restore a cached analysis."""
+    """
+    Check if we should restore a cached analysis.
+
+    This function prevents duplicate analysis display by using the 'just_ran_fresh_analysis' flag:
+
+    1. When a fresh analysis completes, _cache_ai_analysis() sets just_ran_fresh_analysis=True
+    2. The first call to this function after fresh analysis returns False (preventing duplicate display)
+    3. The flag is cleared so subsequent calls (e.g., after page refresh/rerun) return True
+    4. This ensures cached results only show when restoring from previous sessions, not immediately after fresh analysis
+
+    Flow:
+    - Fresh analysis runs → flag=True → this returns False (no duplicate)
+    - User downloads/refreshes → flag=False → this returns True (show cached results)
+    """
+    # Don't show cached results if we just ran a fresh analysis in this session
+    if st.session_state.get('just_ran_fresh_analysis', False):
+        # Clear the flag for next time
+        st.session_state['just_ran_fresh_analysis'] = False
+        return False
+
     return (
         st.session_state.get('show_cached_results', False) and
         st.session_state.get('current_analysis_id') is not None and
