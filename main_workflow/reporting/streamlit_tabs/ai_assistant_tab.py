@@ -437,16 +437,6 @@ def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str
     analysis_id = st.session_state['current_analysis_id']
     cached_data = st.session_state['ai_analysis_cache'][analysis_id]
 
-    # Add a header to show this is cached
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.info(f"Cached results from {cached_data['cached_at'].strftime('%H:%M:%S')}")
-    with col2:
-        if st.button("Clear Cache", help="Clear cached results", key="ai_clear_cache_button"):
-            st.session_state['show_cached_results'] = False
-            st.session_state['current_analysis_id'] = None
-            st.rerun()
-
     # Display the cached results
     _display_unified_ai_results(
         ri=ri,
