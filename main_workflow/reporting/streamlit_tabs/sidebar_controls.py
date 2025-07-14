@@ -236,10 +236,10 @@ def _render_heatmap_help():
         st.markdown("""
         1. Select datasets in the sidebar (e.g., GSE123456, GSE789012)
         2. Click "**Apply Dataset Selection**" - this will cause all contrasts associated with the datasets to appear in the **Explore DEG Heatmap** tab
-        3. Go to **Heatmap** tab
+        3. Go to **Explore DEG Heatmap** tab
         4. Choose contrasts from your selected datasets
         5. Configure gene selection (Frequent DEGs or Custom)
-        6. Click "Generate Heatmap Analysis"
+        6. Click "**Generate Heatmap Analysis**"
         """)
 
 
@@ -253,5 +253,5 @@ def _render_expression_plots_help():
         3. Go to **Plot Gene Expression** tab
         4. Choose sample groups from your selected datasets
         5. Enter genes of interest (e.g., TP53, EGFR, MYC)
-        6. Click "Generate Expression Plots"
+        6. Click "**Generate Expression Plots**"
         """)

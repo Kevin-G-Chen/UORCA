@@ -1213,11 +1213,11 @@ class ResultsIntegrator:
 
         # Configure points visibility and transparency for boxplots
         if show_raw_points:
-            fig.update_traces(marker=dict(size=4, opacity=0.6),
+            fig.update_traces(marker=dict(size=4, opacity=0.5), jitter=0,
                               selector=dict(type='box'))
-        else:
-            fig.update_traces(marker=dict(size=0),
-                              selector=dict(type='box'))
+            fig.update_traces(pointpos = 0,
+                width = 0.7,
+                selector = dict(type='box'))
 
         # Use the custom hover text we created in the data
         fig.update_traces(
