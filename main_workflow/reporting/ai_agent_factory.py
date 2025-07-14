@@ -71,7 +71,6 @@ def create_uorca_agent(selected_contrasts_key: str = "") -> Optional[Agent]:
             mcp_servers=[server],
             system_prompt=load_system_prompt(),
             output_type=GeneAnalysisOutput,
-         #   request_limit=ai_config.request_limit
         )
 
         # Initialize file-based tool logging system
