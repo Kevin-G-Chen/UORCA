@@ -83,17 +83,18 @@ uv pip install -e .
 # Dataset identification - find relevant GEO datasets
 uorca identify -q "cancer stem cell differentiation" -o results.csv
 
-# Dataset analysis - run RNA-seq pipeline  
-uorca run --accession GSE123456 --output_dir ../UORCA_results
+# Dataset analysis - run batch RNA-seq pipeline  
+uorca run slurm --csv datasets.csv --output_dir ../UORCA_results
 
 # Results exploration - launch interactive web app
-uorca explore --results-dir ../UORCA_results --port 8501
+uorca explore ../UORCA_results --port 8501
 ```
 
 **Key advantages of the unified CLI:**
 - **Shorter commands**: `uorca identify` vs `uv run main_workflow/dataset_identification/DatasetIdentification.py`
+- **Simplified deployment**: `uorca explore` runs directly without container dependency
+- **Batch-oriented processing**: `uorca run` focuses on efficient multi-dataset processing
 - **Consistent interface**: All commands follow the same pattern with standardized help
-- **Container compatibility**: Works seamlessly within containers using the same `uv run` environment
 - **Easy discovery**: `uorca --help` and `uorca COMMAND --help` for documentation
 
 ### Detailed CLI Usage
@@ -113,26 +114,26 @@ uorca identify -q "stem cell differentiation" \
 
 **Dataset Analysis:**
 ```bash
-# Single dataset analysis
-uorca run --accession GSE123456 --output_dir ../UORCA_results
+# SLURM batch processing
+uorca run slurm --csv datasets.csv --output_dir ../UORCA_results --cleanup
 
-# With cleanup and custom resource directory
-uorca run --accession GSE789012 \
+# Local parallel processing
+uorca run local --csv datasets.csv \
     --output_dir /path/to/results \
     --resource_dir ./data/kallisto_indices \
-    --cleanup
+    --max_workers 4 --cleanup
 ```
 
 **Results Exploration:**
 ```bash
-# Default settings (auto-detects results directory)
-uorca explore
+# Explore specific results directory
+uorca explore /path/to/results
 
-# Custom settings
-uorca explore --results-dir /path/to/results --port 8502 --headless
+# Custom settings with different port
+uorca explore /path/to/results --port 8502 --headless
 
 # For remote access via SSH tunnel
-uorca explore --results-dir ../UORCA_results --port 8501
+uorca explore ../UORCA_results --port 8501
 ```
 
 #### Single dataset analysis
@@ -149,13 +150,16 @@ sbatch --output=logs/my_analysis.out \
 
 #### Multiple dataset analysis
 
-For processing individual datasets, use the unified CLI:
+For processing datasets, UORCA now focuses on efficient batch processing:
 ```bash
-# Single dataset analysis
-uorca run --accession GSE123456 --output_dir ../UORCA_results --cleanup
+# SLURM batch processing
+uorca run slurm --csv datasets.csv --output_dir ../UORCA_results --cleanup
+
+# Local parallel processing  
+uorca run local --csv datasets.csv --output_dir ../UORCA_results --max_workers 4 --cleanup
 ```
 
-For batch processing multiple datasets with intelligent resource management:
+For legacy batch processing with advanced resource management:
 ```bash
 # Process multiple datasets with storage-aware scheduling
 uv run main_workflow/run_helpers/submit_datasets.py \
@@ -223,13 +227,16 @@ uv run main_workflow/dataset_identification/DatasetIdentification.py \
 ### Multi-dataset processing
 #### Multiple dataset analysis
 
-Process individual datasets using the CLI or batch process multiple datasets:
+Process datasets using the new batch-oriented CLI:
 
 ```bash
-# Individual dataset analysis (recommended)
-uorca run --accession GSE123456 --output_dir ../UORCA_results --cleanup
+# SLURM batch processing (recommended for HPC)
+uorca run slurm --csv datasets.csv --output_dir ../UORCA_results --cleanup
 
-# Batch processing multiple datasets with storage-aware scheduling
+# Local parallel processing (recommended for workstations)
+uorca run local --csv datasets.csv --output_dir ../UORCA_results --max_workers 4 --cleanup
+
+# Legacy batch processing with storage-aware scheduling
 uv run main_workflow/run_helpers/submit_datasets.py \
     --csv_file multi_dataset_input.csv \
     --output_dir ../UORCA_results \
@@ -265,8 +272,8 @@ uv run main_workflow/additional_scripts/ResultsIntegration.py \
     --pvalue_threshold 0.05 \
     --lfc_threshold 1.0
 
-# Then explore integrated results using CLI
-uorca explore --results-dir ../UORCA_results/integrated_results
+# Then explore integrated results using simplified CLI
+uorca explore ../UORCA_results/integrated_results
 ```
 
 **Features:**
@@ -285,10 +292,10 @@ UORCA Explorer is a containerized Streamlit web application for interactive expl
 **Running the Explorer:**
 
 ```bash
-# Using unified CLI (recommended for direct usage)
-uorca explore --results-dir ../UORCA_results --port 8501
+# Using simplified CLI (recommended - runs directly without container)
+uorca explore ../UORCA_results --port 8501
 
-# Or using containerized script (recommended for container environments)
+# Or using containerized script (for container environments)
 ./run_uorca_explorer.sh [results_directory] [port]
 
 # Example with custom settings
@@ -299,10 +306,10 @@ uorca explore --results-dir ../UORCA_results --port 8501
 
 1. Start the Explorer on your HPC system:
    ```bash
-   # Using CLI
-   uorca explore --results-dir ../UORCA_results --port 8501
+   # Using simplified CLI (direct Python execution)
+   uorca explore ../UORCA_results --port 8501
    
-   # Or using container script
+   # Or using container script (containerized execution)
    ./run_uorca_explorer.sh ../UORCA_results 8501
    ```
 
