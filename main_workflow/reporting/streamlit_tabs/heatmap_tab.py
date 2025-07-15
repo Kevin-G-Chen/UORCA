@@ -43,7 +43,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
         **kwargs: Additional arguments (maintained for compatibility)
     """
     st.header("Explore DEG Heatmap")
-    st.markdown("Construct a heatmap of selected genes and contrasts.")
+    st.markdown("Construct a heatmap of selected genes and contrasts. To get started, select datasets from the sidebar on the left.")
 
     # Get selected datasets from sidebar
     if not selected_datasets:
