@@ -21,8 +21,9 @@ def main():
         epilog="""
 Examples:
   uorca identify -q "cancer stem cell differentiation" -o results.csv
-  uorca run --accession GSE123456 --output_dir ../UORCA_results
-  uorca explore --results-dir ../UORCA_results --port 8501
+  uorca run slurm --csv datasets.csv --output_dir ../UORCA_results
+  uorca run local --csv datasets.csv --output_dir ../UORCA_results
+  uorca explore ../UORCA_results --port 8501
 
 For more help on a specific command, use:
   uorca COMMAND --help
@@ -75,25 +76,79 @@ For more help on a specific command, use:
     identify_parser.set_defaults(func=run_identify)
 
     # ========================================================================
-    # RUN subcommand - RNA-seq analysis pipeline
+    # RUN subcommand - Batch RNA-seq analysis pipeline
     # ========================================================================
     run_parser = subparsers.add_parser(
         'run',
-        help='Run RNA-seq analysis pipeline on a GEO dataset',
-        description='UORCA RNA-seq Analysis Pipeline',
+        help='Run batch RNA-seq analysis pipeline',
+        description='UORCA Batch RNA-seq Analysis Pipeline',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    run_parser.add_argument("--accession", required=True,
-                           help="GEO accession (e.g., GSE123456)")
-    run_parser.add_argument("--output_dir", default="../UORCA_results",
-                           help="Output directory")
-    run_parser.add_argument("--resource_dir", default="./data/kallisto_indices/",
-                           help="Resource directory")
-    run_parser.add_argument("--cleanup", action="store_true",
-                           help="Clean up FASTQ and SRA files after analysis")
+    # Create subparsers for batch systems
+    run_subparsers = run_parser.add_subparsers(
+        dest='batch_system',
+        help='Batch processing system',
+        metavar='SYSTEM'
+    )
 
-    run_parser.set_defaults(func=run_analysis)
+    # SLURM batch processing
+    slurm_parser = run_subparsers.add_parser(
+        'slurm',
+        help='Run batch processing on SLURM cluster',
+        description='Submit batch jobs to SLURM for dataset processing',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+
+    slurm_parser.add_argument("--csv", required=True,
+                             help="CSV file with dataset information (must have 'Accession' column)")
+    slurm_parser.add_argument("--output_dir", default="../UORCA_results",
+                             help="Output directory for results")
+    slurm_parser.add_argument("--resource_dir", default="./data/kallisto_indices/",
+                             help="Resource directory for Kallisto indices")
+    slurm_parser.add_argument("--max_parallel", type=int, default=10,
+                             help="Maximum number of parallel jobs")
+    slurm_parser.add_argument("--max_storage_gb", type=float, default=500,
+                             help="Maximum storage usage in GB")
+    slurm_parser.add_argument("--cleanup", action="store_true",
+                             help="Clean up FASTQ and SRA files after analysis")
+    slurm_parser.add_argument("--partition", default="tki_agpdev",
+                             help="SLURM partition to use")
+    slurm_parser.add_argument("--constraint", default="icx",
+                             help="SLURM constraint for node selection")
+    slurm_parser.add_argument("--cpus_per_task", type=int, default=8,
+                             help="CPUs per task")
+    slurm_parser.add_argument("--memory", default="16G",
+                             help="Memory per job")
+    slurm_parser.add_argument("--time_limit", default="6:00:00",
+                             help="Time limit per job (HH:MM:SS)")
+
+    slurm_parser.set_defaults(func=run_batch_slurm)
+
+    # Local batch processing
+    local_parser = run_subparsers.add_parser(
+        'local',
+        help='Run batch processing locally with parallel jobs',
+        description='Process datasets locally using multiprocessing',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+
+    local_parser.add_argument("--csv", required=True,
+                             help="CSV file with dataset information (must have 'Accession' column)")
+    local_parser.add_argument("--output_dir", default="../UORCA_results",
+                             help="Output directory for results")
+    local_parser.add_argument("--resource_dir", default="./data/kallisto_indices/",
+                             help="Resource directory for Kallisto indices")
+    local_parser.add_argument("--max_workers", type=int,
+                             help="Maximum number of parallel workers (default: auto-detect 75%% of CPU cores)")
+    local_parser.add_argument("--max_storage_gb", type=float,
+                             help="Maximum storage usage in GB (default: auto-detect 75%% of available memory)")
+    local_parser.add_argument("--cleanup", action="store_true",
+                             help="Clean up FASTQ and SRA files after analysis")
+    local_parser.add_argument("--timeout_hours", type=float, default=6,
+                             help="Timeout per job in hours")
+
+    local_parser.set_defaults(func=run_batch_local)
 
     # ========================================================================
     # EXPLORE subcommand - Interactive results explorer
@@ -105,7 +160,7 @@ For more help on a specific command, use:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    explore_parser.add_argument('--results-dir',
+    explore_parser.add_argument('results_dir', nargs='?',
                                help='Results directory to explore (if not specified, will use default detection)')
     explore_parser.add_argument('--port', type=int, default=8501,
                                help='Port number for the web application')
@@ -122,6 +177,11 @@ For more help on a specific command, use:
     # If no command specified, show help
     if not args.command:
         parser.print_help()
+        sys.exit(1)
+
+    # Special handling for run command without batch system
+    if args.command == 'run' and not hasattr(args, 'batch_system') or (hasattr(args, 'batch_system') and not args.batch_system):
+        run_parser.print_help()
         sys.exit(1)
 
     # Call the appropriate function
@@ -162,61 +222,88 @@ def run_identify(args):
     identify_main()
 
 
-def run_analysis(args):
-    """Run the RNA-seq analysis workflow."""
-    # Import here to avoid startup overhead when not needed
-    from uorca.run import main as run_main
+def run_batch_slurm(args):
+    """Run batch processing using SLURM."""
+    from uorca.batch import get_batch_processor
 
-    # Rebuild sys.argv to match what the original script expects
-    sys.argv = ['run']
-    sys.argv.extend(['--accession', args.accession])
-    sys.argv.extend(['--output_dir', args.output_dir])
-    sys.argv.extend(['--resource_dir', args.resource_dir])
-    if args.cleanup:
-        sys.argv.append('--cleanup')
+    print("🚀 Starting SLURM batch processing...")
 
-    # Call the original main function
-    run_main()
+    try:
+        processor = get_batch_processor('slurm')
+
+        # Prepare parameters
+        params = {
+            'max_parallel': args.max_parallel,
+            'max_storage_gb': args.max_storage_gb,
+            'cleanup': args.cleanup,
+            'resource_dir': args.resource_dir,
+            'partition': args.partition,
+            'constraint': args.constraint,
+            'cpus_per_task': args.cpus_per_task,
+            'memory': args.memory,
+            'time_limit': args.time_limit
+        }
+
+        # Submit jobs
+        jobs_submitted = processor.submit_datasets(args.csv, args.output_dir, **params)
+
+        if jobs_submitted > 0:
+            print(f"\n✅ Successfully submitted {jobs_submitted} jobs to SLURM")
+        else:
+            print("\n⚠️  No jobs were submitted")
+
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        sys.exit(1)
+
+
+def run_batch_local(args):
+    """Run batch processing locally."""
+    from uorca.batch import get_batch_processor
+
+    print("🚀 Starting local batch processing...")
+
+    try:
+        processor = get_batch_processor('local')
+
+        # Prepare parameters
+        params = {
+            'cleanup': args.cleanup,
+            'resource_dir': args.resource_dir,
+            'timeout_hours': args.timeout_hours
+        }
+
+        # Add optional parameters if specified
+        if args.max_workers:
+            params['max_workers'] = args.max_workers
+        if args.max_storage_gb:
+            params['max_storage_gb'] = args.max_storage_gb
+
+        # Submit jobs
+        jobs_submitted = processor.submit_datasets(args.csv, args.output_dir, **params)
+
+        if jobs_submitted > 0:
+            print(f"\n✅ Successfully processed {jobs_submitted} datasets")
+        else:
+            print("\n⚠️  No datasets were processed")
+
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        sys.exit(1)
 
 
 def run_explore(args):
     """Run the interactive results explorer."""
     # Import here to avoid startup overhead when not needed
-    import subprocess
+    from uorca.explore import main as explore_main
 
-    # Set up environment variables for the Streamlit app
-    env = os.environ.copy()
-
-    if args.results_dir:
-        env['UORCA_DEFAULT_RESULTS_DIR'] = args.results_dir
-
-    # Set Streamlit configuration
-    env['STREAMLIT_BROWSER_GATHER_USAGE_STATS'] = 'false'
-    env['STREAMLIT_SERVER_HEADLESS'] = 'true' if args.headless else 'false'
-
-    # Build the streamlit command
-    cmd = [
-        'uv', 'run', 'streamlit', 'run',
-        'main_workflow/reporting/uorca_explorer.py',
-        '--server.port', str(args.port),
-        '--server.address', args.host,
-        '--server.headless', 'true' if args.headless else 'false'
-    ]
-
-    print(f"Starting UORCA Explorer on http://{args.host}:{args.port}")
-    if args.results_dir:
-        print(f"Using results directory: {args.results_dir}")
-    print("Press Ctrl+C to stop the application")
-
-    try:
-        # Run streamlit
-        subprocess.run(cmd, env=env, check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Failed to start UORCA Explorer: {e}")
-        sys.exit(1)
-    except FileNotFoundError:
-        print("Error: Could not find 'uv' command. Make sure you're in the UORCA environment.")
-        sys.exit(1)
+    # Call the simplified explore main function directly
+    explore_main(
+        results_dir=args.results_dir,
+        port=args.port,
+        host=args.host,
+        headless=args.headless
+    )
 
 
 if __name__ == "__main__":
