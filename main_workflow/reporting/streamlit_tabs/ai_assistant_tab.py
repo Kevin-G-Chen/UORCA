@@ -87,7 +87,7 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
         results_dir: Path to the results directory
     """
     st.header("AI Assistant")
-    st.markdown("Ask questions and get AI-powered insights from your data.")
+    st.markdown("Enter your research question and let the AI perform an automated analysis of the data. To get started, select datasets from the sidebar on the left.")
 
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
@@ -117,12 +117,6 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
             4. Copy the key and set it using one of the methods above
             5. Restart the Streamlit app
 
-            ### What You'll Get
-            - **Intelligent Contrast Selection**: AI automatically identifies the most relevant contrasts for your research question
-            - **Gene Pattern Analysis**: Discovers shared and context-specific gene expression patterns
-            - **Biological Interpretation**: Provides insights into the biological significance of findings
-            - **Interactive Exploration**: Tools to drill down into specific genes and contrasts
-
             **Note**: You can still use all other features of UORCA Explorer without the API key.
             """)
 
@@ -138,9 +132,6 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
 
     # Initialise caching system
     _initialise_ai_cache()
-
-    st.subheader("Gene Analysis")
-    st.markdown("Enter your research question and the AI will find relevant contrasts and identify key genes.")
 
     # Load saved query from dataset identification
     saved_query = load_query_config()
