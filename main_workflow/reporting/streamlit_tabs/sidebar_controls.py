@@ -41,6 +41,7 @@ def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str
 
     # Help sections
     _render_tab_descriptions()
+    _render_ai_assistant_help()
     _render_heatmap_help()
     _render_expression_plots_help()
 
@@ -62,7 +63,8 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
     """Render the dataset selection section."""
     with st.sidebar.expander("Dataset Selection", expanded=True):
         st.subheader("Select Datasets")
-        st.markdown("Choose which datasets to include in your analysis")
+        st.markdown("Choose which datasets to include in your analysis.")
+        st.markdown("Ensure you click **Apply Dataset Selection** if you make changes.")
 
         # Initialize session state for dataset selection
         if 'selected_datasets_from_sidebar' not in st.session_state:
@@ -215,7 +217,7 @@ def _render_tab_descriptions():
     """Render expandable pane describing all tabs."""
     with st.sidebar.expander("Tab Guide", expanded=False):
         st.markdown("""
-        **AI Assistant** - Use an AI agent to automatically analyse the data. You will be able to see the steps the AI took to arrive at its findings.
+        **AI Assistant** - Use an AI agent to automatically analyse contrasts from your selected datasets. You will be able to see the steps the AI took to arrive at its findings.
 
         **Explore DEG Heatmap** - Create heatmaps showing log2 fold changes for selected genes across multiple contrasts.
 
@@ -230,6 +232,20 @@ def _render_tab_descriptions():
 
 
 @log_streamlit_function
+def _render_ai_assistant_help():
+    """Render expandable pane describing AI assistant usage."""
+    with st.sidebar.expander("Using AI Assistant", expanded=False):
+        st.markdown("""
+        1. Select datasets in the sidebar (e.g., GSE123456, GSE789012)
+        2. Go to **AI Assistant** tab
+        3. Enter your research question (e.g., "What contrasts are most relevant to T cell activation?")
+        4. Click "**Run Complete AI Analysis**." Do note this will typically take a few minutes.
+        5. You will be able to evaluate the agent's results and methodology
+
+        **Note**: AI will only analyse contrasts from your selected datasets.
+        """)
+
+
 def _render_heatmap_help():
     """Render expandable pane describing heatmap creation."""
     with st.sidebar.expander("Creating Heatmaps", expanded=False):

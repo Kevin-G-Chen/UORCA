@@ -42,13 +42,14 @@ def render_expression_plots_tab(ri: ResultsIntegrator, selected_datasets: List[s
         selected_datasets: List of selected dataset IDs from sidebar
     """
     st.header("Expression Plots")
-    st.markdown("Visualise gene expression across sample groups. To get started, select datasets from the sidebar on the left.")
+    st.markdown("Visualise gene expression across sample groups.")
 
     # Get selected datasets from sidebar
     if not selected_datasets:
         selected_datasets = st.session_state.get('selected_datasets_from_sidebar', [])
 
     if not selected_datasets:
+        st.markdown("To get started, select datasets from the sidebar on the left.")
         return
 
     # Render combined form for groups and genes

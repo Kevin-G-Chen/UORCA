@@ -42,6 +42,83 @@ setup_fragment_decorator()
 logger = logging.getLogger(__name__)
 
 
+def _get_ai_analysis_scope(ri: ResultsIntegrator, selected_datasets: List[str]) -> Dict[str, int]:
+    """Get the scope of AI analysis (dataset and contrast counts)."""
+    contrast_data = _create_ai_contrast_data_filtered(ri, selected_datasets)
+    return {
+        'datasets': len(selected_datasets),
+        'contrasts': len(contrast_data)
+    }
+
+
+def _create_ai_contrast_data_filtered(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[Dict[str, Any]]:
+    """Create contrast data filtered by selected datasets for AI analysis."""
+    contrast_data = []
+
+    for analysis_id in selected_datasets:
+        if analysis_id in ri.analysis_info:
+            info = ri.analysis_info[analysis_id]
+            accession = info.get("accession", analysis_id)
+
+            for contrast in info.get("contrasts", []):
+                contrast_id = contrast["name"]
+                description = contrast.get("description", "")
+
+                contrast_data.append({
+                    "accession": accession,
+                    "contrast": contrast_id,
+                    "description": description
+                })
+
+    return contrast_data
+
+
+
+def _run_filtered_contrast_relevance_with_selection(ri, filtered_contrast_data, query: str, repeats: int, batch_size: int, parallel_jobs: int):
+    """Run contrast relevance with selection on filtered contrast data."""
+    if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE:
+        # Filter the RI analysis_info to only include selected datasets
+        original_analysis_info = ri.analysis_info.copy()
+
+        # Create filtered analysis_info containing only selected datasets
+        filtered_analysis_ids = set([contrast['accession'] for contrast in filtered_contrast_data])
+        ri.analysis_info = {aid: info for aid, info in original_analysis_info.items()
+                          if info.get('accession', aid) in filtered_analysis_ids}
+
+        try:
+            from contrast_relevance import run_contrast_relevance_with_selection
+            results_df, selected_contrasts = run_contrast_relevance_with_selection(
+                ri, query, repeats, batch_size, parallel_jobs
+            )
+            return results_df, selected_contrasts
+        finally:
+            # Restore original analysis_info
+            ri.analysis_info = original_analysis_info
+    else:
+        return pd.DataFrame(), []
+
+def _run_filtered_contrast_relevance(ri, filtered_contrast_data, query: str, repeats: int, batch_size: int, parallel_jobs: int):
+    """Run contrast relevance on filtered contrast data."""
+    if CONTRAST_RELEVANCE_AVAILABLE:
+        # Filter the RI analysis_info to only include selected datasets
+        original_analysis_info = ri.analysis_info.copy()
+
+        # Create filtered analysis_info containing only selected datasets
+        filtered_analysis_ids = set([contrast['accession'] for contrast in filtered_contrast_data])
+        ri.analysis_info = {aid: info for aid, info in original_analysis_info.items()
+                          if info.get('accession', aid) in filtered_analysis_ids}
+
+        try:
+            from contrast_relevance import run_contrast_relevance
+            results_df = run_contrast_relevance(
+                ri, query, repeats, batch_size, parallel_jobs
+            )
+            return results_df
+        finally:
+            # Restore original analysis_info
+            ri.analysis_info = original_analysis_info
+    else:
+        return pd.DataFrame()
 
 
 def load_query_config() -> Optional[str]:
@@ -78,16 +155,17 @@ except ImportError as e:
 
 
 @log_streamlit_tab("AI Assistant")
-def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
+def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str, selected_datasets: List[str]):
     """
     Render the AI assistant tab with subtabs for analysis and tool logs.
 
     Args:
         ri: ResultsIntegrator instance
         results_dir: Path to the results directory
+        selected_datasets: List of selected dataset IDs from sidebar
     """
     st.header("AI Assistant")
-    st.markdown("Enter your research question and let the AI perform an automated analysis of the data. To get started, select datasets from the sidebar on the left.")
+    st.markdown("Enter your research question and let the AI perform an automated analysis of the data.")
 
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
@@ -124,14 +202,35 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str):
         return
 
     # Render streamlined AI analysis workflow (no tabs needed)
-    _render_streamlined_ai_workflow(ri, results_dir)
+    _render_streamlined_ai_workflow(ri, results_dir, selected_datasets)
 
 
-def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
+def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str, selected_datasets: List[str]):
     """Render the streamlined AI analysis workflow."""
+
+    # Check if datasets are selected
+    if not selected_datasets:
+        st.markdown("To get started, select datasets from the sidebar on the left.")
+        return
+
+    # Show scope information
+    scope = _get_ai_analysis_scope(ri, selected_datasets)
+    st.markdown(f"AI will consider **{scope['contrasts']} contrasts** across **{scope['datasets']} datasets**")
 
     # Initialise caching system
     _initialise_ai_cache()
+
+    # Clear cache if datasets have changed
+    if 'previous_selected_datasets' not in st.session_state:
+        st.session_state['previous_selected_datasets'] = set()
+
+    current_datasets = set(selected_datasets)
+    if current_datasets != st.session_state['previous_selected_datasets']:
+        # Datasets changed - clear AI analysis cache
+        st.session_state['ai_analysis_cache'] = {}
+        st.session_state['current_analysis_id'] = None
+        st.session_state['show_cached_results'] = False
+        st.session_state['previous_selected_datasets'] = current_datasets
 
     # Load saved query from dataset identification
     saved_query = load_query_config()
@@ -164,16 +263,16 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str):
 
     if run_button:
         log_streamlit_event(f"User started complete AI analysis: '{research_query.strip()}'")
-        _run_complete_ai_analysis(ri, results_dir, research_query.strip())
+        _run_complete_ai_analysis(ri, results_dir, research_query.strip(), selected_datasets)
 
     # Show cached results if available (below the form) - but not if we just ran a fresh analysis
-    if _should_restore_cached_analysis():
+    if _should_restore_cached_analysis(selected_datasets):
         st.markdown("---")
-        _restore_and_display_cached_analysis(ri, results_dir)
+        _restore_and_display_cached_analysis(ri, results_dir, selected_datasets)
 
 
 @log_streamlit_agent
-def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_query: str):
+def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_query: str, selected_datasets: List[str]):
     """Run the complete AI analysis workflow including contrast relevance and gene analysis."""
     # Add validation for empty research query
     if not research_query.strip():
@@ -200,10 +299,17 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
         with progress_placeholder:
             with st.spinner("Selecting relevant contrasts..."):
                 if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE:
-                    # Run contrast relevance assessment with intelligent selection
+                    # Filter contrasts to selected datasets only
+                    filtered_contrast_data = _create_ai_contrast_data_filtered(ri, selected_datasets)
+                    if not filtered_contrast_data:
+                        st.warning("No contrasts found in selected datasets.")
+                        return
+
+                    # Run contrast relevance assessment with intelligent selection on filtered data
                     relevance_config = get_contrast_relevance_with_selection_config()
-                    results_df, selected_contrasts = run_contrast_relevance_with_selection(
+                    results_df, selected_contrasts = _run_filtered_contrast_relevance_with_selection(
                         ri,
+                        filtered_contrast_data,
                         query=research_query,
                         repeats=relevance_config.repeats,
                         batch_size=relevance_config.batch_size,
@@ -226,10 +332,17 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                             st.warning("No contrasts found for assessment.")
                         return
                 else:
-                    # Fall back to original approach
+                    # Filter contrasts to selected datasets only
+                    filtered_contrast_data = _create_ai_contrast_data_filtered(ri, selected_datasets)
+                    if not filtered_contrast_data:
+                        st.warning("No contrasts found in selected datasets.")
+                        return
+
+                    # Fall back to original approach with filtered data
                     relevance_config = get_contrast_relevance_with_selection_config()
-                    results_df = run_contrast_relevance(
+                    results_df = _run_filtered_contrast_relevance(
                         ri,
+                        filtered_contrast_data,
                         query=research_query,
                         repeats=relevance_config.repeats,
                         batch_size=relevance_config.batch_size,
@@ -322,17 +435,17 @@ Please perform the analysis using your four tools, choose all thresholds reasona
                     display_tool_calls = []
 
                 # Cache the results
-                analysis_id = _generate_analysis_id(research_query, selected_contrast_dicts)
+                analysis_id = _generate_analysis_id(research_query, selected_contrast_dicts, selected_datasets)
                 _cache_ai_analysis(
                     analysis_id, ri, result_output, research_query, selected_contrast_dicts,
-                    results_df, selected_contrasts, display_tool_calls
+                    results_df, selected_datasets, selected_contrasts, display_tool_calls
                 )
 
         # Display unified results
         progress_placeholder.empty()
         _display_unified_ai_results(
             ri, result_output, research_query, selected_contrast_dicts,
-            results_df, selected_contrasts, display_tool_calls
+            results_df, selected_datasets, selected_contrasts, display_tool_calls
         )
 
     except Exception as e:
@@ -356,8 +469,8 @@ def _initialise_ai_cache():
         st.session_state['just_ran_fresh_analysis'] = False
 
 
-def _generate_analysis_id(research_question: str, selected_contrasts: List[Dict]) -> str:
-    """Generate unique ID for analysis based on question and contrasts."""
+def _generate_analysis_id(research_question: str, selected_contrasts: List[Dict], selected_datasets: List[str]) -> str:
+    """Generate unique ID for analysis based on question, contrasts, and datasets."""
     import hashlib
     # Create a hashable representation of contrasts
     contrast_keys = []
@@ -365,7 +478,9 @@ def _generate_analysis_id(research_question: str, selected_contrasts: List[Dict]
         key = f"{contrast.get('analysis_id', '')}_{contrast.get('contrast_id', '')}"
         contrast_keys.append(key)
     contrast_hash = hash(str(sorted(contrast_keys)))
-    content = f"{research_question}_{len(selected_contrasts)}_{contrast_hash}"
+    # Include datasets in the cache key to ensure cache invalidation when datasets change
+    datasets_hash = hash(str(sorted(selected_datasets)))
+    content = f"{research_question}_{len(selected_contrasts)}_{contrast_hash}_{datasets_hash}"
     return hashlib.md5(content.encode()).hexdigest()[:12]
 
 
@@ -376,6 +491,7 @@ def _cache_ai_analysis(
     research_question: str,
     selected_contrast_dicts: List[Dict],
     results_df: pd.DataFrame,
+    selected_datasets: List[str],
     selected_contrasts: Optional[List] = None,
     tool_calls: Optional[List[Dict]] = None
 ):
@@ -385,6 +501,7 @@ def _cache_ai_analysis(
         'research_question': research_question,
         'selected_contrast_dicts': selected_contrast_dicts,
         'results_df': results_df,
+        'selected_datasets': selected_datasets,
         'selected_contrasts': selected_contrasts,
         'tool_calls': tool_calls,
         'cached_at': datetime.now(),
@@ -395,7 +512,7 @@ def _cache_ai_analysis(
     st.session_state['just_ran_fresh_analysis'] = True  # Flag to prevent immediate cached display
 
 
-def _should_restore_cached_analysis() -> bool:
+def _should_restore_cached_analysis(selected_datasets: List[str]) -> bool:
     """
     Check if we should restore a cached analysis.
 
@@ -416,14 +533,28 @@ def _should_restore_cached_analysis() -> bool:
         st.session_state['just_ran_fresh_analysis'] = False
         return False
 
-    return (
+    # Check if cached analysis exists and was done with the same datasets
+    cache_valid = (
         st.session_state.get('show_cached_results', False) and
         st.session_state.get('current_analysis_id') is not None and
         st.session_state.get('current_analysis_id') in st.session_state.get('ai_analysis_cache', {})
     )
 
+    if cache_valid:
+        # Check if cached analysis was done with same selected datasets
+        analysis_id = st.session_state['current_analysis_id']
+        cached_data = st.session_state['ai_analysis_cache'][analysis_id]
+        cached_datasets = cached_data.get('selected_datasets', [])
+        if set(cached_datasets) != set(selected_datasets):
+            # Datasets changed - invalidate cache
+            st.session_state['show_cached_results'] = False
+            st.session_state['current_analysis_id'] = None
+            return False
 
-def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str):
+    return cache_valid
+
+
+def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str, selected_datasets: List[str]):
     """Restore and display cached analysis results."""
     analysis_id = st.session_state['current_analysis_id']
     cached_data = st.session_state['ai_analysis_cache'][analysis_id]
@@ -435,6 +566,7 @@ def _restore_and_display_cached_analysis(ri: ResultsIntegrator, results_dir: str
         research_question=cached_data['research_question'],
         selected_contrast_dicts=cached_data['selected_contrast_dicts'],
         results_df=cached_data['results_df'],
+        selected_datasets=cached_data['selected_datasets'],
         selected_contrasts=cached_data['selected_contrasts'],
         tool_calls=cached_data['tool_calls']
     )
@@ -641,6 +773,7 @@ def _display_unified_ai_results(
     research_question: str,
     selected_contrast_dicts: List[Dict],
     results_df: pd.DataFrame,
+    selected_datasets: List[str],
     selected_contrasts: Optional[List] = None,
     tool_calls: Optional[List[Dict]] = None
 ):
@@ -711,7 +844,7 @@ def _display_unified_ai_results(
 
         # Download gene list
         gene_list_csv = pd.DataFrame({'Gene': sorted_genes}).to_csv(index=False)
-        gene_download_key = f"download_genes_tab1_{_generate_analysis_id(research_question, selected_contrast_dicts)}_{int(time.time() * 1000)}"
+        gene_download_key = f"download_genes_tab1_{_generate_analysis_id(research_question, selected_contrast_dicts, selected_datasets)}_{int(time.time() * 1000)}"
 
         st.download_button(
             label="Download Gene List (CSV)",
@@ -758,7 +891,7 @@ def _display_unified_ai_results(
 
             # Download this specific table
             expression_csv = lfc_df.to_csv(index=False)
-            expression_download_key = f"download_expression_tab3_{_generate_analysis_id(research_question, selected_contrast_dicts)}_{int(time.time() * 1000)}"
+            expression_download_key = f"download_expression_tab3_{_generate_analysis_id(research_question, selected_contrast_dicts, selected_datasets)}_{int(time.time() * 1000)}"
 
             st.download_button(
                 label="Download Expression Table (CSV)",
@@ -846,7 +979,7 @@ def _display_unified_ai_results(
         if selected_contrasts and hasattr(selected_contrasts[0], 'selection_justification'):
             if selected_data:
                 contrast_table_csv = pd.DataFrame(selected_data).to_csv(index=False)
-                contrast_download_key = f"download_contrasts_selected_tab4_{_generate_analysis_id(research_question, selected_contrast_dicts)}_{int(time.time() * 1000)}"
+                contrast_download_key = f"download_contrasts_selected_tab4_{_generate_analysis_id(research_question, selected_contrast_dicts, selected_datasets)}_{int(time.time() * 1000)}"
 
                 st.download_button(
                     label="Download Selected Contrasts (CSV)",
@@ -859,7 +992,7 @@ def _display_unified_ai_results(
         else:
             if contrast_display_data:
                 contrast_table_csv = pd.DataFrame(contrast_display_data).to_csv(index=False)
-                contrast_download_key = f"download_contrasts_analysed_tab4_{_generate_analysis_id(research_question, selected_contrast_dicts)}_{int(time.time() * 1000)}"
+                contrast_download_key = f"download_contrasts_analysed_tab4_{_generate_analysis_id(research_question, selected_contrast_dicts, selected_datasets)}_{int(time.time() * 1000)}"
 
                 st.download_button(
                     label="Download Analysed Contrasts (CSV)",
@@ -907,7 +1040,7 @@ def _display_unified_ai_results(
 *Generated by UORCA Explorer AI Assistant*
 """
 
-            report_download_key = f"download_report_tab6_{_generate_analysis_id(research_question, selected_contrast_dicts)}_{int(time.time() * 1000)}"
+            report_download_key = f"download_report_tab6_{_generate_analysis_id(research_question, selected_contrast_dicts, selected_datasets)}_{int(time.time() * 1000)}"
 
             st.download_button(
                 label="Complete Analysis Report (Markdown)",
@@ -925,7 +1058,7 @@ def _display_unified_ai_results(
 
                 if not filtered_df.empty:
                     csv_data = filtered_df.to_csv(index=False)
-                    agent_data_key = f"download_agent_data_tab6_{_generate_analysis_id(research_question, selected_contrast_dicts)}_{int(time.time() * 1000)}"
+                    agent_data_key = f"download_agent_data_tab6_{_generate_analysis_id(research_question, selected_contrast_dicts, selected_datasets)}_{int(time.time() * 1000)}"
 
                     st.download_button(
                         label="AI Agent's Working Dataset (CSV)",
@@ -944,7 +1077,7 @@ def _display_unified_ai_results(
             # Contrast relevance scores
             if not results_df.empty:
                 relevance_csv = results_df.to_csv(index=False)
-                relevance_key = f"download_all_relevance_tab6_{_generate_analysis_id(research_question, selected_contrast_dicts)}_{int(time.time() * 1000)}"
+                relevance_key = f"download_all_relevance_tab6_{_generate_analysis_id(research_question, selected_contrast_dicts, selected_datasets)}_{int(time.time() * 1000)}"
 
                 st.download_button(
                     label="All Contrast Relevance Scores (CSV)",
@@ -972,7 +1105,7 @@ def _display_unified_ai_results(
                         log_content += f"Output: {call.get('output_snippet')}\n"
                     log_content += "-" * 30 + "\n\n"
 
-                raw_log_key = f"download_raw_log_tab6_{_generate_analysis_id(research_question, selected_contrast_dicts)}_{int(time.time() * 1000)}"
+                raw_log_key = f"download_raw_log_tab6_{_generate_analysis_id(research_question, selected_contrast_dicts, selected_datasets)}_{int(time.time() * 1000)}"
 
                 st.download_button(
                     label="Raw Tool Usage Log (Text)",
