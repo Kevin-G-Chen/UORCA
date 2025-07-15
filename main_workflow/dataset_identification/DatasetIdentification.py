@@ -536,7 +536,7 @@ def main():
 
     # === Search Parameters ===
     search_group = parser.add_argument_group('Search Options', 'Control dataset search and evaluation')
-    search_group.add_argument('--max-datasets', type=int, default=2000,
+    search_group.add_argument('--max-datasets', type=int, default=1000,
                              help='Maximum datasets to retrieve per search term')
 
     # === Advanced Parameters ===
@@ -825,7 +825,7 @@ def main():
 
             # Step 9: Select representative datasets
             tqdm.write("Selecting representative datasets for assessment...")
-            representatives_df = select_representative_datasets(clustered_df, 10)
+            representatives_df = select_representative_datasets(clustered_df, 300)
 
             # Step 10: Assess relevance of representatives
             tqdm.write(f"Assessing relevance of {len(representatives_df)} representative datasets...")

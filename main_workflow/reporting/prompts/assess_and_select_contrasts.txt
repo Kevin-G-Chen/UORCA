@@ -52,7 +52,7 @@ Provide a 2-3 sentence scientific summary explaining:
 OUTPUT FORMAT:
 Return valid JSON conforming to the "ContrastAssessmentWithSelection" schema, including:
 - Complete scientific relevance assessments for ALL experimental contrasts
-- Strategic selection of 8-15 contrasts with experimental categories and detailed scientific justifications
+- Strategic selection of 15-25 contrasts with experimental categories and detailed scientific justifications
 - Overall experimental design strategy and summary
 
 Focus on creating an experimental design that maximizes analytical power while maintaining biological diversity and including appropriate experimental controls for robust scientific inference.

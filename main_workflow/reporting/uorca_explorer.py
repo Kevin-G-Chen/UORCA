@@ -184,7 +184,8 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, selected_data
     with tab_ai:
         render_ai_assistant_tab(
             ri=ri,
-            results_dir=results_dir
+            results_dir=results_dir,
+            selected_datasets=selected_datasets
         )
 
     # Tab 2: Heatmap (now handles its own contrast and gene selection)

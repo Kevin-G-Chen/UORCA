@@ -43,13 +43,14 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
         **kwargs: Additional arguments (maintained for compatibility)
     """
     st.header("Explore DEG Heatmap")
-    st.markdown("Construct a heatmap of selected genes and contrasts. To get started, select datasets from the sidebar on the left.")
+    st.markdown("Construct a heatmap of selected genes and contrasts.")
 
     # Get selected datasets from sidebar
     if not selected_datasets:
         selected_datasets = st.session_state.get('selected_datasets_from_sidebar', [])
 
     if not selected_datasets:
+        st.markdown("To get started, select datasets from the sidebar on the left.")
         return
 
     # Initialize session state for selected contrasts

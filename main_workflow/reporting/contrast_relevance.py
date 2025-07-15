@@ -325,8 +325,7 @@ async def repeated_contrast_relevance_with_selection(
                 'analysis_id': assessment.analysis_id,
                 'contrast_id': assessment.contrast_id,
                 'RelevanceScore': assessment.RelevanceScore,
-                'Run1Score': assessment.RelevanceScore,
-                'Run1Justification': assessment.Justification
+                'Justification': assessment.Justification
             })
 
         relevance_df = pd.DataFrame(relevance_records)
