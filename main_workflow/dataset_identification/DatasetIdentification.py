@@ -78,11 +78,11 @@ class APIRateLimiter:
         # Auto-detect optimal delay based on API key presence
         if base_delay is None:
             if os.getenv("ENTREZ_API_KEY"):
-                # With API key: up to 10 requests/second = 0.1 second delay
-                self.min_delay = 0.11  # Slightly conservative
+                # With API key: up to 5 requests/second = 0.2 second delay
+                self.min_delay = 0.15  # More conservative to avoid 429 errors
             else:
-                # Without API key: up to 3 requests/second = 0.33 second delay
-                self.min_delay = 0.34  # Slightly conservative
+                # Without API key: up to 2 requests/second = 0.5 second delay
+                self.min_delay = 0.4  # More conservative to avoid 429 errors
         else:
             self.min_delay = base_delay
 
@@ -225,7 +225,7 @@ def get_basic_dataset_info(
     """Get complete dataset information in parallel using esummary v2.0."""
 
     unique_ids = list(dict.fromkeys(geo_ids))
-    workers = 8 if os.getenv("ENTREZ_API_KEY") else 2
+    workers = 4 if os.getenv("ENTREZ_API_KEY") else 1
 
     logging.info(f"Fetching complete dataset information for {len(unique_ids)} unique datasets...")
 
@@ -559,7 +559,7 @@ def main():
         return
 
     # Auto-determine API delay based on API key presence
-    api_delay = 0.11 if os.getenv("ENTREZ_API_KEY") else 0.34
+    api_delay = 0.25 if os.getenv("ENTREZ_API_KEY") else 0.6
 
     # Set up logging in the output directory
     from pathlib import Path
@@ -567,6 +567,12 @@ def main():
     # Ensure output directory exists
     output_path.mkdir(parents=True, exist_ok=True)
     setup_logging(verbose=args.verbose)
+
+    # Log API key detection status
+    if os.getenv("ENTREZ_API_KEY"):
+        logging.info("NCBI API key detected - using faster rate limits")
+    else:
+        logging.info("No NCBI API key found - using conservative rate limits")
 
     research_query = args.query
     logging.info(f"Starting dataset identification for query: {research_query}")
@@ -648,9 +654,9 @@ def main():
 
         # Auto-determine optimal SRA worker count based on API key
         if os.getenv("ENTREZ_API_KEY"):
-            sra_workers = 8  # More aggressive with API key
+            sra_workers = 3  # More conservative with API key to avoid 429 errors
         else:
-            sra_workers = 2  # Conservative without API key
+            sra_workers = 1  # Very conservative without API key
         api_rate_limiter = APIRateLimiter()
         with ThreadPoolExecutor(max_workers=sra_workers) as executor:
             fetch_func = partial(fetch_sra_for_dataset, api_delay=api_delay)
