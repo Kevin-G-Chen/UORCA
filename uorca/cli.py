@@ -10,7 +10,9 @@ This module provides a unified CLI for all UORCA workflows:
 import argparse
 import sys
 import os
+from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv, find_dotenv
 
 def main():
     """Main CLI entry point with subcommands."""
@@ -200,7 +202,15 @@ def run_identify(args):
     # Import here to avoid startup overhead when not needed
     from uorca.identify import main as identify_main
 
-    # Check for required environment variable
+    # Load environment variables from the project root .env file
+    project_root = Path(__file__).resolve().parent.parent
+    env_file = project_root / ".env"
+    if env_file.exists():
+        load_dotenv(env_file)
+    else:
+        load_dotenv(find_dotenv())
+
+    # Check for required environment variable here to fail fast
     if not os.getenv("ENTREZ_EMAIL"):
         print("ERROR: Email is required for NCBI Entrez API access.")
         print("Please set the ENTREZ_EMAIL environment variable with your email address.")
