@@ -12,7 +12,7 @@ from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
 
 
-def main(results_dir=None, port=8501, host="0.0.0.0", headless=False):
+def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
     """
     Launch UORCA Explorer Streamlit application directly.
 
@@ -79,10 +79,8 @@ def main(results_dir=None, port=8501, host="0.0.0.0", headless=False):
                     if rnaseq_subdir.is_dir():
                         analysis_folders.append(item.name)
 
-        if analysis_folders:
-            print(f"Found {len(analysis_folders)} datasets with complete analysis results")
-        else:
-            print(f"Found partial results: {len(has_analysis_info)} analysis_info, {len(has_contrasts)} contrasts, {len(has_cpm_data)} CPM files")
+        # Validation complete - directory contains UORCA results
+        pass
 
     # Set up environment for Streamlit
     env = os.environ.copy()
@@ -101,11 +99,13 @@ def main(results_dir=None, port=8501, host="0.0.0.0", headless=False):
 
     # Configure Streamlit
     env['STREAMLIT_BROWSER_GATHER_USAGE_STATS'] = 'false'
-    env['STREAMLIT_SERVER_HEADLESS'] = 'true' if headless else 'false'
+    env['STREAMLIT_SERVER_HEADLESS'] = 'false'
     env['STREAMLIT_LOGGER_LEVEL'] = 'ERROR'
     env['STREAMLIT_CLIENT_SHOW_ERROR_DETAILS'] = 'false'
     env['STREAMLIT_SERVER_ENABLE_CORS'] = 'false'
     env['STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION'] = 'false'
+    # Ensure browser opens to 127.0.0.1 regardless of server binding address
+    env['STREAMLIT_BROWSER_SERVER_ADDRESS'] = '127.0.0.1'
 
     # Get path to uorca_explorer.py
     current_dir = Path(__file__).parent
@@ -122,21 +122,33 @@ def main(results_dir=None, port=8501, host="0.0.0.0", headless=False):
         str(explorer_script),
         '--server.port', str(port),
         '--server.address', host,
-        '--server.headless', 'true' if headless else 'false',
+        '--server.headless', str(not headless).lower(),
+        '--browser.serverAddress', '127.0.0.1',
         '--logger.level', 'error'
     ]
 
     print("=" * 50)
     print("UORCA Explorer - Direct Python Execution")
     print("=" * 50)
-    # Always show localhost URL for user convenience
-    local_url = f"http://127.0.0.1:{port}"
-    print(f"Starting UORCA Explorer on {local_url}")
-    if results_dir:
-        print(f"Using results directory: {results_dir}")
-    print("")
-    print("The application should open automatically in your browser.")
-    print(f"If it doesn't, manually navigate to: {local_url}")
+
+    # Determine which URL(s) to show the user
+    if host == "0.0.0.0":
+        # When binding to all interfaces, show localhost (most common) and mention network access
+        primary_url = f"http://127.0.0.1:{port}"
+        print(f"Starting UORCA Explorer on all network interfaces")
+        if results_dir:
+            print(f"Using results directory: {results_dir}")
+        print("")
+        print(f"Please navigate to: {primary_url}")
+        print("(Also accessible from other devices on your network via your machine's IP)")
+    else:
+        # Show the specific host they requested
+        primary_url = f"http://{host}:{port}"
+        print(f"Starting UORCA Explorer on {primary_url}")
+        if results_dir:
+            print(f"Using results directory: {results_dir}")
+        print("")
+        print(f"Please navigate to {primary_url} in your browser")
     print("")
     print("Press Ctrl+C to stop the application")
     print("=" * 50)
@@ -196,7 +208,7 @@ if __name__ == "__main__":
                        help='Path to UORCA results directory')
     parser.add_argument('--port', type=int, default=8501,
                        help='Port number for the web application')
-    parser.add_argument('--host', default='0.0.0.0',
+    parser.add_argument('--host', default='127.0.0.1',
                        help='Host address to bind to')
     parser.add_argument('--headless', action='store_true',
                        help='Run in headless mode (no browser auto-open)')

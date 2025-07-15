@@ -166,7 +166,7 @@ For more help on a specific command, use:
                                help='Results directory to explore (if not specified, will use default detection)')
     explore_parser.add_argument('--port', type=int, default=8501,
                                help='Port number for the web application')
-    explore_parser.add_argument('--host', default='0.0.0.0',
+    explore_parser.add_argument('--host', default='127.0.0.1',
                                help='Host address to bind to')
     explore_parser.add_argument('--headless', action='store_true',
                                help='Run in headless mode (no browser auto-open)')
