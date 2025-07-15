@@ -50,15 +50,6 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
         selected_datasets = st.session_state.get('selected_datasets_from_sidebar', [])
 
     if not selected_datasets:
-        st.info("**Getting Started:**")
-        st.markdown("""
-        1. **Select Datasets** in the sidebar first
-        2. **Choose Contrasts** using the form below (populated from your datasets)
-        3. **Configure Gene Selection** using the gene selection form
-        4. **View Results** - heatmap will be generated automatically
-
-        **Tip:** Start with dataset selection in the sidebar to populate the forms below.
-        """)
         return
 
     # Initialize session state for selected contrasts
