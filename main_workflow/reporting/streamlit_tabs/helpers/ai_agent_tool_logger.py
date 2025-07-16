@@ -96,6 +96,19 @@ class AIAgentToolLogger:
 
         return truncated + f"... [truncated, total length: {len(output_str)}]"
 
+    def _round_numeric_values(self, obj: Any, decimals: int = 4) -> Any:
+        """Recursively round numeric values in a data structure to specified decimal places."""
+        if isinstance(obj, float):
+            return round(obj, decimals)
+        elif isinstance(obj, dict):
+            return {k: self._round_numeric_values(v, decimals) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._round_numeric_values(item, decimals) for item in obj]
+        elif isinstance(obj, tuple):
+            return tuple(self._round_numeric_values(item, decimals) for item in obj)
+        else:
+            return obj
+
     def log_tool_call(self, tool_name: str, parameters: Dict[str, Any],
                      output: Any = None, success: bool = True, error: str = None):
         """
@@ -112,14 +125,18 @@ class AIAgentToolLogger:
             # If no log file, try to create a default one
             self.start_analysis()
 
+        # Round numeric values in parameters and output for cleaner logging
+        rounded_parameters = self._round_numeric_values(parameters)
+        rounded_output = self._round_numeric_values(output)
+
         # Create tool log entry
         tool_log_entry = {
             "tool_name": tool_name,
-            "parameters": parameters,
+            "parameters": rounded_parameters,
             "timestamp": datetime.datetime.now().isoformat(),
             "success": success,
-            "output_snippet": self._truncate_output(output),
-            "full_output": str(output) if output is not None else None,
+            "output_snippet": self._truncate_output(rounded_output),
+            "full_output": str(rounded_output) if rounded_output is not None else None,
             "error": error,
             "analysis_id": self.current_analysis_id
         }
@@ -139,7 +156,7 @@ class AIAgentToolLogger:
             # Terminal logging
             if success:
                 logger.info("AI Agent tool %s finished with %d chars output",
-                           tool_name, len(str(output)) if output else 0)
+                           tool_name, len(str(rounded_output)) if rounded_output else 0)
             else:
                 logger.error("AI Agent tool %s failed: %s", tool_name, error)
 
