@@ -794,7 +794,7 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
             ai_config = get_ai_agent_config()
             result = await asyncio.wait_for(
                 agent.run(prompt, usage_limits=UsageLimits(request_limit=ai_config.request_limit)),
-                timeout=900.0  # 5 minute timeout
+                timeout=1500.0  # 5 minute timeout
             )
 
             # Get tool calls from new logging system
@@ -811,7 +811,7 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, run_analysis())
-                result_output, tool_calls = future.result(timeout=920)  # Slightly longer than async timeout
+                result_output, tool_calls = future.result(timeout=1520)  # Slightly longer than async timeout
         except RuntimeError:
             # No running loop, safe to use asyncio.run
             result_output, tool_calls = asyncio.run(run_analysis())
