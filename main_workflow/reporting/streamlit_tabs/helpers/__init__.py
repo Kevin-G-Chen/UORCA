@@ -570,7 +570,7 @@ def get_valid_contrasts_with_data(ri, analysis_ids: List[str] = None) -> List[Di
         analysis_ids: Optional list of analysis IDs to filter by. If None, use all.
 
     Returns:
-        List of contrast information dictionaries
+        List of contrast information dictionaries with consistent names
     """
     from typing import List, Dict, Any
 
@@ -587,17 +587,26 @@ def get_valid_contrasts_with_data(ri, analysis_ids: List[str] = None) -> List[Di
         # Step 2: Get contrasts from analysis_info
         contrasts = get_valid_contrasts_from_analysis_info(ri, analysis_id)
 
-        # Step 3: Validate each contrast has DEG data
+        # Step 3: Validate each contrast has DEG data and use consistent names
         for contrast in contrasts:
-            contrast_name = contrast["name"]
-            if validate_contrast_has_deg_data(ri, analysis_id, contrast_name):
+            original_contrast_name = contrast["name"]
+            if validate_contrast_has_deg_data(ri, analysis_id, original_contrast_name):
                 info = ri.analysis_info[analysis_id]
                 accession = info.get("accession", analysis_id)
+
+                # Find the consistent contrast name from contrast_info
+                consistent_name = original_contrast_name
+                for contrast_key, contrast_data in ri.contrast_info.items():
+                    if (contrast_data.get('original_name') == original_contrast_name and
+                        contrast_data.get('analysis_id') == analysis_id):
+                        consistent_name = contrast_data.get('name', original_contrast_name)
+                        break
 
                 valid_contrasts.append({
                     "analysis_id": analysis_id,
                     "accession": accession,
-                    "contrast_name": contrast_name,
+                    "contrast_name": consistent_name,
+                    "original_contrast_name": original_contrast_name,
                     "description": contrast.get("description", ""),
                     "expression": contrast.get("expression", ""),
                     "justification": contrast.get("justification", "")

@@ -18,6 +18,9 @@ except ImportError:
     def load_dotenv():
         pass
 
+# Import validation functions
+from streamlit_tabs.helpers import get_valid_contrasts_with_data
+
 from streamlit_tabs.helpers import log_streamlit_agent
 from config_loader import get_contrast_relevance_with_selection_config
 
@@ -226,33 +229,34 @@ def run_contrast_relevance(
     if client is None:
         print("⚠️ OpenAI API key not configured - contrast relevance assessment unavailable")
         return pd.DataFrame()
-    # Build a list of all contrasts from ri.deg_data
+    # Use proper validation logic to get valid contrasts only
+    valid_contrasts = get_valid_contrasts_with_data(ri)
+
     contrast_list = []
-    for analysis_id, contrasts in ri.deg_data.items():
+    for contrast in valid_contrasts:
+        analysis_id = contrast['analysis_id']
+        accession = contrast['accession']
+
+        # Get dataset metadata
         dataset_meta = getattr(ri, "dataset_info", {}).get(analysis_id, {})
         title = dataset_meta.get("title", "")
         summary = dataset_meta.get("summary", "")
         design = dataset_meta.get("design", "")
 
-        for contrast_id in contrasts.keys():
-            # Get contrast description for context
-            description = ri._get_contrast_description(analysis_id, contrast_id)
+        # Get organism info
+        analysis_info = ri.analysis_info.get(analysis_id, {})
+        organism = analysis_info.get('organism', 'Unknown')
 
-            # Get basic analysis info
-            analysis_info = ri.analysis_info.get(analysis_id, {})
-            accession = analysis_info.get('accession', analysis_id)
-            organism = analysis_info.get('organism', 'Unknown')
-
-            contrast_list.append({
-                'analysis_id': analysis_id,
-                'contrast_id': contrast_id,
-                'accession': accession,
-                'organism': organism,
-                'description': description,
-                'title': title,
-                'summary': summary,
-                'design': design
-            })
+        contrast_list.append({
+            'analysis_id': analysis_id,
+            'contrast_id': contrast['contrast_name'],  # Use consistent name
+            'accession': accession,
+            'organism': organism,
+            'description': contrast['description'],
+            'title': title,
+            'summary': summary,
+            'design': design
+        })
 
     if not contrast_list:
         return pd.DataFrame()
@@ -363,29 +367,34 @@ def run_contrast_relevance_with_selection(
         print("⚠️ OpenAI API key not configured - contrast relevance with selection unavailable")
         return pd.DataFrame(), []
     # Build contrast list (same as before)
+    # Use proper validation logic to get valid contrasts only
+    valid_contrasts = get_valid_contrasts_with_data(ri)
+
     contrast_list = []
-    for analysis_id, contrasts in ri.deg_data.items():
+    for contrast in valid_contrasts:
+        analysis_id = contrast['analysis_id']
+        accession = contrast['accession']
+
+        # Get dataset metadata
         dataset_meta = getattr(ri, "dataset_info", {}).get(analysis_id, {})
         title = dataset_meta.get("title", "")
         summary = dataset_meta.get("summary", "")
         design = dataset_meta.get("design", "")
 
-        for contrast_id in contrasts.keys():
-            description = ri._get_contrast_description(analysis_id, contrast_id)
-            analysis_info = ri.analysis_info.get(analysis_id, {})
-            accession = analysis_info.get('accession', analysis_id)
-            organism = analysis_info.get('organism', 'Unknown')
+        # Get organism info
+        analysis_info = ri.analysis_info.get(analysis_id, {})
+        organism = analysis_info.get('organism', 'Unknown')
 
-            contrast_list.append({
-                'analysis_id': analysis_id,
-                'contrast_id': contrast_id,
-                'accession': accession,
-                'organism': organism,
-                'description': description,
-                'title': title,
-                'summary': summary,
-                'design': design
-            })
+        contrast_list.append({
+            'analysis_id': analysis_id,
+            'contrast_id': contrast['contrast_name'],  # Use consistent name
+            'accession': accession,
+            'organism': organism,
+            'description': contrast['description'],
+            'title': title,
+            'summary': summary,
+            'design': design
+        })
 
     if not contrast_list:
         return pd.DataFrame(), []
