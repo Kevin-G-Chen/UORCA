@@ -22,10 +22,6 @@ from ResultsIntegration import ResultsIntegrator
 
 logger = logging.getLogger(__name__)
 
-# Load environment variables
-load_environment()
-
-
 @log_streamlit_function
 def render_sidebar_controls(ri: ResultsIntegrator, results_dir: str) -> Dict[str, Any]:
     """
