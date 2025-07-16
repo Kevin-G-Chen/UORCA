@@ -22,7 +22,8 @@ from .helpers import (
     log_streamlit_user_action,
     group_contrasts_by_organism,
     filter_genes_by_organism,
-    get_organism_display_name
+    get_organism_display_name,
+    get_valid_contrasts_with_data
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -452,24 +453,19 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
 
 @log_streamlit_function
 def _create_contrast_table_data_filtered(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[Dict[str, Any]]:
-    """Create data for the contrast selection table, filtered by selected datasets."""
+    """Create data for the contrast selection table using standardized validation logic."""
+    # Use the centralized validation function
+    valid_contrasts = get_valid_contrasts_with_data(ri, selected_datasets)
+
+    # Convert to format expected by heatmap table
     contrast_data = []
-
-    for analysis_id in selected_datasets:
-        if analysis_id in ri.analysis_info:
-            info = ri.analysis_info[analysis_id]
-            accession = info.get("accession", analysis_id)
-
-            for contrast in info.get("contrasts", []):
-                contrast_id = contrast["name"]
-                description = contrast.get("description", "")
-
-                contrast_data.append({
-                    "Select": False,
-                    "Accession": accession,
-                    "Contrast": contrast_id,
-                    "Description": description
-                })
+    for contrast in valid_contrasts:
+        contrast_data.append({
+            "Select": False,
+            "Accession": contrast["accession"],
+            "Contrast": contrast["contrast_name"],
+            "Description": contrast["description"]
+        })
 
     return contrast_data
 

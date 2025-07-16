@@ -16,7 +16,8 @@ from .helpers import (
     setup_fragment_decorator,
     log_streamlit_tab,
     log_streamlit_function,
-    log_streamlit_event
+    log_streamlit_event,
+    is_analysis_successful
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -74,9 +75,9 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
     dataset_mapping = {}  # Map display name to analysis_id
 
     if ri:
-        # Get datasets with successful analyses only (those with CPM data)
-        for analysis_id in ri.cpm_data.keys():
-            if analysis_id in ri.analysis_info:
+        # Get datasets with successful analyses only (using standardized validation)
+        for analysis_id in ri.analysis_info.keys():
+            if is_analysis_successful(ri, analysis_id):
                 info = ri.analysis_info[analysis_id]
                 accession = info.get("accession", analysis_id)
 

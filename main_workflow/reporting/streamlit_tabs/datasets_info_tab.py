@@ -13,7 +13,8 @@ from .helpers import (
     setup_fragment_decorator,
     log_streamlit_tab,
     log_streamlit_function,
-    log_streamlit_event
+    log_streamlit_event,
+    is_analysis_successful
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -71,9 +72,9 @@ def _render_datasets_interface(ri: ResultsIntegrator):
 def _create_dataset_info_dataframe(ri: ResultsIntegrator) -> List[Dict[str, Any]]:
     """Create a list of dataset information dictionaries for successful analyses only."""
     dataset_info = []
-    # Only include datasets that have successful CPM data (indicator of successful analysis)
-    for analysis_id in ri.cpm_data.keys():
-        if analysis_id in ri.analysis_info:
+    # Only include datasets that have successful analyses (using standardized validation)
+    for analysis_id in ri.analysis_info.keys():
+        if is_analysis_successful(ri, analysis_id):
             info = ri.analysis_info[analysis_id]
             # Build a dataset info dictionary
             dataset_dict = {
