@@ -33,7 +33,8 @@ from streamlit_tabs.helpers import (
     setup_streamlit_logging,
     log_streamlit_function,
     log_streamlit_event,
-    log_streamlit_data_load
+    log_streamlit_data_load,
+    get_valid_contrasts_with_data
 )
 
 # Import tab modules
@@ -146,14 +147,20 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
             return None, results_dir, error_msg
         else:
             log_streamlit_data_load("CPM datasets", len(ri.cpm_data))
-            # Create enhanced DEG dataset logging with contrast names and accessions
-            deg_contrast_info = []
-            for analysis_id, contrast_dict in ri.deg_data.items():
-                accession = ri.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
-                for contrast_id in contrast_dict.keys():
-                    deg_contrast_info.append(f"{contrast_id} ({accession})")
 
-            log_streamlit_data_load(f"DEG datasets ({deg_contrast_info})", len(ri.deg_data))
+            # Use valid contrasts logic to get accurate count and validated contrasts
+            valid_contrasts = get_valid_contrasts_with_data(ri)
+            valid_contrast_info = []
+            for contrast in valid_contrasts:
+                valid_contrast_info.append(f"{contrast['contrast_name']} ({contrast['accession']})")
+
+            n_datasets = len(ri.deg_data)
+            n_valid_contrasts = len(valid_contrast_info)
+
+            log_streamlit_data_load(
+                f"Valid DEG contrasts ({n_valid_contrasts}) from {n_datasets} datasets: {valid_contrast_info}",
+                n_valid_contrasts
+            )
             status.update(label=f"Loaded {len(ri.cpm_data)} datasets", state="complete")
 
             # Check if this is the first time loading this directory
