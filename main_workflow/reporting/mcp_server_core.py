@@ -201,7 +201,7 @@ async def get_gene_contrast_stats(genes: list, contrast_ids: list = None) -> str
 @log_ai_agent_tool
 async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: float, p_thresh: float) -> str:
     """
-    Identify genes that show significant differential expression in one set of experimental contrasts but not in another, enabling discovery of condition-specific gene signatures and biological specificity. This powerful comparative tool helps you understand which genes respond selectively to particular experimental conditions. For example, you could compare treatment vs control contrasts to find treatment-specific responses, or compare different cell types to identify cell-type-specific expression patterns. The tool applies your significance thresholds to both sets independently and returns genes that meet criteria in set A but not in set B. This approach is particularly valuable for identifying biomarkers, understanding mechanism specificity, or finding genes that are uniquely regulated in pathological versus normal conditions. The results include both the gene list and summary statistics showing the scope of differential expression in each set.
+    Identify genes that show significant differential expression in ALL contrasts of set A but not in any contrasts of set B, enabling discovery of highly robust condition-specific gene signatures. This powerful comparative tool helps you understand which genes respond consistently and selectively to particular experimental conditions. For example, you could compare treatment vs control contrasts to find genes that are consistently treatment-responsive across multiple experiments, or compare different cell types to identify genes that are robustly cell-type-specific. The tool requires genes to be significant in ALL contrasts of set A (ensuring consistency) while being non-significant in set B (ensuring specificity). This stringent approach is particularly valuable for identifying the most reliable biomarkers, understanding core mechanisms that are consistently activated, or finding genes that represent fundamental biological differences between conditions. The results include both the gene list and summary statistics showing the scope of differential expression in each set.
 
     Args:
         set_a: List of contrast IDs for set A
@@ -218,13 +218,38 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
     resolved_set_a = _resolve_ai_contrast_names(set_a)
     resolved_set_b = _resolve_ai_contrast_names(set_b)
 
-    dfA = df[
-        df.contrast_id.isin(resolved_set_a) &
-        (df.logFC.abs() >= lfc_thresh) &
-        (df.pvalue < p_thresh)
-    ]
-    genesA = set(dfA.Gene)
+    # For set A: Find genes significant in ALL contrasts (not just any)
+    dfA_all = df[df.contrast_id.isin(resolved_set_a)]
+    genesA = set()
 
+    if resolved_set_a:  # Only proceed if set A has contrasts
+        # Get all unique genes that appear in set A contrasts
+        all_genes_in_A = set(dfA_all.Gene.unique())
+
+        # For each gene, check if it's significant in ALL contrasts of set A
+        for gene in all_genes_in_A:
+            gene_data = dfA_all[dfA_all.Gene == gene]
+
+            # Check if gene appears in all contrasts of set A and meets thresholds
+            contrasts_with_gene = set(gene_data.contrast_id.unique())
+            if contrasts_with_gene == set(resolved_set_a):  # Gene appears in all contrasts
+                # Check if significant in all contrasts
+                significant_in_all = True
+                for contrast in resolved_set_a:
+                    contrast_gene_data = gene_data[gene_data.contrast_id == contrast]
+                    if not contrast_gene_data.empty:
+                        row = contrast_gene_data.iloc[0]
+                        if not (abs(row.logFC) >= lfc_thresh and row.pvalue < p_thresh):
+                            significant_in_all = False
+                            break
+                    else:
+                        significant_in_all = False
+                        break
+
+                if significant_in_all:
+                    genesA.add(gene)
+
+    # For set B: Find genes significant in ANY contrast (keep original logic)
     dfB = df[
         df.contrast_id.isin(resolved_set_b) &
         (df.logFC.abs() >= lfc_thresh) &
