@@ -166,7 +166,7 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str, selected_da
         selected_datasets: List of selected dataset IDs from sidebar
     """
     st.header("AI Assistant")
-    st.markdown("Enter your research question and let the AI perform an automated analysis of the data.")
+    st.markdown("Enter your research question and let the AI agent perform an automated analysis of the data.")
 
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
@@ -216,7 +216,7 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str, sel
 
     # Show scope information
     scope = _get_ai_analysis_scope(ri, selected_datasets)
-    st.markdown(f"AI will consider **{scope['contrasts']} contrasts** across **{scope['datasets']} datasets**")
+    st.markdown(f"The agent will consider **{scope['contrasts']} contrasts** across **{scope['datasets']} datasets**")
 
     # Initialise caching system
     _initialise_ai_cache()
