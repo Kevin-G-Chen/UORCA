@@ -194,7 +194,7 @@ def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
         print("Make sure you're in the UORCA environment with uv installed.")
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\n\nUORCA Explorer stopped.")
+        print("\n\nThanks for using UORCA Explorer! Hopefully you found the analyses to be well orca-strated!")
         sys.exit(0)
 
 
