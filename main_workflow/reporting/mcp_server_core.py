@@ -39,8 +39,16 @@ def load_long_table(results_dir: str) -> pd.DataFrame:
                 df_sub = df2[['Gene','logFC','pvalue']].copy()
                 df_sub['AveExpr'] = float('nan')
 
+            # Map original contrast name to consistent name (with duplicate resolution)
+            consistent_contrast_id = cid  # Default to original name
+            for contrast_key, contrast_data in ri.contrast_info.items():
+                if (contrast_data.get('original_name') == cid and
+                    contrast_data.get('analysis_id') == aid):
+                    consistent_contrast_id = contrast_data.get('name', cid)
+                    break
+
             df_sub['analysis_id'] = aid
-            df_sub['contrast_id'] = cid
+            df_sub['contrast_id'] = consistent_contrast_id
             pieces.append(df_sub[['analysis_id','contrast_id','Gene','logFC','pvalue','AveExpr']])
 
     if not pieces:
@@ -49,24 +57,39 @@ def load_long_table(results_dir: str) -> pd.DataFrame:
 
     return pd.concat(pieces, ignore_index=True)
 
-# Load upon import
-RESULTS_DIR = os.getenv('RESULTS_DIR', '/UORCA_results')
-try:
-    FULL_DF = load_long_table(RESULTS_DIR)
-    print(f"Loaded full dataframe: {len(FULL_DF)} rows")
-except Exception as e:
-    print(f"Warning: Could not load long table from {RESULTS_DIR}: {e}")
-    # Create empty DataFrame with correct structure as fallback
-    FULL_DF = pd.DataFrame(columns=['analysis_id','contrast_id','Gene','logFC','pvalue','AveExpr'])
+# Global variables for data loading
+CURRENT_RESULTS_DIR = None
+FULL_DF = pd.DataFrame(columns=['analysis_id','contrast_id','Gene','logFC','pvalue','AveExpr'])
 
-# Global mapping from AI contrast names to actual contrast identifiers
-AI_CONTRAST_MAPPING = {}
+def _ensure_data_loaded():
+    """Ensure data is loaded with current RESULTS_DIR, reload if directory changed."""
+    global CURRENT_RESULTS_DIR, FULL_DF
+
+    results_dir = os.getenv('RESULTS_DIR', '/UORCA_results')
+
+    # Check if we need to reload data
+    if CURRENT_RESULTS_DIR != results_dir or FULL_DF.empty:
+        try:
+            print(f"Loading data from {results_dir}")
+            FULL_DF = load_long_table(results_dir)
+            CURRENT_RESULTS_DIR = results_dir
+            print(f"Loaded full dataframe: {len(FULL_DF)} rows")
+        except Exception as e:
+            print(f"Warning: Could not load long table from {results_dir}: {e}")
+            # Create empty DataFrame with correct structure as fallback
+            FULL_DF = pd.DataFrame(columns=['analysis_id','contrast_id','Gene','logFC','pvalue','AveExpr'])
+            CURRENT_RESULTS_DIR = results_dir
+
+
 
 def get_filtered_dataframe() -> pd.DataFrame:
     """
     Get the dataframe filtered to selected contrasts, checking environment variable dynamically.
     """
-    global FULL_DF, AI_CONTRAST_MAPPING
+    global FULL_DF
+
+    # Ensure data is loaded with current RESULTS_DIR
+    _ensure_data_loaded()
 
     # Check for selected contrasts environment variable
     selected_contrasts_json = os.getenv('SELECTED_CONTRASTS_FOR_AI')
@@ -80,9 +103,6 @@ def get_filtered_dataframe() -> pd.DataFrame:
             mask = FULL_DF.apply(lambda row: (row['analysis_id'], row['contrast_id']) in contrast_tuples, axis=1)
             filtered_df = FULL_DF[mask].copy()
 
-            # Create AI contrast name mapping for selected contrasts
-            _create_ai_contrast_mapping(filtered_df)
-
             print(f"Filtered dataframe: {len(filtered_df)} rows from {len(FULL_DF)} total rows")
             return filtered_df
         except json.JSONDecodeError:
@@ -90,47 +110,9 @@ def get_filtered_dataframe() -> pd.DataFrame:
             return FULL_DF
     else:
         print("No selected contrasts specified, using full dataframe")
-        # Create mapping for all contrasts when using full dataframe
-        _create_ai_contrast_mapping(FULL_DF)
         return FULL_DF
 
-def _create_ai_contrast_mapping(df: pd.DataFrame) -> None:
-    """
-    Create mapping from AI contrast names (with potential dataset suffixes) to actual contrast_ids.
-    """
-    global AI_CONTRAST_MAPPING
-    AI_CONTRAST_MAPPING = {}
 
-    # Get unique contrast combinations
-    unique_contrasts = df[['analysis_id', 'contrast_id']].drop_duplicates()
-
-    # Count occurrences of each contrast name across datasets
-    contrast_name_counts = {}
-    for _, row in unique_contrasts.iterrows():
-        name = row['contrast_id']
-        contrast_name_counts[name] = contrast_name_counts.get(name, 0) + 1
-
-    # Create mappings
-    duplicate_counters = {}
-    for _, row in unique_contrasts.iterrows():
-        analysis_id = row['analysis_id']
-        contrast_id = row['contrast_id']
-
-        # Create AI contrast name (with suffix if duplicate)
-        if contrast_name_counts[contrast_id] > 1:
-            # Load RI to get accession info
-            ri = ResultsIntegrator(RESULTS_DIR)
-            ri.load_data()
-            accession = ri.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
-            ai_contrast_name = f"{contrast_id}_{accession}"
-        else:
-            ai_contrast_name = contrast_id
-
-        # Store both original and AI names for lookup
-        AI_CONTRAST_MAPPING[ai_contrast_name] = contrast_id
-        AI_CONTRAST_MAPPING[contrast_id] = contrast_id  # Also map original name
-
-    print(f"Created AI contrast mapping with {len(AI_CONTRAST_MAPPING)} entries")
 
 # 1) Top recurring DEGs
 @server.tool()
@@ -154,23 +136,7 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
 
     return result
 
-def _resolve_ai_contrast_names(contrast_ids: list) -> list:
-    """
-    Resolve AI contrast names to actual contrast_ids using the mapping.
-    """
-    global AI_CONTRAST_MAPPING
-    if not contrast_ids:
-        return []
 
-    resolved_ids = []
-    for ai_name in contrast_ids:
-        if ai_name in AI_CONTRAST_MAPPING:
-            resolved_ids.append(AI_CONTRAST_MAPPING[ai_name])
-        else:
-            # If not in mapping, assume it's already a valid contrast_id
-            resolved_ids.append(ai_name)
-
-    return resolved_ids
 
 # 2) Per-gene + contrast stats
 @server.tool()
@@ -189,9 +155,7 @@ async def get_gene_contrast_stats(genes: list, contrast_ids: list = None) -> str
     df = get_filtered_dataframe()
     df = df[df.Gene.isin(genes)]
     if contrast_ids:
-        # Resolve AI contrast names to actual contrast_ids
-        resolved_contrast_ids = _resolve_ai_contrast_names(contrast_ids)
-        df = df[df.contrast_id.isin(resolved_contrast_ids)]
+        df = df[df.contrast_id.isin(contrast_ids)]
     result = json.dumps(df[["Gene", "contrast_id", "logFC", "pvalue"]].to_dict("records"))
 
     return result
@@ -214,15 +178,11 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
     """
     df = get_filtered_dataframe()
 
-    # Resolve AI contrast names to actual contrast_ids
-    resolved_set_a = _resolve_ai_contrast_names(set_a)
-    resolved_set_b = _resolve_ai_contrast_names(set_b)
-
     # For set A: Find genes significant in ALL contrasts (not just any)
-    dfA_all = df[df.contrast_id.isin(resolved_set_a)]
+    dfA_all = df[df.contrast_id.isin(set_a)]
     genesA = set()
 
-    if resolved_set_a:  # Only proceed if set A has contrasts
+    if set_a:  # Only proceed if set A has contrasts
         # Get all unique genes that appear in set A contrasts
         all_genes_in_A = set(dfA_all.Gene.unique())
 
@@ -232,10 +192,10 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
 
             # Check if gene appears in all contrasts of set A and meets thresholds
             contrasts_with_gene = set(gene_data.contrast_id.unique())
-            if contrasts_with_gene == set(resolved_set_a):  # Gene appears in all contrasts
+            if contrasts_with_gene == set(set_a):  # Gene appears in all contrasts
                 # Check if significant in all contrasts
                 significant_in_all = True
-                for contrast in resolved_set_a:
+                for contrast in set_a:
                     contrast_gene_data = gene_data[gene_data.contrast_id == contrast]
                     if not contrast_gene_data.empty:
                         row = contrast_gene_data.iloc[0]
@@ -251,7 +211,7 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
 
     # For set B: Find genes significant in ANY contrast (keep original logic)
     dfB = df[
-        df.contrast_id.isin(resolved_set_b) &
+        df.contrast_id.isin(set_b) &
         (df.logFC.abs() >= lfc_thresh) &
         (df.pvalue < p_thresh)
     ]
@@ -286,9 +246,7 @@ async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: floa
         JSON string with contrast summary and top genes
     """
     df = get_filtered_dataframe()
-    # Resolve AI contrast name to actual contrast_id
-    resolved_contrast_id = _resolve_ai_contrast_names([contrast_id])[0] if contrast_id else contrast_id
-    df = df[df.contrast_id == resolved_contrast_id]
+    df = df[df.contrast_id == contrast_id]
     df = df[(df.logFC.abs() >= lfc_thresh) & (df.pvalue < p_thresh)]
 
     if df.empty:
