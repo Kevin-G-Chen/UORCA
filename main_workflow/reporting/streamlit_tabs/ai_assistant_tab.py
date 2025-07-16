@@ -783,16 +783,19 @@ def _provide_relevance_download(results_df):
 @log_streamlit_function
 @log_streamlit_agent
 def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[Dict]]:
-    """Execute the AI analysis asynchronously with proper loop hygiene and capture tool calls."""
+    """Execute the AI analysis asynchronously with proper loop hygiene, timeout, and capture tool calls."""
 
     async def run_analysis():
         async with agent.run_mcp_servers():
             # Start new analysis session and clear previous tool calls
             start_ai_analysis_session()
 
-            # Run main analysis
+            # Run main analysis with timeout
             ai_config = get_ai_agent_config()
-            result = await agent.run(prompt, usage_limits=UsageLimits(request_limit=ai_config.request_limit))
+            result = await asyncio.wait_for(
+                agent.run(prompt, usage_limits=UsageLimits(request_limit=ai_config.request_limit)),
+                timeout=900.0  # 5 minute timeout
+            )
 
             # Get tool calls from new logging system
             tool_calls = get_ai_tool_logs_for_display()
@@ -808,15 +811,28 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, run_analysis())
-                result_output, tool_calls = future.result()
+                result_output, tool_calls = future.result(timeout=920)  # Slightly longer than async timeout
         except RuntimeError:
             # No running loop, safe to use asyncio.run
             result_output, tool_calls = asyncio.run(run_analysis())
 
         return result_output, tool_calls
+    except asyncio.TimeoutError:
+        logger.warning("AI analysis timed out after 5 minutes")
+        st.error("AI analysis timed out. Please try again with a simpler query or fewer contrasts.")
+        st.stop()
+    except KeyboardInterrupt:
+        logger.info("AI analysis interrupted by user")
+        st.warning("Analysis stopped by user.")
+        st.stop()
+    except concurrent.futures.TimeoutError:
+        logger.warning("AI analysis timed out in thread executor")
+        st.error("AI analysis timed out. Please try again with a simpler query or fewer contrasts.")
+        st.stop()
     except Exception as e:
         logger.error(f"Error in AI analysis execution: {str(e)}", exc_info=True)
-        raise
+        st.error(f"❌ AI analysis failed: {str(e)}")
+        st.stop()
 
 
 def _display_unified_ai_results(
