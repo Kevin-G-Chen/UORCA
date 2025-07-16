@@ -506,6 +506,106 @@ def get_organism_display_name(organism: str) -> str:
         return organism
 
 
+def is_analysis_successful(ri, analysis_id: str) -> bool:
+    """
+    Check if an analysis was successful by checking analysis_info.json.
+
+    Args:
+        ri: ResultsIntegrator instance
+        analysis_id: Analysis ID to check
+
+    Returns:
+        True if analysis was successful, False otherwise
+    """
+    if analysis_id not in ri.analysis_info:
+        return False
+
+    info = ri.analysis_info[analysis_id]
+    return info.get("analysis_success", False)
+
+
+def get_valid_contrasts_from_analysis_info(ri, analysis_id: str) -> List[Dict[str, str]]:
+    """
+    Get valid contrasts from analysis_info.json for a successful analysis.
+
+    Args:
+        ri: ResultsIntegrator instance
+        analysis_id: Analysis ID to get contrasts for
+
+    Returns:
+        List of contrast dictionaries with name, description, etc.
+    """
+    if not is_analysis_successful(ri, analysis_id):
+        return []
+
+    info = ri.analysis_info[analysis_id]
+    return info.get("contrasts", [])
+
+
+def validate_contrast_has_deg_data(ri, analysis_id: str, contrast_name: str) -> bool:
+    """
+    Validate that a contrast has associated DEG data.
+
+    Args:
+        ri: ResultsIntegrator instance
+        analysis_id: Analysis ID
+        contrast_name: Contrast name to validate
+
+    Returns:
+        True if contrast has DEG data, False otherwise
+    """
+    return (analysis_id in ri.deg_data and
+            contrast_name in ri.deg_data[analysis_id] and
+            not ri.deg_data[analysis_id][contrast_name].empty)
+
+
+def get_valid_contrasts_with_data(ri, analysis_ids: List[str] = None) -> List[Dict[str, Any]]:
+    """
+    Get all valid contrasts that have successful analysis and DEG data.
+
+    This is the standardized way to get contrasts across all tabs.
+
+    Args:
+        ri: ResultsIntegrator instance
+        analysis_ids: Optional list of analysis IDs to filter by. If None, use all.
+
+    Returns:
+        List of contrast information dictionaries
+    """
+    from typing import List, Dict, Any
+
+    if analysis_ids is None:
+        analysis_ids = list(ri.analysis_info.keys())
+
+    valid_contrasts = []
+
+    for analysis_id in analysis_ids:
+        # Step 1: Check if analysis was successful
+        if not is_analysis_successful(ri, analysis_id):
+            continue
+
+        # Step 2: Get contrasts from analysis_info
+        contrasts = get_valid_contrasts_from_analysis_info(ri, analysis_id)
+
+        # Step 3: Validate each contrast has DEG data
+        for contrast in contrasts:
+            contrast_name = contrast["name"]
+            if validate_contrast_has_deg_data(ri, analysis_id, contrast_name):
+                info = ri.analysis_info[analysis_id]
+                accession = info.get("accession", analysis_id)
+
+                valid_contrasts.append({
+                    "analysis_id": analysis_id,
+                    "accession": accession,
+                    "contrast_name": contrast_name,
+                    "description": contrast.get("description", ""),
+                    "expression": contrast.get("expression", ""),
+                    "justification": contrast.get("justification", "")
+                })
+
+    return valid_contrasts
+
+
 # Export all functions for easy importing
 __all__ = [
     # Main helper functions
@@ -520,6 +620,12 @@ __all__ = [
     'check_ai_generating',
     'cached_figure_creation',
     'load_environment',
+
+    # Contrast validation functions
+    'is_analysis_successful',
+    'get_valid_contrasts_from_analysis_info',
+    'validate_contrast_has_deg_data',
+    'get_valid_contrasts_with_data',
 
     # Organism/species helper functions
     'get_organisms_from_datasets',

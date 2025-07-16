@@ -18,14 +18,21 @@ from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from config_loader import get_contrast_relevance_with_selection_config, get_ai_agent_config
 
+# Timeout for AI analysis (10 minutes)
+TIMEOUT_SECONDS = 600
+
 
 from .helpers import (
     check_ai_generating,
     setup_fragment_decorator,
     log_streamlit_tab,
     log_streamlit_function,
+    log_streamlit_event,
     log_streamlit_agent,
-    log_streamlit_event
+    get_valid_contrasts_with_data,
+    is_analysis_successful,
+    get_valid_contrasts_from_analysis_info,
+    validate_contrast_has_deg_data
 )
 from .helpers.ai_agent_tool_logger import (
     start_ai_analysis_session,
@@ -52,23 +59,18 @@ def _get_ai_analysis_scope(ri: ResultsIntegrator, selected_datasets: List[str]) 
 
 
 def _create_ai_contrast_data_filtered(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[Dict[str, Any]]:
-    """Create contrast data filtered by selected datasets for AI analysis."""
+    """Create contrast data filtered by selected datasets using standardized validation logic."""
+    # Use the centralized validation function
+    valid_contrasts = get_valid_contrasts_with_data(ri, selected_datasets)
+
+    # Convert to format expected by AI analysis
     contrast_data = []
-
-    for analysis_id in selected_datasets:
-        if analysis_id in ri.analysis_info:
-            info = ri.analysis_info[analysis_id]
-            accession = info.get("accession", analysis_id)
-
-            for contrast in info.get("contrasts", []):
-                contrast_id = contrast["name"]
-                description = contrast.get("description", "")
-
-                contrast_data.append({
-                    "accession": accession,
-                    "contrast": contrast_id,
-                    "description": description
-                })
+    for contrast in valid_contrasts:
+        contrast_data.append({
+            "accession": contrast["accession"],
+            "contrast": contrast["contrast_name"],
+            "description": contrast["description"]
+            })
 
     return contrast_data
 
@@ -365,7 +367,7 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
 
         # Step 2: AI Gene Analysis (using selected contrasts)
         with progress_placeholder:
-            with st.spinner("Analyzing differential expression patterns..."):
+            with st.spinner(f"Analyzing differential expression patterns... (timeout: {TIMEOUT_SECONDS//60} minutes)"):
                 # Set the RESULTS_DIR environment variable for the MCP server
                 os.environ['RESULTS_DIR'] = results_dir
 
@@ -447,6 +449,24 @@ Please perform the analysis using your four tools, choose all thresholds reasona
             ri, result_output, research_query, selected_contrast_dicts,
             results_df, selected_datasets, selected_contrasts, display_tool_calls
         )
+
+    except TimeoutError as e:
+        logger.error(f"AI analysis timed out: {str(e)}", exc_info=True)
+        st.error("⏰ **Analysis Timeout**")
+        st.warning(f"The AI analysis timed out after {TIMEOUT_SECONDS/60:.0f} minutes. This can happen when:")
+        st.markdown("""
+        - The analysis is very complex (many contrasts or genes)
+        - The AI service is experiencing delays
+        - The AI agent gets stuck in a processing loop
+
+        **Suggestions:**
+        - Try reducing the number of selected datasets/contrasts
+        - Refresh the page and try again
+        - Check if the issue persists across different analyses
+        """)
+
+        with st.expander("Technical Details", expanded=False):
+            st.code(str(e))
 
     except Exception as e:
         logger.error(f"Error in AI analysis workflow: {str(e)}", exc_info=True)
@@ -731,16 +751,20 @@ def _provide_relevance_download(results_df):
 @log_streamlit_function
 @log_streamlit_agent
 def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[Dict]]:
-    """Execute the AI analysis asynchronously with proper loop hygiene and capture tool calls."""
+    """Execute the AI analysis asynchronously with proper loop hygiene, capture tool calls, and 10-minute timeout."""
+    TIMEOUT_SECONDS = 600  # 10 minutes
+
     async def run_analysis():
         async with agent.run_mcp_servers():
             # Start new analysis session and clear previous tool calls
             start_ai_analysis_session()
 
-            # Run main analysis
+            # Run main analysis with timeout
             ai_config = get_ai_agent_config()
-            result = await agent.run(prompt,
-                usage_limits = UsageLimits(request_limit = ai_config.request_limit))
+            result = await asyncio.wait_for(
+                agent.run(prompt, usage_limits=UsageLimits(request_limit=ai_config.request_limit)),
+                timeout=TIMEOUT_SECONDS
+            )
 
             # Get tool calls from new logging system
             tool_calls = get_ai_tool_logs_for_display()
@@ -756,12 +780,15 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, run_analysis())
-                result_output, tool_calls = future.result()
+                result_output, tool_calls = future.result(timeout=TIMEOUT_SECONDS)
         except RuntimeError:
             # No running loop, safe to use asyncio.run
             result_output, tool_calls = asyncio.run(run_analysis())
 
         return result_output, tool_calls
+    except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
+        logger.error(f"AI analysis timed out after {TIMEOUT_SECONDS} seconds")
+        raise TimeoutError(f"AI analysis timed out after {TIMEOUT_SECONDS/60:.1f} minutes. The analysis may be too complex or the AI service may be unresponsive.")
     except Exception as e:
         logger.error(f"Error in AI analysis execution: {str(e)}", exc_info=True)
         raise

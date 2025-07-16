@@ -15,7 +15,8 @@ from .helpers import (
     load_environment,
     log_streamlit_function,
     log_streamlit_event,
-    log_streamlit_user_action
+    log_streamlit_user_action,
+    is_analysis_successful
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -185,9 +186,9 @@ def _create_dataset_table_data(ri: ResultsIntegrator) -> List[Dict[str, Any]]:
     """Create data for the dataset selection table for successful analyses only."""
     dataset_data = []
 
-    # Only include datasets that have successful CPM data (indicator of successful analysis)
-    for analysis_id in ri.cpm_data.keys():
-        if analysis_id in ri.analysis_info:
+    # Only include datasets that have successful analyses (using standardized validation)
+    for analysis_id in ri.analysis_info.keys():
+        if is_analysis_successful(ri, analysis_id):
             info = ri.analysis_info[analysis_id]
 
             # Get dataset title and description (same as dataset info tab)

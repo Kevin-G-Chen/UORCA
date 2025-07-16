@@ -14,7 +14,8 @@ from .helpers import (
     setup_fragment_decorator,
     log_streamlit_tab,
     log_streamlit_function,
-    log_streamlit_event
+    log_streamlit_event,
+    get_valid_contrasts_with_data
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -75,21 +76,21 @@ def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc
 
 @log_streamlit_function
 def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float, lfc_thresh: float) -> List[Dict[str, Any]]:
-    """Create a list of contrast information dictionaries by reading from contrasts.csv files."""
+    """Create a list of contrast information dictionaries using standardized validation logic."""
+    # Use the centralized validation function
+    valid_contrasts = get_valid_contrasts_with_data(ri)
+
     contrast_info = []
 
-    # Only include contrasts from datasets that have successful CPM data (indicator of successful analysis)
-    for aid in ri.cpm_data.keys():
-        if aid not in ri.analysis_info:
-            continue
-
-        info = ri.analysis_info[aid]
-        accession = info.get("accession", aid)
+    for contrast in valid_contrasts:
+        analysis_id = contrast["analysis_id"]
+        accession = contrast["accession"]
+        contrast_name = contrast["contrast_name"]
 
         # Get dataset title for formatting
         dataset_title = ""
-        if hasattr(ri, 'dataset_info') and aid in ri.dataset_info:
-            title = ri.dataset_info[aid].get('title', '')
+        if hasattr(ri, 'dataset_info') and analysis_id in ri.dataset_info:
+            title = ri.dataset_info[analysis_id].get('title', '')
             if title and title.startswith('Title:'):
                 title = title[6:].strip()
             dataset_title = title
@@ -99,113 +100,31 @@ def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float,
         if dataset_title:
             dataset_display = f"{accession} - {dataset_title}"
 
-        # Look for contrasts.csv file
-        contrasts_file = None
-        for contrasts_path in [
-            os.path.join(ri.results_dir, aid, "metadata", "contrasts.csv"),  # New primary location
-            os.path.join(ri.results_dir, aid, "contrasts.csv"),  # Old location for backward compatibility
-        ]:
-            if os.path.exists(contrasts_path):
-                contrasts_file = contrasts_path
-                break
+        # Count DEGs for this contrast
+        deg_count = 0
+        deg_df = ri.deg_data[analysis_id][contrast_name]
 
-        if contrasts_file:
-            try:
-                contrasts_df = pd.read_csv(contrasts_file)
+        # Use exact column names from DEG.csv file - prefer adjusted p-value
+        p_value_col = None
+        if 'adj.P.Val' in deg_df.columns:
+            p_value_col = 'adj.P.Val'  # Adjusted p-value (preferred)
+        elif 'P.Value' in deg_df.columns:
+            p_value_col = 'P.Value'  # Unadjusted p-value (fallback)
 
-                # Process each contrast from the CSV
-                for _, row in contrasts_df.iterrows():
-                    contrast_name = row.get('name', '')
-                    description = row.get('description', '')
-                    justification = row.get('justification', '')
-                    expression = row.get('expression', '')
+        lfc_col = 'logFC' if 'logFC' in deg_df.columns else None
 
-                    # Count DEGs for this contrast
-                    deg_count = 0
-                    deg_df = ri.deg_data.get(aid, {}).get(contrast_name, pd.DataFrame())
-                    if not deg_df.empty:
-                        # Use exact column names from DEG.csv file - prefer adjusted p-value
-                        p_value_col = None
-                        if 'adj.P.Val' in deg_df.columns:
-                            p_value_col = 'adj.P.Val'  # Adjusted p-value (preferred)
-                        elif 'P.Value' in deg_df.columns:
-                            p_value_col = 'P.Value'  # Unadjusted p-value (fallback)
+        if p_value_col and lfc_col:
+            deg_count = ((deg_df[p_value_col] < pvalue_thresh) &
+                       (abs(deg_df[lfc_col]) > lfc_thresh)).sum()
 
-                        lfc_col = 'logFC' if 'logFC' in deg_df.columns else None
-
-                        if p_value_col and lfc_col:
-                            deg_count = ((deg_df[p_value_col] < pvalue_thresh) &
-                                       (abs(deg_df[lfc_col]) > lfc_thresh)).sum()
-
-                    contrast_info.append({
-                        "Contrast Name": contrast_name,
-                        "Dataset": dataset_display,
-                        "Description": description,
-                        "Justification": justification,
-                        "Expression": expression,
-                        "DEGs": int(deg_count)
-                    })
-
-            except Exception as e:
-                # Fall back to using analysis_info if contrasts.csv is not readable
-                for c in info.get("contrasts", []):
-                    contrast_name = c["name"]
-                    description = c.get("description", "")
-
-                    # Count DEGs for this contrast
-                    deg_count = 0
-                    deg_df = ri.deg_data.get(aid, {}).get(contrast_name, pd.DataFrame())
-                    if not deg_df.empty:
-                        p_value_col = None
-                        if 'adj.P.Val' in deg_df.columns:
-                            p_value_col = 'adj.P.Val'
-                        elif 'P.Value' in deg_df.columns:
-                            p_value_col = 'P.Value'
-
-                        lfc_col = 'logFC' if 'logFC' in deg_df.columns else None
-
-                        if p_value_col and lfc_col:
-                            deg_count = ((deg_df[p_value_col] < pvalue_thresh) &
-                                       (abs(deg_df[lfc_col]) > lfc_thresh)).sum()
-
-                    contrast_info.append({
-                        "Contrast Name": contrast_name,
-                        "Dataset": dataset_display,
-                        "Description": description,
-                        "Justification": "",
-                        "Expression": "",
-                        "DEGs": int(deg_count)
-                    })
-        else:
-            # Fall back to using analysis_info if no contrasts.csv found
-            for c in info.get("contrasts", []):
-                contrast_name = c["name"]
-                description = c.get("description", "")
-
-                # Count DEGs for this contrast
-                deg_count = 0
-                deg_df = ri.deg_data.get(aid, {}).get(contrast_name, pd.DataFrame())
-                if not deg_df.empty:
-                    p_value_col = None
-                    if 'adj.P.Val' in deg_df.columns:
-                        p_value_col = 'adj.P.Val'
-                    elif 'P.Value' in deg_df.columns:
-                        p_value_col = 'P.Value'
-
-                    lfc_col = 'logFC' if 'logFC' in deg_df.columns else None
-
-                    if p_value_col and lfc_col:
-                        deg_count = ((deg_df[p_value_col] < pvalue_thresh) &
-                                   (abs(deg_df[lfc_col]) > lfc_thresh)).sum()
-
-                contrast_info.append({
-                    "Contrast Name": contrast_name,
-                    "Dataset": dataset_display,
-                    "Description": description,
-                    "Justification": "",
-                    "Expression": "",
-                    "DEGs": int(deg_count)
-                })
+        contrast_info.append({
+            "Contrast Name": contrast_name,
+            "Dataset": dataset_display,
+            "Description": contrast["description"],
+            "Justification": contrast["justification"],
+            "Expression": contrast["expression"],
+            "DEGs": int(deg_count)
+        })
 
     return contrast_info
 
