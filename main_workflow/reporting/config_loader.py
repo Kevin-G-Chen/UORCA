@@ -25,6 +25,7 @@ class AIAgentConfig:
     model: str = "openai:gpt-4.1-mini"
     temperature: float = 0.1
     request_limit: int = 100
+    timeout: int = 180
 
 
 @dataclass
