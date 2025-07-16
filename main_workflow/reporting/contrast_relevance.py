@@ -67,6 +67,7 @@ def call_openai_json(prompt: str, schema: Dict[str, Any], name: str) -> dict:
 
 # Define prompts directory for this module
 PROMPT_DIR = Path(__file__).parent / "prompts"
+logger = logging.getLogger(__name__)
 
 def load_prompt(fname: str) -> str:
     """Load prompt from the reporting prompts directory."""
@@ -135,6 +136,9 @@ async def assess_contrast_subbatch(
             f"Contrasts to assess (batch {batch_idx+1}):\n"
             f"{sub_df.to_json(orient='records')}"
         )
+        # Log the contrast relevance assessment prompt
+        logger.info(f"CONTRAST RELEVANCE PROMPT: Research query: '{query}' | Batch {batch_idx+1}/{total_batches} | Rep {rep+1} | Contrasts: {len(sub_df)} | Prompt length: {len(prompt)} chars")
+        logger.debug(f"Full contrast relevance prompt:\n{prompt}")
         data = await asyncio.to_thread(call_openai_json, prompt, schema, name)
         return [ContrastAssessment.model_validate(a) for a in data['assessments']]
 
@@ -286,6 +290,9 @@ async def assess_and_select_contrasts(
             f"Contrasts to assess and select from (batch {batch_idx+1}):\n"
             f"{sub_df.to_json(orient='records')}"
         )
+        # Log the contrast relevance with selection prompt
+        logger.info(f"CONTRAST RELEVANCE WITH SELECTION PROMPT: Research query: '{query}' | Batch {batch_idx+1}/{total_batches} | Rep {rep+1} | Contrasts: {len(sub_df)} | Prompt length: {len(prompt)} chars")
+        logger.debug(f"Full contrast relevance with selection prompt:\n{prompt}")
         data = await asyncio.to_thread(call_openai_json, prompt, schema, name)
         return ContrastAssessmentWithSelection.model_validate(data)
 

@@ -62,12 +62,31 @@ def _create_ai_contrast_data_filtered(ri: ResultsIntegrator, selected_datasets: 
     # Use the centralized validation function
     valid_contrasts = get_valid_contrasts_with_data(ri, selected_datasets)
 
+    # Find duplicate contrast names and create mapping for unique names
+    contrast_name_counts = {}
+    for contrast in valid_contrasts:
+        name = contrast["contrast_name"]
+        contrast_name_counts[name] = contrast_name_counts.get(name, 0) + 1
+
+    # Keep track of how many times we've seen each duplicate name
+    duplicate_counters = {}
+
     # Convert to format expected by AI analysis
     contrast_data = []
     for contrast in valid_contrasts:
+        original_name = contrast["contrast_name"]
+        accession = contrast["accession"]
+
+        # If name appears multiple times, append dataset suffix
+        if contrast_name_counts[original_name] > 1:
+            duplicate_counters[original_name] = duplicate_counters.get(original_name, 0) + 1
+            ai_contrast_name = f"{original_name}_{accession}"
+        else:
+            ai_contrast_name = original_name
+
         contrast_data.append({
-            "accession": contrast["accession"],
-            "contrast": contrast["contrast_name"],
+            "accession": accession,
+            "contrast": ai_contrast_name,
             "description": contrast["description"]
             })
 
@@ -413,6 +432,9 @@ Choose reasonable thresholds and return:
 2. Patterns that distinguish different contrast categories
 3. A brief biological interpretation of the findings
 """
+                    # Log the AI analysis prompt
+                    logger.info(f"AI ANALYSIS PROMPT (Enhanced): Research question: '{research_query}' | Selected contrasts: {len(selected_contrast_dicts)} | Prompt length: {len(prompt)} chars")
+                    logger.debug(f"Full AI analysis prompt:\n{prompt}")
                 else:
                     prompt = f"""
 Research question: "{research_query}"
@@ -424,6 +446,9 @@ Please perform the analysis using your four tools, choose all thresholds reasona
 1) A structured summary showing the key genes identified for each contrast or gene set
 2) A brief 2-3 sentence biological interpretation explaining your rationale and what patterns you discovered.
 """
+                    # Log the AI analysis prompt
+                    logger.info(f"AI ANALYSIS PROMPT (Fallback): Research question: '{research_query}' | Available contrasts: {len(selected_contrast_dicts)} | Prompt length: {len(prompt)} chars")
+                    logger.debug(f"Full AI analysis prompt:\n{prompt}")
 
                 # Run the agent analysis
                 result_output, tool_calls = _execute_ai_analysis(agent, prompt)
