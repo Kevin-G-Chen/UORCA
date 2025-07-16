@@ -28,6 +28,7 @@ STANDARD_FMT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 # Global logger for streamlit app
 _streamlit_logger = None
+_logging_initialized = False
 
 
 def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int = logging.INFO) -> pathlib.Path:
@@ -43,10 +44,10 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
     Returns:
         Path to the created log file
     """
-    global _streamlit_logger
+    global _streamlit_logger, _logging_initialized
 
-    if _streamlit_logger is not None:
-        # Return the expected log file path even when already configured
+    if _streamlit_logger is not None and _logging_initialized:
+        # Already initialized - return the expected log file path
         log_dir = pathlib.Path(log_dir)
         return log_dir / "streamlit_app.log"
 
@@ -81,15 +82,18 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
     # Prevent inheriting handlers from root logger to avoid duplicates
     _streamlit_logger.propagate = False
 
-    _streamlit_logger.info("Streamlit app logging initialized")
+    # Mark as initialized and log only once
+    if not _logging_initialized:
+        _streamlit_logger.info("Streamlit app logging initialized")
+        _logging_initialized = True
 
     return log_file
 
 
 def _get_streamlit_logger():
     """Get or create the streamlit logger."""
-    global _streamlit_logger
-    if _streamlit_logger is None:
+    global _streamlit_logger, _logging_initialized
+    if _streamlit_logger is None or not _logging_initialized:
         setup_streamlit_logging()
     return _streamlit_logger
 

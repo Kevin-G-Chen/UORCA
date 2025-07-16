@@ -72,13 +72,6 @@ add_custom_css()
 @log_streamlit_function
 def main():
     """Main application function."""
-    # Initialize Streamlit-specific logging
-    try:
-        log_file = setup_streamlit_logging()
-        log_streamlit_event(f"Streamlit logging initialized: {log_file}")
-    except Exception as e:
-        st.error(f"Failed to initialize logging: {e}")
-
     # Get the default results directory
     default_dir = os.getenv("UORCA_DEFAULT_RESULTS_DIR")
     if not default_dir:
@@ -153,8 +146,14 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
             return None, results_dir, error_msg
         else:
             log_streamlit_data_load("CPM datasets", len(ri.cpm_data))
-            deg_dataset_names = list(ri.deg_data.keys())
-            log_streamlit_data_load(f"DEG datasets ({deg_dataset_names})", len(ri.deg_data))
+            # Create enhanced DEG dataset logging with contrast names and accessions
+            deg_contrast_info = []
+            for analysis_id, contrast_dict in ri.deg_data.items():
+                accession = ri.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
+                for contrast_id in contrast_dict.keys():
+                    deg_contrast_info.append(f"{contrast_id} ({accession})")
+
+            log_streamlit_data_load(f"DEG datasets ({deg_contrast_info})", len(ri.deg_data))
             status.update(label=f"Loaded {len(ri.cpm_data)} datasets", state="complete")
 
             # Check if this is the first time loading this directory
