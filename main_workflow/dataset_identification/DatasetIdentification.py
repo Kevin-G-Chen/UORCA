@@ -78,11 +78,11 @@ class APIRateLimiter:
         # Auto-detect optimal delay based on API key presence
         if base_delay is None:
             if os.getenv("ENTREZ_API_KEY"):
-                # With API key: up to 5 requests/second = 0.2 second delay
-                self.min_delay = 0.15  # More conservative to avoid 429 errors
+                # With API key: target 7 requests/second = 0.143 second delay
+                self.min_delay = 1.0 / 7.0  # Conservative rate limiting
             else:
-                # Without API key: up to 2 requests/second = 0.5 second delay
-                self.min_delay = 0.4  # More conservative to avoid 429 errors
+                # Without API key: target 2 requests/second = 0.5 second delay
+                self.min_delay = 1.0 / 2.0  # Conservative rate limiting
         else:
             self.min_delay = base_delay
 
@@ -107,7 +107,7 @@ MAX_RETRIES = 3
 EMBEDDING_MODEL = "text-embedding-3-small"
 
 # Configure logging
-def setup_logging(verbose: bool = False) -> None:
+def setup_logging(verbose: bool = False, suppress_sra_warnings: bool = True) -> None:
     """Setup logging configuration."""
     level = logging.DEBUG if verbose else logging.INFO
     format_str = "%(asctime)s - %(levelname)s - %(message)s"
@@ -136,6 +136,20 @@ def setup_logging(verbose: bool = False) -> None:
     logging.captureWarnings(True)
     warnings_logger = logging.getLogger('py.warnings')
     warnings_logger.setLevel(level)
+
+    # Optionally suppress SRA-related warnings by setting a higher threshold
+    if suppress_sra_warnings and not verbose:
+        # Create a custom filter to suppress specific SRA warnings
+        class SRAWarningFilter(logging.Filter):
+            def filter(self, record):
+                # Suppress "No SRA records found" warnings unless in verbose mode
+                if "No SRA records found" in record.getMessage():
+                    return False
+                return True
+
+        # Apply filter to both file and console handlers
+        for handler in logging.getLogger().handlers:
+            handler.addFilter(SRAWarningFilter())
 
 for name in ("openai", "openai._base_client", "httpx"):
     logging.getLogger(name).setLevel(logging.WARNING)
@@ -225,7 +239,7 @@ def get_basic_dataset_info(
     """Get complete dataset information in parallel using esummary v2.0."""
 
     unique_ids = list(dict.fromkeys(geo_ids))
-    workers = 4 if os.getenv("ENTREZ_API_KEY") else 1
+    workers = 6 if os.getenv("ENTREZ_API_KEY") else 1
 
     logging.info(f"Fetching complete dataset information for {len(unique_ids)} unique datasets...")
 
@@ -293,7 +307,7 @@ def get_basic_dataset_info(
     return df
 
 # Streamlined SRA processing functions (old XML parsing functions removed)
-def fetch_runinfo_from_bioproject(bioproject: str, api_delay: float = 0.4) -> pd.DataFrame:
+def fetch_runinfo_from_bioproject(bioproject: str, api_delay: float = 0.4, suppress_missing_warnings: bool = True) -> pd.DataFrame:
     """Fetch RunInfo data using streamlined BioProject approach."""
     try:
         # 1. Search SRA and keep the server-side history
@@ -303,7 +317,10 @@ def fetch_runinfo_from_bioproject(bioproject: str, api_delay: float = 0.4) -> pd
         count, webenv, qk = int(srch["Count"]), srch["WebEnv"], srch["QueryKey"]
 
         if count == 0:
-            logging.warning(f"No SRA records found for BioProject {bioproject}")
+            if not suppress_missing_warnings:
+                logging.warning(f"No SRA records found for BioProject {bioproject}")
+            else:
+                logging.debug(f"No SRA records found for BioProject {bioproject}")
             return pd.DataFrame()
 
         time.sleep(api_delay)
@@ -566,13 +583,19 @@ def main():
     output_path = Path(args.output)
     # Ensure output directory exists
     output_path.mkdir(parents=True, exist_ok=True)
-    setup_logging(verbose=args.verbose)
+    setup_logging(verbose=args.verbose, suppress_sra_warnings=not args.verbose)
 
-    # Log API key detection status
+    # Log API key detection status and rate limiting configuration
     if os.getenv("ENTREZ_API_KEY"):
         logging.info("NCBI API key detected - using faster rate limits")
+        logging.info("⚙️  Rate Limiting Configuration:")
+        logging.info(f"   🔄 API delay: {1.0/7.0:.3f}s (~7 req/sec)")
+        logging.info(f"   👥 GEO workers: 6, SRA workers: 6")
     else:
-        logging.info("No NCBI API key found - using conservative rate limits")
+        logging.info("No NCBI API key found - using standard rate limits")
+        logging.info("⚙️  Rate Limiting Configuration:")
+        logging.info(f"   🔄 API delay: {1.0/2.0:.3f}s (~2 req/sec)")
+        logging.info(f"   👥 GEO workers: 1, SRA workers: 1")
 
     research_query = args.query
     logging.info(f"Starting dataset identification for query: {research_query}")
@@ -634,7 +657,7 @@ def main():
                 api_rate_limiter.wait()
 
                 if bioproject:
-                    df_run = fetch_runinfo_from_bioproject(bioproject, api_delay)
+                    df_run = fetch_runinfo_from_bioproject(bioproject, api_delay, suppress_missing_warnings=True)
                     if not df_run.empty:
                         df_run.insert(0, 'GEO_Accession', acc)
                         return df_run, True
@@ -654,10 +677,14 @@ def main():
 
         # Auto-determine optimal SRA worker count based on API key
         if os.getenv("ENTREZ_API_KEY"):
-            sra_workers = 3  # More conservative with API key to avoid 429 errors
+            sra_workers = 6  # Increased workers with conservative rate limiting
         else:
             sra_workers = 1  # Very conservative without API key
         api_rate_limiter = APIRateLimiter()
+
+        # Track timing for performance summary
+        sra_start_time = time.time()
+
         with ThreadPoolExecutor(max_workers=sra_workers) as executor:
             fetch_func = partial(fetch_sra_for_dataset, api_delay=api_delay)
             future_to_row = {executor.submit(fetch_func, row): row for _, row in to_fetch.iterrows()}
@@ -673,6 +700,19 @@ def main():
                         successful_datasets += 1
                         total_runs_fetched += len(df_result)
                         pbar.set_postfix(successful=successful_datasets)
+
+        # Performance summary
+        sra_end_time = time.time()
+        sra_elapsed_time = sra_end_time - sra_start_time
+        datasets_per_second = len(to_fetch) / sra_elapsed_time if sra_elapsed_time > 0 else 0
+        success_rate = (successful_datasets / len(to_fetch)) * 100 if len(to_fetch) > 0 else 0
+
+        logging.info(f"📊 SRA Fetching Performance Summary:")
+        logging.info(f"   ✅ Processed: {len(to_fetch)} datasets in {sra_elapsed_time:.1f}s")
+        logging.info(f"   ⚡ Rate: {datasets_per_second:.2f} datasets/second")
+        logging.info(f"   📈 Success: {successful_datasets}/{len(to_fetch)} ({success_rate:.1f}%)")
+        logging.info(f"   🔗 Total runs: {total_runs_fetched}")
+        logging.info(f"   👥 Workers: {sra_workers} (API key: {'Yes' if os.getenv('ENTREZ_API_KEY') else 'No'})")
 
         if runs:
             sra_df = pd.concat(runs, ignore_index=True)
