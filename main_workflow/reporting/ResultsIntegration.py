@@ -835,11 +835,15 @@ class ResultsIntegrator:
         # Keep track of original contrast names for both hover and axis labels
         original_contrast_names = []
 
-        # Fill with contrast descriptions and accession info
+        # Create mapping from contrast labels to original indices for clustered order
+        label_to_index = {f"{a_id}_{c_id}": idx for idx, (a_id, c_id) in enumerate(contrasts)}
+
+        # Fill with contrast descriptions and accession info using clustered order
         for i, gene in enumerate(heatmap_df.index):
-            for j, col_idx in enumerate(heatmap_df.columns):
-                # Get contrast information from the original contrasts list
-                analysis_id, contrast_id = contrasts[j]
+            for j, clustered_col in enumerate(heatmap_df.columns):
+                # Map clustered column back to original contrast index
+                original_idx = label_to_index[clustered_col]
+                analysis_id, contrast_id = contrasts[original_idx]
 
                 # Get contrast description using the helper method
                 description = self._get_contrast_description(analysis_id, contrast_id)
@@ -848,7 +852,7 @@ class ResultsIntegrator:
                 accession = self.analysis_info.get(analysis_id, {}).get('accession', analysis_id)
 
                 # Get simplified name for hover consistency
-                simplified_name = simplified_labels[j]
+                simplified_name = simplified_labels[original_idx]
                 if j == 0 and i == 0:  # Only collect once per contrast
                     original_contrast_names.append(simplified_name)
 
