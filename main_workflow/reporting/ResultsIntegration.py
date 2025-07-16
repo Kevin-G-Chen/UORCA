@@ -325,6 +325,9 @@ class ResultsIntegrator:
 
         logger.info(f"Loaded information for {len(self.contrast_info)} total contrasts")
 
+        # Create consistent contrast names to handle duplicates
+        self._create_consistent_contrast_names()
+
         # Load DEG data
         for analysis_id, contrasts in deg_files.items():
             self.deg_data[analysis_id] = {}
@@ -1446,6 +1449,77 @@ class ResultsIntegrator:
         # Log contrast info for debugging
         if hasattr(self, "contrast_info") and self.contrast_info:
             logger.info(f"Available contrast IDs: {', '.join(self.contrast_info.keys())}")
+
+    def _create_consistent_contrast_names(self):
+        """
+        Create consistent contrast names by appending dataset accession to duplicates.
+        This ensures unique contrast names across all datasets while preserving original information.
+        """
+        # First, collect all contrast names and their associated analysis info
+        contrast_occurrences = {}
+        contrast_analysis_mapping = {}
+
+        # Count occurrences of each contrast name across all analyses
+        for analysis_id in self.analysis_info.keys():
+            # Get contrasts for this analysis from analysis_info
+            analysis_data = self.analysis_info[analysis_id]
+            contrasts_list = analysis_data.get('contrasts', [])
+
+            for contrast in contrasts_list:
+                contrast_name = contrast.get('name', '')
+                if contrast_name:
+                    if contrast_name not in contrast_occurrences:
+                        contrast_occurrences[contrast_name] = []
+                    contrast_occurrences[contrast_name].append(analysis_id)
+
+                    # Store the mapping for later use
+                    key = (analysis_id, contrast_name)
+                    contrast_analysis_mapping[key] = contrast
+
+        # Create new contrast info with consistent names
+        new_contrast_info = {}
+
+        for contrast_name, analysis_ids in contrast_occurrences.items():
+            if len(analysis_ids) > 1:
+                # Name appears in multiple datasets - append accession
+                for analysis_id in analysis_ids:
+                    accession = self.analysis_info[analysis_id].get('accession', analysis_id)
+                    new_name = f"{contrast_name}_{accession}"
+
+                    # Get original contrast info
+                    key = (analysis_id, contrast_name)
+                    if key in contrast_analysis_mapping:
+                        original_contrast = contrast_analysis_mapping[key]
+                        new_contrast_info[new_name] = {
+                            'name': new_name,
+                            'original_name': contrast_name,
+                            'analysis_id': analysis_id,
+                            'accession': accession,
+                            'description': original_contrast.get('description', ''),
+                            'expression': original_contrast.get('expression', ''),
+                            'justification': original_contrast.get('justification', '')
+                        }
+            else:
+                # Name is unique - keep original
+                analysis_id = analysis_ids[0]
+                key = (analysis_id, contrast_name)
+                if key in contrast_analysis_mapping:
+                    original_contrast = contrast_analysis_mapping[key]
+                    accession = self.analysis_info[analysis_id].get('accession', analysis_id)
+                    new_contrast_info[contrast_name] = {
+                        'name': contrast_name,
+                        'original_name': contrast_name,
+                        'analysis_id': analysis_id,
+                        'accession': accession,
+                        'description': original_contrast.get('description', ''),
+                        'expression': original_contrast.get('expression', ''),
+                        'justification': original_contrast.get('justification', '')
+                    }
+
+        # Update the contrast_info with new consistent names
+        self.contrast_info.update(new_contrast_info)
+
+        logger.info(f"Created {len(new_contrast_info)} consistent contrast names")
 
     def create_integrated_report(self,
                                top_frequent: int = 20,

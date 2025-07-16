@@ -62,31 +62,12 @@ def _create_ai_contrast_data_filtered(ri: ResultsIntegrator, selected_datasets: 
     # Use the centralized validation function
     valid_contrasts = get_valid_contrasts_with_data(ri, selected_datasets)
 
-    # Find duplicate contrast names and create mapping for unique names
-    contrast_name_counts = {}
-    for contrast in valid_contrasts:
-        name = contrast["contrast_name"]
-        contrast_name_counts[name] = contrast_name_counts.get(name, 0) + 1
-
-    # Keep track of how many times we've seen each duplicate name
-    duplicate_counters = {}
-
-    # Convert to format expected by AI analysis
+    # Convert to format expected by AI analysis using consistent names
     contrast_data = []
     for contrast in valid_contrasts:
-        original_name = contrast["contrast_name"]
-        accession = contrast["accession"]
-
-        # If name appears multiple times, append dataset suffix
-        if contrast_name_counts[original_name] > 1:
-            duplicate_counters[original_name] = duplicate_counters.get(original_name, 0) + 1
-            ai_contrast_name = f"{original_name}_{accession}"
-        else:
-            ai_contrast_name = original_name
-
         contrast_data.append({
-            "accession": accession,
-            "contrast": ai_contrast_name,
+            "accession": contrast["accession"],
+            "contrast": contrast["contrast_name"],  # Already has consistent name from validation
             "description": contrast["description"]
             })
 
@@ -338,10 +319,21 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
 
                     if not results_df.empty and selected_contrasts:
                         # Store SELECTED contrasts for AI gene analysis (not all contrasts)
-                        selected_contrast_dicts = [
-                            {'analysis_id': sc.analysis_id, 'contrast_id': sc.contrast_id}
-                            for sc in selected_contrasts
-                        ]
+                        # Use consistent contrast names for AI
+                        selected_contrast_dicts = []
+                        for sc in selected_contrasts:
+                            # Find the consistent name from ri.contrast_info
+                            consistent_name = sc.contrast_id
+                            for contrast_key, contrast_data in ri.contrast_info.items():
+                                if (contrast_data.get('original_name') == sc.contrast_id and
+                                    contrast_data.get('analysis_id') == sc.analysis_id):
+                                    consistent_name = contrast_data.get('name', sc.contrast_id)
+                                    break
+
+                            selected_contrast_dicts.append({
+                                'analysis_id': sc.analysis_id,
+                                'contrast_id': consistent_name
+                            })
                         st.session_state['selected_contrasts_for_ai'] = selected_contrast_dicts
                         st.session_state['research_query'] = research_query
                     else:
@@ -370,9 +362,26 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                     )
 
                     if not results_df.empty:
-                        # Store results for AI gene analysis
-                        st.session_state['selected_contrasts_for_ai'] = \
-                            results_df[['analysis_id','contrast_id']].to_dict('records')
+                        # Convert to consistent contrast names for AI
+                        selected_contrast_dicts = []
+                        for _, row in results_df.iterrows():
+                            analysis_id = row['analysis_id']
+                            contrast_id = row['contrast_id']
+
+                            # Find the consistent name from ri.contrast_info
+                            consistent_name = contrast_id
+                            for contrast_key, contrast_data in ri.contrast_info.items():
+                                if (contrast_data.get('original_name') == contrast_id and
+                                    contrast_data.get('analysis_id') == analysis_id):
+                                    consistent_name = contrast_data.get('name', contrast_id)
+                                    break
+
+                            selected_contrast_dicts.append({
+                                'analysis_id': analysis_id,
+                                'contrast_id': consistent_name
+                            })
+
+                        st.session_state['selected_contrasts_for_ai'] = selected_contrast_dicts
                         st.session_state['research_query'] = research_query
                         selected_contrasts = None  # No selection objects in fallback mode
                     else:
@@ -622,9 +631,26 @@ def _display_relevance_results(ri: ResultsIntegrator, results_df, research_query
     log_streamlit_event(f"Contrast relevance assessment completed: {len(results_df)} contrasts scored")
     st.success(f"Successfully assessed {len(results_df)} contrasts!")
 
-    # Store results for AI gene analysis
-    st.session_state['selected_contrasts_for_ai'] = \
-        results_df[['analysis_id','contrast_id']].to_dict('records')
+    # Convert to consistent contrast names for AI
+    selected_contrast_dicts = []
+    for _, row in results_df.iterrows():
+        analysis_id = row['analysis_id']
+        contrast_id = row['contrast_id']
+
+        # Find the consistent name from ri.contrast_info
+        consistent_name = contrast_id
+        for contrast_key, contrast_data in ri.contrast_info.items():
+            if (contrast_data.get('original_name') == contrast_id and
+                contrast_data.get('analysis_id') == analysis_id):
+                consistent_name = contrast_data.get('name', contrast_id)
+                break
+
+        selected_contrast_dicts.append({
+            'analysis_id': analysis_id,
+            'contrast_id': consistent_name
+        })
+
+    st.session_state['selected_contrasts_for_ai'] = selected_contrast_dicts
     st.session_state['research_query'] = research_query
 
     # Display results table

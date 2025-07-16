@@ -14,10 +14,13 @@ from typing import List, Dict, Any, Optional
 from .helpers import (
     check_ai_generating,
     setup_fragment_decorator,
-    log_streamlit_tab,
     log_streamlit_function,
     log_streamlit_event,
-    is_analysis_successful
+    get_organism_display_name,
+    log_streamlit_tab,
+    is_analysis_successful,
+    get_valid_contrasts_from_analysis_info,
+    validate_contrast_has_deg_data
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -274,17 +277,32 @@ def _render_de_plots(ri: ResultsIntegrator, selected_dataset: str, base_path: st
     st.markdown("---")
     st.subheader("Differential Expression Results")
 
-    # Find all contrast directories
-    contrast_dirs = [d for d in os.listdir(base_path)
-                    if os.path.isdir(os.path.join(base_path, d)) and d != "logs"]
+    # Get valid contrasts from analysis_info.json (no directory fallback)
+    analysis_id = selected_dataset
 
-    if not contrast_dirs:
-        log_streamlit_event(f"No contrast directories found for {selected_dataset}")
+    # Check if analysis was successful
+    if not is_analysis_successful(ri, analysis_id):
+        log_streamlit_event(f"Analysis not successful for {selected_dataset}")
+        st.info("This analysis was not completed successfully.")
+        return
+
+    # Get contrasts from analysis_info
+    contrasts = get_valid_contrasts_from_analysis_info(ri, analysis_id)
+
+    # Filter to only contrasts that have DEG data
+    valid_contrasts = []
+    for contrast in contrasts:
+        contrast_name = contrast["name"]
+        if validate_contrast_has_deg_data(ri, analysis_id, contrast_name):
+            valid_contrasts.append(contrast_name)
+
+    if not valid_contrasts:
+        log_streamlit_event(f"No valid contrasts with DEG data found for {selected_dataset}")
         st.info("No contrast-specific plots found for this dataset.")
         return
 
     # Create contrast selection interface
-    selected_contrast = _render_contrast_selection(ri, contrast_dirs)
+    selected_contrast = _render_contrast_selection(ri, valid_contrasts)
 
     if selected_contrast:
         contrast_path = os.path.join(base_path, selected_contrast)
