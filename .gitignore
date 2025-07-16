@@ -59,6 +59,7 @@ results.txt
 **/results/*.txt
 temp_logs/*
 tmp_container_explorer/*
+ai_tool_calls_current.json
 
 # Docker
 *.dockerignore
