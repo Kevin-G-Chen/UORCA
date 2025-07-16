@@ -61,8 +61,7 @@ def create_uorca_agent(selected_contrasts_key: str = "") -> Optional[Agent]:
         server = MCPServerStdio(
             command="uv",
             args=["run", str(server_script), "server"],
-            env=server_env,
-            timeout=mcp_config.timeout
+            env=server_env
         )
 
         agent = Agent(

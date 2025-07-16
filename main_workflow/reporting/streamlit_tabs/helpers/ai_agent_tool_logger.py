@@ -42,9 +42,9 @@ class AIAgentToolLogger:
         self.current_analysis_id = None
         # Set log directory relative to project root (UORCA directory)
         # From this file: UORCA/main_workflow/reporting/streamlit_tabs/helpers/ai_agent_tool_logger.py
-        # Go up to UORCA root, then to temp_logs
+        # Go up to UORCA root, then to logs (unified with streamlit logging)
         project_root = Path(__file__).parent.parent.parent.parent.parent
-        self.log_dir = project_root / "temp_logs"
+        self.log_dir = project_root / "logs"
 
         # Ensure log directory exists
         self.log_dir.mkdir(exist_ok=True)
