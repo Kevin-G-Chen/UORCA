@@ -111,22 +111,22 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
 # 2) Per-gene + contrast stats
 @server.tool()
 @log_ai_agent_tool
-async def get_gene_contrast_stats(gene: str, contrast_id: str = None) -> str:
+async def get_gene_contrast_stats(genes: list, contrast_ids: list = None) -> str:
     """
-    Get detailed differential expression statistics for a specific gene across experimental contrasts to understand its context-dependent regulation patterns. This tool allows you to drill down into individual genes that you've identified as interesting from other analyses. When contrast_id is not specified, you'll get comprehensive data showing how the gene behaves across all available experimental conditions, which is invaluable for understanding whether the gene shows consistent directional changes or context-specific responses. When contrast_id is specified, you get focused results for that particular experimental condition. Use this tool to validate findings from broader analyses, investigate literature-supported candidate genes, or understand the experimental contexts where specific genes show the strongest differential expression. The logFC values tell you the magnitude and direction of change, while p-values indicate statistical confidence.
+    Get detailed differential expression statistics for multiple genes across experimental contrasts to understand their context-dependent regulation patterns. This tool allows you to drill down into multiple genes that you've identified as interesting from other analyses. When contrast_ids is not specified, you'll get comprehensive data showing how the genes behave across all available experimental conditions, which is invaluable for understanding whether genes show consistent directional changes or context-specific responses. When contrast_ids is specified, you get focused results for those particular experimental conditions. Use this tool to validate findings from broader analyses, investigate literature-supported candidate genes, or understand the experimental contexts where specific genes show the strongest differential expression. The logFC values tell you the magnitude and direction of change, while p-values indicate statistical confidence.
 
     Args:
-        gene: Gene symbol to look up
-        contrast_id: Optional specific contrast to filter to
+        genes: List of gene symbols to look up
+        contrast_ids: Optional list of specific contrasts to filter to
 
     Returns:
-        JSON string with gene statistics across contrasts
+        JSON string with gene statistics across contrasts (long format with gene and contrast columns)
     """
     df = get_filtered_dataframe()
-    df = df[df.Gene == gene]
-    if contrast_id:
-        df = df[df.contrast_id == contrast_id]
-    result = json.dumps(df[["contrast_id","logFC","pvalue"]].to_dict("records"))
+    df = df[df.Gene.isin(genes)]
+    if contrast_ids:
+        df = df[df.contrast_id.isin(contrast_ids)]
+    result = json.dumps(df[["Gene", "contrast_id", "logFC", "pvalue"]].to_dict("records"))
 
     return result
 

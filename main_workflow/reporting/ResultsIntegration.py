@@ -216,6 +216,7 @@ class ResultsIntegrator:
     def find_data_files(self) -> Tuple[Dict, Dict]:
         """
         Find all DEG and CPM files across all analyses.
+        Only includes files from analyses that were successful.
 
         Returns:
         --------
@@ -227,6 +228,16 @@ class ResultsIntegrator:
 
         for folder in analysis_folders:
             analysis_id = os.path.basename(folder)
+
+            # Check if analysis was successful before including files
+            if analysis_id in self.analysis_info:
+                analysis_success = self.analysis_info[analysis_id].get("analysis_success", False)
+                if not analysis_success:
+                    logger.info(f"Skipping {analysis_id} - analysis not successful")
+                    continue
+            else:
+                logger.warning(f"No analysis info found for {analysis_id}, skipping")
+                continue
 
             # Find DEG files (in contrast subdirectories)
             deg_files[analysis_id] = {}
@@ -374,7 +385,9 @@ class ResultsIntegrator:
         # Load dataset_info.txt files if available
         self._load_dataset_info()
 
-        logger.info(f"Data loading complete: {len(self.deg_data)} DEG datasets, {len(self.cpm_data)} CPM datasets")
+        # Debug logging to show actual DEG dataset names
+        deg_dataset_names = list(self.deg_data.keys())
+        logger.info(f"Data loading complete: {len(self.deg_data)} DEG datasets ({deg_dataset_names}), {len(self.cpm_data)} CPM datasets")
 
     def identify_important_genes(self,
                                top_frequent: int = 20,
@@ -870,7 +883,9 @@ class ResultsIntegrator:
             assert len(simplified_labels) == len(contrasts), "Mismatch between number of contrasts and simplified names"
 
             # Build new tick positions after clustering (need to map to clustered order)
-            clustered_simplified_labels = [simplified_labels[contrast_labels.index(col)] for col in clustered_contrasts]
+            # Create mapping from contrast label to simplified label
+            label_mapping = dict(zip(contrast_labels, simplified_labels))
+            clustered_simplified_labels = [label_mapping[col] for col in clustered_contrasts]
 
             # Build new tick positions after clustering
             tick_vals = list(range(len(clustered_simplified_labels)))

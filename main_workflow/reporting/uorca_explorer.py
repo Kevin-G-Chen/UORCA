@@ -153,7 +153,8 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
             return None, results_dir, error_msg
         else:
             log_streamlit_data_load("CPM datasets", len(ri.cpm_data))
-            log_streamlit_data_load("DEG datasets", len(ri.deg_data))
+            deg_dataset_names = list(ri.deg_data.keys())
+            log_streamlit_data_load(f"DEG datasets ({deg_dataset_names})", len(ri.deg_data))
             status.update(label=f"Loaded {len(ri.cpm_data)} datasets", state="complete")
 
             # Check if this is the first time loading this directory

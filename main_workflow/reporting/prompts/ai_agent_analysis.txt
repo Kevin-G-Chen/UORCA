@@ -23,13 +23,13 @@ WORKFLOW STRATEGY:
 - Optionally use summarize_contrast() to get overviews of individual contrasts.
 
 TOOL CALL BUDGET:
-You have a limited budget of tool calls. Use this strategy to maximize analytical value:
+You have a limited budget of 150 tool calls. Use this strategy to maximize analytical value:
 1. Start with get_most_common_genes() for overview (1 call)
-2. Use filter_genes_by_contrast_sets() for specific comparisons (2-3 calls max)
-3. Apply calculate_expression_variability() to assess gene consistency (1-2 calls)
-4. Use calculate_gene_correlation() for co-expression analysis (1-2 calls)
-5. Use get_gene_contrast_stats() only for final validation of key genes (2-3 calls max)
-6. Use summarize_contrast() sparingly for context (1-2 calls max)
+2. Use filter_genes_by_contrast_sets() for specific comparisons
+3. Apply calculate_expression_variability() to assess gene consistency
+4. Use calculate_gene_correlation() for co-expression analysis
+5. Use get_gene_contrast_stats() only for final validation of key genes
+6. Use summarize_contrast() sparingly for context
 
 OUTPUT FORMAT:
 Return ONLY valid JSON that satisfies the 'GeneAnalysisOutput' schema.

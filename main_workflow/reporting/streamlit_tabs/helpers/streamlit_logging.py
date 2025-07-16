@@ -46,12 +46,13 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
     global _streamlit_logger
 
     if _streamlit_logger is not None:
-        return pathlib.Path()  # Already configured
+        # Return the expected log file path even when already configured
+        log_dir = pathlib.Path(log_dir)
+        return log_dir / "streamlit_app.log"
 
-    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     log_dir = pathlib.Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / f"streamlit_app_{ts}.log"
+    log_file = log_dir / "streamlit_app.log"
 
     # First, clean up any existing handlers on the root logger that might cause duplicates
     root_logger = logging.getLogger()
@@ -59,7 +60,7 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
         root_logger.removeHandler(handler)
 
     # Configure root logger to use our standard format
-    root_handler = logging.FileHandler(log_file, encoding="utf-8")
+    root_handler = logging.FileHandler(log_file, mode='a', encoding="utf-8")
     root_formatter = logging.Formatter(
         fmt=STANDARD_FMT,
         datefmt="%Y-%m-%d %H:%M:%S"
@@ -73,7 +74,7 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
     _streamlit_logger.setLevel(level)
 
     # Add the same handler directly to streamlit logger to avoid propagation issues
-    streamlit_handler = logging.FileHandler(log_file, encoding="utf-8")
+    streamlit_handler = logging.FileHandler(log_file, mode='a', encoding="utf-8")
     streamlit_handler.setFormatter(root_formatter)
     _streamlit_logger.addHandler(streamlit_handler)
 

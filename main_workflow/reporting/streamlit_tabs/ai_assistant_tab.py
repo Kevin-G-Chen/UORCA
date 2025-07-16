@@ -18,8 +18,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from config_loader import get_contrast_relevance_with_selection_config, get_ai_agent_config
 
-# Timeout for AI analysis (10 minutes)
-TIMEOUT_SECONDS = 600
+
 
 
 from .helpers import (
@@ -329,7 +328,7 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                     else:
                         if not os.getenv("OPENAI_API_KEY"):
                             st.warning("⚠️ OpenAI API key not configured. Cannot assess contrast relevance.")
-                            st.info("Please configure your OpenAI API key using the instructions above to enable AI-powered contrast selection.")
+                            st.info("Please configure your OpenAI API key using the instructions above to enable AI analysis")
                         else:
                             st.warning("No contrasts found for assessment.")
                         return
@@ -360,14 +359,14 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                     else:
                         if not os.getenv("OPENAI_API_KEY"):
                             st.warning("⚠️ OpenAI API key not configured. Cannot assess contrast relevance.")
-                            st.info("Please configure your OpenAI API key using the instructions above to enable AI-powered contrast selection.")
+                            st.info("Please configure your OpenAI API key using the instructions above to enable AI analysis")
                         else:
                             st.warning("No contrasts found for assessment.")
                         return
 
         # Step 2: AI Gene Analysis (using selected contrasts)
         with progress_placeholder:
-            with st.spinner(f"Analyzing differential expression patterns..."):
+            with st.spinner(f"Analysing expression patterns..."):
                 # Set the RESULTS_DIR environment variable for the MCP server
                 os.environ['RESULTS_DIR'] = results_dir
 
@@ -449,24 +448,6 @@ Please perform the analysis using your four tools, choose all thresholds reasona
             ri, result_output, research_query, selected_contrast_dicts,
             results_df, selected_datasets, selected_contrasts, display_tool_calls
         )
-
-    except TimeoutError as e:
-        logger.error(f"AI analysis timed out: {str(e)}", exc_info=True)
-        st.error("⏰ **Analysis Timeout**")
-        st.warning(f"The AI analysis timed out after {TIMEOUT_SECONDS/60:.0f} minutes. This can happen when:")
-        st.markdown("""
-        - The analysis is very complex (many contrasts or genes)
-        - The AI service is experiencing delays
-        - The AI agent gets stuck in a processing loop
-
-        **Suggestions:**
-        - Try reducing the number of selected datasets/contrasts
-        - Refresh the page and try again
-        - Check if the issue persists across different analyses
-        """)
-
-        with st.expander("Technical Details", expanded=False):
-            st.code(str(e))
 
     except Exception as e:
         logger.error(f"Error in AI analysis workflow: {str(e)}", exc_info=True)
@@ -751,20 +732,16 @@ def _provide_relevance_download(results_df):
 @log_streamlit_function
 @log_streamlit_agent
 def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[Dict]]:
-    """Execute the AI analysis asynchronously with proper loop hygiene, capture tool calls, and 10-minute timeout."""
-    TIMEOUT_SECONDS = 600  # 10 minutes
+    """Execute the AI analysis asynchronously with proper loop hygiene and capture tool calls."""
 
     async def run_analysis():
         async with agent.run_mcp_servers():
             # Start new analysis session and clear previous tool calls
             start_ai_analysis_session()
 
-            # Run main analysis with timeout
+            # Run main analysis
             ai_config = get_ai_agent_config()
-            result = await asyncio.wait_for(
-                agent.run(prompt, usage_limits=UsageLimits(request_limit=ai_config.request_limit)),
-                timeout=TIMEOUT_SECONDS
-            )
+            result = await agent.run(prompt, usage_limits=UsageLimits(request_limit=ai_config.request_limit))
 
             # Get tool calls from new logging system
             tool_calls = get_ai_tool_logs_for_display()
@@ -780,15 +757,12 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, run_analysis())
-                result_output, tool_calls = future.result(timeout=TIMEOUT_SECONDS)
+                result_output, tool_calls = future.result()
         except RuntimeError:
             # No running loop, safe to use asyncio.run
             result_output, tool_calls = asyncio.run(run_analysis())
 
         return result_output, tool_calls
-    except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
-        logger.error(f"AI analysis timed out after {TIMEOUT_SECONDS} seconds")
-        raise TimeoutError(f"AI analysis timed out after {TIMEOUT_SECONDS/60:.1f} minutes. The analysis may be too complex or the AI service may be unresponsive.")
     except Exception as e:
         logger.error(f"Error in AI analysis execution: {str(e)}", exc_info=True)
         raise
@@ -1154,7 +1128,7 @@ def _get_tool_description(tool_name: str) -> str:
 
         'filter_genes_by_contrast_sets': "Compares two groups of experiments to find genes that are significant in one group but not the other. This helps identify genes that are specific to certain conditions or treatments.",
 
-        'get_gene_contrast_stats': "Looks up detailed information about how a specific gene behaves across different experimental conditions, including how much it changed and how confident we are in that change.",
+        'get_gene_contrast_stats': "Looks up detailed information about how multiple genes behave across different experimental conditions, including how much they changed and how confident we are in those changes.",
 
         'summarize_contrast': "Provides an overview of a specific experimental comparison, including the most important genes and overall patterns of change.",
 
@@ -1265,21 +1239,26 @@ print(f"Genes unique to set A: {{len(unique_to_a)}}")
 print(list(unique_to_a))'''
 
     elif tool_name == 'get_gene_contrast_stats':
-        gene = parameters.get('gene', 'GENE1')
-        contrast_id = parameters.get('contrast_id', None)
+        genes = parameters.get('genes', ['GENE1'])
+        contrast_ids = parameters.get('contrast_ids', None)
 
-        if contrast_id:
-            r_filter = f'data$Gene == "{gene}" & data$contrast_id == "{contrast_id}"'
-            py_filter = f'(data["Gene"] == "{gene}") & (data["contrast_id"] == "{contrast_id}")'
+        genes_r = f"c({', '.join([f'\"{g}\"' for g in genes])})"
+        genes_py = [f'"{g}"' for g in genes]
+
+        if contrast_ids:
+            contrasts_r = f"c({', '.join([f'\"{c}\"' for c in contrast_ids])})"
+            contrasts_py = [f'"{c}"' for c in contrast_ids]
+            r_filter = f'data$Gene %in% {genes_r} & data$contrast_id %in% {contrasts_r}'
+            py_filter = f'(data["Gene"].isin({genes_py})) & (data["contrast_id"].isin({contrasts_py}))'
         else:
-            r_filter = f'data$Gene == "{gene}"'
-            py_filter = f'data["Gene"] == "{gene}"'
+            r_filter = f'data$Gene %in% {genes_r}'
+            py_filter = f'data["Gene"].isin({genes_py})'
 
         r_code = f'''# Load data
 data <- read.csv("ai_agent_working_dataset.csv")
 
-# Filter for specific gene{f' and contrast' if contrast_id else ''}
-gene_stats <- data[{r_filter}, c("contrast_id", "logFC", "pvalue")]
+# Filter data for specified genes and contrasts
+gene_stats <- data[{r_filter}, c("Gene", "contrast_id", "logFC", "pvalue")]
 print(gene_stats)'''
 
         python_code = f'''# Load data
@@ -1287,8 +1266,8 @@ import pandas as pd
 
 data = pd.read_csv("ai_agent_working_dataset.csv")
 
-# Filter for specific gene{f' and contrast' if contrast_id else ''}
-gene_stats = data[{py_filter}][["contrast_id", "logFC", "pvalue"]]
+# Filter data for specified genes and contrasts
+gene_stats = data[{py_filter}][["Gene", "contrast_id", "logFC", "pvalue"]]
 print(gene_stats)'''
 
     elif tool_name == 'summarize_contrast':
@@ -1631,6 +1610,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                     for item in parsed_output:
                                         if isinstance(item, dict):
                                             df_data.append({
+                                                'Gene': item.get('Gene', ''),
                                                 'Contrast': item.get('contrast_id', ''),
                                                 'logFC': item.get('logFC', ''),
                                                 'P-value': item.get('pvalue', '')
@@ -1642,7 +1622,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                     else:
                                         st.info("No gene statistics found for the specified parameters")
                                 elif parsed_output == [] or (isinstance(parsed_output, list) and len(parsed_output) == 0):
-                                    st.info("No gene statistics found - this gene may not be significantly expressed in any contrasts")
+                                    st.info("No gene statistics found - these genes may not be significantly expressed in any contrasts")
                                 else:
                                     st.info("No gene statistics available")
 

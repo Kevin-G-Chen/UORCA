@@ -25,7 +25,6 @@ class AIAgentConfig:
     model: str = "openai:gpt-4.1-mini"
     temperature: float = 0.1
     request_limit: int = 100
-    timeout: int = 180
 
 
 @dataclass
@@ -132,7 +131,7 @@ class AIAssistantConfigLoader:
             model=config_data.get("model", "openai:gpt-4.1-mini"),
             temperature=config_data.get("temperature", 0.1),
             request_limit=config_data.get("request_limit", 100),
-            timeout=config_data.get("timeout", 180)
+#            timeout=config_data.get("timeout", 180)
         )
 
     @property
