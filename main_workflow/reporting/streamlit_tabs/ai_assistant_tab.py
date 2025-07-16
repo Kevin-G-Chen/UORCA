@@ -367,7 +367,7 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
 
         # Step 2: AI Gene Analysis (using selected contrasts)
         with progress_placeholder:
-            with st.spinner(f"Analyzing differential expression patterns... (timeout: {TIMEOUT_SECONDS//60} minutes)"):
+            with st.spinner(f"Analyzing differential expression patterns..."):
                 # Set the RESULTS_DIR environment variable for the MCP server
                 os.environ['RESULTS_DIR'] = results_dir
 
