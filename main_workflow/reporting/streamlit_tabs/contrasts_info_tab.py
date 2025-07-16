@@ -85,7 +85,8 @@ def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float,
     for contrast in valid_contrasts:
         analysis_id = contrast["analysis_id"]
         accession = contrast["accession"]
-        contrast_name = contrast["contrast_name"]
+        contrast_name = contrast["contrast_name"]  # Consistent name for display
+        original_contrast_name = contrast["original_contrast_name"]  # Original name for data access
 
         # Get dataset title for formatting
         dataset_title = ""
@@ -102,7 +103,7 @@ def _create_contrast_info_dataframe(ri: ResultsIntegrator, pvalue_thresh: float,
 
         # Count DEGs for this contrast
         deg_count = 0
-        deg_df = ri.deg_data[analysis_id][contrast_name]
+        deg_df = ri.deg_data[analysis_id][original_contrast_name]
 
         # Use exact column names from DEG.csv file - prefer adjusted p-value
         p_value_col = None
