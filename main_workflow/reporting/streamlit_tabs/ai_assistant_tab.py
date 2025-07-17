@@ -1639,8 +1639,8 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
             with code_tab2:
                 st.code(python_code, language='python')
 
-            # Create two-column layout
-            param_col, result_col = st.columns(2)
+            # Create two-column layout (25% parameters, 75% results)
+            param_col, result_col = st.columns([1, 3])
 
             # Left column: Parameters
             with param_col:
