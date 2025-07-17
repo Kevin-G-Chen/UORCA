@@ -7,9 +7,118 @@ that runs directly without container dependency.
 
 import sys
 import os
+import socket
 import subprocess
 from pathlib import Path
 from dotenv import load_dotenv, find_dotenv
+
+
+def is_port_available(host, port):
+    """
+    Check if a port is available on the given host.
+
+    Args:
+        host: Host address to check
+        port: Port number to check
+
+    Returns:
+        bool: True if port is available, False otherwise
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.settimeout(1)
+            result = sock.connect_ex((host, port))
+            return result != 0
+    except Exception:
+        return False
+
+
+def find_available_port(host, start_port, max_attempts=10):
+    """
+    Find an available port starting from start_port.
+
+    Args:
+        host: Host address to check
+        start_port: Starting port number
+        max_attempts: Maximum number of ports to try
+
+    Returns:
+        int: Available port number, or None if none found
+    """
+    for port in range(start_port, start_port + max_attempts):
+        if is_port_available(host, port):
+            return port
+    return None
+
+
+def attempt_port_cleanup(host, port):
+    """
+    Attempt to find and terminate processes using the specified port.
+
+    Args:
+        host: Host address
+        port: Port number to clean up
+
+    Returns:
+        bool: True if cleanup was attempted, False otherwise
+    """
+    try:
+        import signal
+        import time
+
+        # Try to find processes using the port on Unix-like systems
+        if os.name == 'posix':
+            try:
+                # Use lsof to find processes using the port
+                result = subprocess.run(['lsof', '-ti', f':{port}'],
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0 and result.stdout.strip():
+                    pids = result.stdout.strip().split('\n')
+                    print(f"Found {len(pids)} process(es) using port {port}. Attempting cleanup...")
+
+                    for pid in pids:
+                        try:
+                            pid = int(pid.strip())
+                            os.kill(pid, signal.SIGTERM)
+                            print(f"Sent SIGTERM to process {pid}")
+                        except (ValueError, ProcessLookupError, PermissionError) as e:
+                            print(f"Could not terminate process {pid}: {e}")
+
+                    # Give processes time to terminate gracefully
+                    time.sleep(2)
+                    return True
+
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                # lsof not available or timed out
+                pass
+
+        # On Windows, try netstat approach
+        elif os.name == 'nt':
+            try:
+                result = subprocess.run(['netstat', '-ano'],
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    lines = result.stdout.split('\n')
+                    for line in lines:
+                        if f':{port} ' in line and 'LISTENING' in line:
+                            parts = line.split()
+                            if len(parts) >= 5:
+                                try:
+                                    pid = int(parts[-1])
+                                    subprocess.run(['taskkill', '/F', '/PID', str(pid)],
+                                                 capture_output=True, timeout=5)
+                                    print(f"Terminated process {pid} using port {port}")
+                                    time.sleep(1)
+                                    return True
+                                except (ValueError, subprocess.TimeoutExpired):
+                                    pass
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+
+    except Exception as e:
+        print(f"Port cleanup attempt failed: {e}")
+
+    return False
 
 
 def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
@@ -116,6 +225,28 @@ def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
         print(f"Error: Could not find uorca_explorer.py at {explorer_script}")
         sys.exit(1)
 
+    # Check if the requested port is available
+    if not is_port_available(host, port):
+        print(f"Port {port} is already in use.")
+
+        # Attempt to clean up the port
+        print("Attempting to free up the port...")
+        cleanup_success = attempt_port_cleanup(host, port)
+
+        # Check if port is now available after cleanup attempt
+        if cleanup_success and is_port_available(host, port):
+            print(f"Successfully freed up port {port}")
+        else:
+            print("Could not free up the port. Finding an available port...")
+            available_port = find_available_port(host, port)
+            if available_port is None:
+                print(f"Error: Could not find an available port starting from {port}")
+                print("Please try a different port or manually stop the existing service.")
+                sys.exit(1)
+            else:
+                print(f"Using port {available_port} instead of {port}")
+                port = available_port
+
     # Build streamlit command for direct execution
     cmd = [
         'uv', 'run', 'streamlit', 'run',
@@ -128,7 +259,7 @@ def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
     ]
 
     print("=" * 50)
-    print("UORCA Explorer - Direct Python Execution")
+    print("UORCA Explorer")
     print("=" * 50)
 
     # Determine which URL(s) to show the user
@@ -194,7 +325,8 @@ def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
         print("Make sure you're in the UORCA environment with uv installed.")
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\n\nThanks for using UORCA Explorer! Hopefully you found the analyses to be well orca-strated!")
+        print("\n\nStopping UORCA Explorer...")
+        print("Thanks for using UORCA Explorer! Hopefully you found the analyses to be well orca-strated!")
         sys.exit(0)
 
 
