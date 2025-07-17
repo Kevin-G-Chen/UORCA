@@ -41,7 +41,7 @@ extract_agent = Agent(
 @log_tool
 async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str) -> str:
     """Retrieve sample‑level metadata and SRR run IDs for a GEO series."""
-    logger.info("🔍 fetch_geo_metadata() called for %s", accession)
+    logger.info("fetch_geo_metadata() called for %s", accession)
 
     # Update checkpoint: metadata extraction started
     if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
@@ -49,14 +49,70 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
         cp.status = CheckpointStatus.IN_PROGRESS
         cp.error_message = None
         cp.timestamp = datetime.datetime.now().isoformat()
-        logger.info("📋 Checkpoint: Metadata extraction started")
+        logger.info("Checkpoint: Metadata extraction started")
 
     out_root = pathlib.Path(ctx.deps.output_dir or ".").resolve()
     meta_dir = out_root / "metadata"
     meta_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Saving metadata under %s", meta_dir)
 
-    gse = gp.get_GEO(accession, destdir=str(meta_dir), silent=True)
+    # Try to fetch GEO metadata with timeout
+    try:
+        gse = await asyncio.wait_for(
+            asyncio.to_thread(gp.get_GEO, accession, destdir=str(meta_dir), silent=True),
+            timeout=30
+        )
+        logger.info("Successfully fetched GEO metadata for %s", accession)
+    except (asyncio.TimeoutError, Exception) as e:
+        if isinstance(e, asyncio.TimeoutError):
+            logger.warning("GEO metadata fetch timed out for %s after 30 seconds, trying wget fallback", accession)
+        else:
+            logger.warning("GEO metadata fetch failed for %s (%s), trying wget fallback", accession, str(e))
+
+        # Construct wget URL - format: https://ftp.ncbi.nlm.nih.gov/geo/series/GSE{base}nnn/{accession}/soft/{accession}_family.soft.gz
+        number_part = accession.replace('GSE', '')
+        if len(number_part) > 3:
+            base_part = number_part[:-3] + 'nnn'
+        else:
+            base_part = 'nnn'
+
+        url = f"https://ftp.ncbi.nlm.nih.gov/geo/series/GSE{base_part}/{accession}/soft/{accession}_family.soft.gz"
+        filename = f"{accession}_family.soft.gz"
+        logger.info("Attempting to download %s from %s", filename, url)
+
+        # Run wget to download the file
+        try:
+            wget_result = subprocess.run([
+                "wget", "-O", str(meta_dir / filename), url
+            ], capture_output=True, text=True, timeout=60)
+
+            if wget_result.returncode != 0:
+                logger.error("wget failed for %s (return code %d): %s", accession, wget_result.returncode, wget_result.stderr)
+                raise Exception(f"Failed to download GEO data for {accession} via wget. URL: {url}. Error: {wget_result.stderr}")
+
+            logger.info("Successfully downloaded %s via wget", filename)
+
+        except subprocess.TimeoutExpired:
+            logger.error("wget timed out after 60 seconds for %s", accession)
+            raise Exception(f"wget download timed out for {accession}")
+        except Exception as wget_e:
+            logger.error("wget subprocess failed for %s: %s", accession, str(wget_e))
+            raise Exception(f"wget subprocess error for {accession}: {str(wget_e)}")
+
+        # Try GEO parsing again after wget
+        try:
+            gse = await asyncio.wait_for(
+                asyncio.to_thread(gp.get_GEO, accession, destdir=str(meta_dir), silent=True),
+                timeout=30
+            )
+            logger.info("Successfully parsed GEO metadata after wget fallback for %s", accession)
+        except (asyncio.TimeoutError, Exception) as retry_e:
+            if isinstance(retry_e, asyncio.TimeoutError):
+                error_msg = f"GEO metadata parsing timed out for {accession} even after wget fallback"
+            else:
+                error_msg = f"GEO metadata parsing failed for {accession} even after wget fallback: {str(retry_e)}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
     gsms = gse.gsms
     logger.info("Fetched %d GSM samples", len(gsms))
 
@@ -83,35 +139,35 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
 
     # Store in context
     ctx.deps.dataset_information = dataset_information
-    logger.info("📑 Captured dataset information from GEO metadata")
+    logger.info("Captured dataset information from GEO metadata")
 
-    logger.info("💾 Dataset information captured in context for downstream use")
+    logger.info("Dataset information captured in context for downstream use")
 
     # Extract species information from taxonomic ID
     species_name = "Unknown"
     try:
         if 'sample_taxid' in gse.metadata and gse.metadata['sample_taxid']:
             taxid = gse.metadata['sample_taxid'][0] if isinstance(gse.metadata['sample_taxid'], list) else gse.metadata['sample_taxid']
-            logger.info("🧬 Found taxonomic ID: %s", taxid)
+            logger.info("Found taxonomic ID: %s", taxid)
 
             # Convert taxonomic ID to species name using rate-limited Entrez
             taxonomy_info = fetch_taxonomy_info(str(taxid))
 
             if taxonomy_info:
                 species_name = taxonomy_info['scientific_name']
-                logger.info("🔬 Identified species: %s", species_name)
+                logger.info("Identified species: %s", species_name)
                 if taxonomy_info.get('common_name'):
-                    logger.info("🔬 Common name: %s", taxonomy_info['common_name'])
+                    logger.info("Common name: %s", taxonomy_info['common_name'])
             else:
-                logger.warning("⚠️ No species information found for taxonomic ID: %s", taxid)
+                logger.warning("No species information found for taxonomic ID: %s", taxid)
         else:
-            logger.warning("⚠️ No taxonomic ID found in GEO metadata")
+            logger.warning("No taxonomic ID found in GEO metadata")
     except Exception as e:
-        logger.warning("⚠️ Error extracting species information: %s", str(e))
+        logger.warning("Error extracting species information: %s", str(e))
 
     # Store species in context
     ctx.deps.organism = species_name
-    logger.info("🧬 Set organism to: %s", species_name)
+    logger.info("Set organism to: %s", species_name)
 
     re_srx, re_srr = re.compile(r"(SR[XP]\d+)"), re.compile(r"(SRR\d+)")
 
@@ -174,7 +230,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     logger.info("%s written (%d rows)", metadata_filename, len(out_df))
 
     # Filter for RNA-seq specific samples
-    logger.info("🔍 Filtering for RNA-seq specific samples")
+    logger.info("Filtering for RNA-seq specific samples")
     initial_rows = len(out_df)
 
     # Apply RNA-seq filters - exact matches required
@@ -185,7 +241,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     )
     out_df = out_df[rna_seq_filter]
 
-    logger.info("📊 RNA-seq filtering: %d → %d rows", initial_rows, len(out_df))
+    logger.info("RNA-seq filtering: %d -> %d rows", initial_rows, len(out_df))
 
     # Check if any samples remain after filtering
     if len(out_df) == 0:
@@ -194,7 +250,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
             f"with molecule_ch1='total RNA', library_source='transcriptomic', and library_strategy='RNA-Seq'. "
             f"Dataset will be terminated."
         )
-        logger.error("❌ %s", error_msg)
+        logger.error("%s", error_msg)
 
         # Mark in context that analysis should not proceed
         ctx.deps.analysis_should_proceed = False
@@ -213,14 +269,14 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     # Check organism consistency
     unique_organisms = out_df['organism_ch1'].nunique()
     organisms_list = out_df['organism_ch1'].unique().tolist()
-    logger.info("🧬 Found %d unique organisms: %s", unique_organisms, organisms_list)
+    logger.info("Found %d unique organisms: %s", unique_organisms, organisms_list)
 
     if unique_organisms > 1:
         error_msg = (
             f"Multiple organisms detected in dataset {accession}: {organisms_list}. "
             f"Analysis requires samples from a single organism. Dataset will be terminated."
         )
-        logger.error("❌ %s", error_msg)
+        logger.error("%s", error_msg)
 
         # Mark in context that analysis should not proceed
         ctx.deps.analysis_should_proceed = False
@@ -238,7 +294,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
 
     # Validate sample count - need more than 2 samples for meaningful analysis
     unique_samples = out_df['GSM'].nunique()
-    logger.info("📊 Found %d unique samples (GSM entries)", unique_samples)
+    logger.info("Found %d unique samples (GSM entries)", unique_samples)
 
     if unique_samples <= 2:
         error_msg = (
@@ -246,7 +302,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
             f"samples found. Need at least 3 samples for meaningful differential "
             f"expression analysis. Dataset {accession} will be terminated."
         )
-        logger.error("❌ %s", error_msg)
+        logger.error("%s", error_msg)
 
         # Mark in context that analysis should not proceed
         ctx.deps.analysis_should_proceed = False
@@ -268,7 +324,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     ctx.deps.metadata_path = str(meta_dir / metadata_filename)
 
     # Clean up temporary files created by GEOparse
-    logger.info("🧹 Cleaning up temporary files")
+    logger.info("Cleaning up temporary files")
     cleanup_count = 0
     for temp_file in meta_dir.glob("*.soft.gz"):
         try:
@@ -279,7 +335,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
             logger.warning(f"Could not remove temporary file {temp_file}: {e}")
 
     if cleanup_count > 0:
-        logger.info(f"✅ Cleaned up {cleanup_count} temporary files")
+        logger.info(f"Cleaned up {cleanup_count} temporary files")
 
     # Update checkpoint: metadata extraction completed successfully
     if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
@@ -288,7 +344,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
         cp.details = f"Extracted metadata for {unique_samples} unique samples"
         cp.error_message = None
         cp.timestamp = datetime.datetime.now().isoformat()
-        logger.info("✅ Checkpoint: Metadata extraction completed successfully")
+        logger.info("Checkpoint: Metadata extraction completed successfully")
 
     return (
         f"Fetched {len(gsms)} GSM samples ({unique_samples} unique).\n"
