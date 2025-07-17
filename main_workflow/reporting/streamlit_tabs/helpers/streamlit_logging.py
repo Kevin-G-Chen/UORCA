@@ -72,6 +72,9 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
 
     # Create streamlit-specific logger
     _streamlit_logger = logging.getLogger("streamlit_app")
+    # Remove existing handlers to avoid duplication
+    for h in _streamlit_logger.handlers[:]:
+        _streamlit_logger.removeHandler(h)
     _streamlit_logger.setLevel(level)
 
     # Add the same handler directly to streamlit logger to avoid propagation issues
