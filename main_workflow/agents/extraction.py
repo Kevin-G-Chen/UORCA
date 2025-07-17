@@ -56,65 +56,41 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     meta_dir.mkdir(parents=True, exist_ok=True)
     logger.info("Saving metadata under %s", meta_dir)
 
-    # Try to fetch GEO metadata with timeout
+    # Try wget download first as a precautionary measure
+    number_part = accession.replace('GSE', '')
+    if len(number_part) > 3:
+        base_part = number_part[:-3] + 'nnn'
+    else:
+        base_part = 'nnn'
+
+    url = f"https://ftp.ncbi.nlm.nih.gov/geo/series/GSE{base_part}/{accession}/soft/{accession}_family.soft.gz"
+    filename = f"{accession}_family.soft.gz"
+
+    # Attempt wget download with timeout (but continue even if it fails)
     try:
-        gse = await asyncio.wait_for(
-            asyncio.to_thread(gp.get_GEO, accession, destdir=str(meta_dir), silent=True),
-            timeout=30
-        )
+        logger.info("Pre-downloading %s from %s", filename, url)
+        wget_result = subprocess.run([
+            "wget", "-O", str(meta_dir / filename), url
+        ], capture_output=True, text=True, timeout=60)
+
+        if wget_result.returncode == 0:
+            logger.info("Successfully pre-downloaded %s via wget", filename)
+        else:
+            logger.warning("wget failed for %s (return code %d), proceeding anyway: %s",
+                         accession, wget_result.returncode, wget_result.stderr)
+
+    except subprocess.TimeoutExpired:
+        logger.warning("wget timed out after 60 seconds for %s, proceeding anyway", accession)
+    except Exception as wget_e:
+        logger.warning("wget subprocess failed for %s, proceeding anyway: %s", accession, str(wget_e))
+
+    # Now attempt regular GEO parsing
+    try:
+        gse = gp.get_GEO(accession, destdir=str(meta_dir), silent=True)
         logger.info("Successfully fetched GEO metadata for %s", accession)
-    except (asyncio.TimeoutError, Exception) as e:
-        if isinstance(e, asyncio.TimeoutError):
-            logger.warning("GEO metadata fetch timed out for %s after 30 seconds, trying wget fallback", accession)
-        else:
-            logger.warning("GEO metadata fetch failed for %s (%s), trying wget fallback", accession, str(e))
-
-        # Construct wget URL - format: https://ftp.ncbi.nlm.nih.gov/geo/series/GSE{base}nnn/{accession}/soft/{accession}_family.soft.gz
-
-        # NOTE - THIS FALLBACK MUST BE RETAINED
-        number_part = accession.replace('GSE', '')
-        if len(number_part) > 3:
-            base_part = number_part[:-3] + 'nnn'
-        else:
-            base_part = 'nnn'
-
-        url = f"https://ftp.ncbi.nlm.nih.gov/geo/series/GSE{base_part}/{accession}/soft/{accession}_family.soft.gz"
-        filename = f"{accession}_family.soft.gz"
-        logger.info("Attempting to download %s from %s", filename, url)
-
-        # Run wget to download the file
-        try:
-            wget_result = subprocess.run([
-                "wget", "-O", str(meta_dir / filename), url
-            ], capture_output=True, text=True, timeout=60)
-
-            if wget_result.returncode != 0:
-                logger.error("wget failed for %s (return code %d): %s", accession, wget_result.returncode, wget_result.stderr)
-                raise Exception(f"Failed to download GEO data for {accession} via wget. URL: {url}. Error: {wget_result.stderr}")
-
-            logger.info("Successfully downloaded %s via wget", filename)
-
-        except subprocess.TimeoutExpired:
-            logger.error("wget timed out after 60 seconds for %s", accession)
-            raise Exception(f"wget download timed out for {accession}")
-        except Exception as wget_e:
-            logger.error("wget subprocess failed for %s: %s", accession, str(wget_e))
-            raise Exception(f"wget subprocess error for {accession}: {str(wget_e)}")
-
-        # Try GEO parsing again after wget
-        try:
-            gse = await asyncio.wait_for(
-                asyncio.to_thread(gp.get_GEO, accession, destdir=str(meta_dir), silent=True),
-                timeout=30
-            )
-            logger.info("Successfully parsed GEO metadata after wget fallback for %s", accession)
-        except (asyncio.TimeoutError, Exception) as retry_e:
-            if isinstance(retry_e, asyncio.TimeoutError):
-                error_msg = f"GEO metadata parsing timed out for {accession} even after wget fallback"
-            else:
-                error_msg = f"GEO metadata parsing failed for {accession} even after wget fallback: {str(retry_e)}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
+    except Exception as e:
+        logger.error("Failed to fetch GEO metadata for %s: %s", accession, str(e))
+        raise Exception(f"GEO metadata fetch failed for {accession}: {str(e)}")
     gsms = gse.gsms
     logger.info("Fetched %d GSM samples", len(gsms))
 
