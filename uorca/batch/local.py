@@ -69,13 +69,17 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         output_path = Path(output_dir).absolute()
         resource_path = Path(resource_dir).absolute()
 
+        # Find project root (where this batch processor is located)
+        current_file = Path(__file__).absolute()
+        project_root = current_file.parent.parent.parent  # Go up from uorca/batch/local.py to project root
+
         # Create directories if they don't exist
         output_path.mkdir(parents=True, exist_ok=True)
         resource_path.mkdir(parents=True, exist_ok=True)
 
         # Docker paths (inside container)
-        docker_output_dir = "/app/output"
-        docker_resource_dir = "/app/resources"
+        docker_output_dir = "/workspace/output"
+        docker_resource_dir = "/workspace/resources"
 
         # Build Docker command
         cmd = [
@@ -83,7 +87,10 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             # Mount volumes
             '-v', f'{output_path}:{docker_output_dir}',
             '-v', f'{resource_path}:{docker_resource_dir}',
+            '-v', f'{project_root}:/workspace',
+            '--workdir', '/workspace',  # Mount source code so we use local changes
             # Pass environment variables
+
             '-e', f'ENTREZ_EMAIL={os.getenv("ENTREZ_EMAIL", "")}',
             '-e', f'OPENAI_API_KEY={os.getenv("OPENAI_API_KEY", "")}',
             '-e', f'ENTREZ_API_KEY={os.getenv("ENTREZ_API_KEY", "")}',
