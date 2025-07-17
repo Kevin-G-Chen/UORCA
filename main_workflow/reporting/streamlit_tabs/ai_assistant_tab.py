@@ -399,7 +399,7 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
 
         # Step 2: AI Gene Analysis (using selected contrasts)
         with progress_placeholder:
-            with st.spinner(f"Analysing expression patterns and tool relevance..."):
+            with st.spinner(f"Analysing expression patterns..."):
                 # Set the RESULTS_DIR environment variable for the MCP server
                 os.environ['RESULTS_DIR'] = results_dir
 
@@ -895,11 +895,6 @@ def _display_unified_ai_results(
     if tool_calls and relevant_tool_calls is not None:
         relevant_count = len(relevant_tool_calls)
         total_count = len(tool_calls)
-
-        if relevant_count > 0:
-            st.success(f"Tool relevance analysis complete: {relevant_count}/{total_count} tools contributed to the analysis")
-        else:
-            st.info("Tool relevance analysis complete: No tools were deemed directly relevant to the final interpretation")
     elif tool_calls and relevant_tool_calls is None:
         st.warning("Tool relevance analysis failed - showing all tool logs")
 
@@ -1628,7 +1623,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
         timestamp = call.get('timestamp', 'Unknown time')
 
         # Create expander title without SUCCESS prefix
-        expander_title = f"**{tool_name}** (Call #{i}) - {timestamp}"
+        expander_title = f"**{tool_name}** (Call #{i})"
         if status_icon:
             expander_title = f"{status_icon} {expander_title}"
 
