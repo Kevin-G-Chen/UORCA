@@ -415,16 +415,15 @@ def embed_datasets(datasets_df: pd.DataFrame) -> pd.DataFrame:
 
     return datasets_df
 
-def cluster_datasets(datasets_df: pd.DataFrame, n_clusters: int = None) -> pd.DataFrame:
-    """Cluster datasets based on embeddings."""
+def cluster_datasets(datasets_df: pd.DataFrame, n_clusters: int = None, cluster_divisor: int = 10) -> pd.DataFrame:
+    """Cluster datasets based on embeddings with simple divisor-based cluster count."""
     if len(datasets_df) <= 1:
         datasets_df = datasets_df.copy()
         datasets_df['Cluster'] = 0
         return datasets_df
 
     if n_clusters is None:
-        n_clusters = min(len(datasets_df) // 3, 10)  # Heuristic for cluster count
-        n_clusters = max(n_clusters, 1)
+        n_clusters = max(1, len(datasets_df) // cluster_divisor)  # Simple: total/divisor
 
     tqdm.write(f"Clustering {len(datasets_df)} datasets into {n_clusters} clusters...")
 
@@ -445,31 +444,31 @@ def cluster_datasets(datasets_df: pd.DataFrame, n_clusters: int = None) -> pd.Da
 
     return datasets_df
 
-def select_representative_datasets(datasets_df: pd.DataFrame, max_datasets: int) -> pd.DataFrame:
-    """Select representative datasets from clusters."""
-    if len(datasets_df) <= max_datasets:
-        return datasets_df
+def select_representative_datasets(datasets_df: pd.DataFrame, assessment_budget: int = 300) -> pd.DataFrame:
+    """Select datasets for assessment with budget constraint, distributed proportionally across clusters."""
+    n_clusters = datasets_df['Cluster'].nunique()
 
-    logging.info(f"Selecting {max_datasets} representative datasets from clusters...")
+    if len(datasets_df) <= assessment_budget:
+        tqdm.write(f"Assessing all {len(datasets_df)} datasets (within budget of {assessment_budget})")
+        return datasets_df  # Assess all if within budget
+
+    # Distribute assessment budget proportionally across clusters
+    datasets_per_cluster = max(1, assessment_budget // n_clusters)
+
+    tqdm.write(f"Selecting up to {datasets_per_cluster} datasets from each of {n_clusters} clusters (budget: {assessment_budget})")
 
     representatives = []
+    total_selected = 0
 
-    # Get representatives from each cluster
-    for cluster_id in datasets_df['Cluster'].unique():
+    for cluster_id in sorted(datasets_df['Cluster'].unique()):
         cluster_datasets = datasets_df[datasets_df['Cluster'] == cluster_id]
+        n_to_take = min(datasets_per_cluster, len(cluster_datasets))
+        cluster_representatives = cluster_datasets.head(n_to_take)
+        representatives.extend(cluster_representatives.to_dict('records'))
+        total_selected += n_to_take
 
-        # For now, just take the first dataset from each cluster
-        # Could implement more sophisticated selection logic here
-        representatives.append(cluster_datasets.iloc[0])
-
-    representatives_df = pd.DataFrame(representatives)
-
-    # If we still have too many, take the top ones by some criteria
-    if len(representatives_df) > max_datasets:
-        # For now, just take the first max_datasets
-        representatives_df = representatives_df.head(max_datasets)
-
-    return representatives_df.reset_index(drop=True)
+    tqdm.write(f"Selected {total_selected} total datasets for relevance assessment")
+    return pd.DataFrame(representatives).reset_index(drop=True)
 
 # ==================== OPTIONAL: REPEATED ASSESSMENT FUNCTIONS ====================
 # The following functions implement repeated assessment with averaging
@@ -502,7 +501,7 @@ async def assess_subbatch(df: pd.DataFrame, query: str, schema, key: str, rep: i
 
 async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, batch_size: int = 10, openai_api_jobs: int = 3) -> pd.DataFrame:
     """Perform repeated relevance assessment with averaging."""
-    print(f"📊 Starting relevance scoring: {repeats} repetitions, batch size {batch_size}, parallel API jobs: {openai_api_jobs}")
+    logging.info(f"Starting relevance scoring: {repeats} repetitions, batch size {batch_size}, parallel API jobs: {openai_api_jobs}")
     sem = asyncio.Semaphore(openai_api_jobs)
     tasks = []
 
@@ -536,7 +535,18 @@ async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, bat
 # ===============================================================================
 
 def main():
-    """Main function."""
+    """
+    Main function for dataset identification.
+
+    Process:
+    1. Extract search terms from research query
+    2. Search GEO database for relevant datasets
+    3. Validate datasets for RNA-seq compatibility
+    4. Cluster valid datasets (count = total_datasets / cluster_divisor)
+    5. Select representative datasets for assessment (budget distributed across clusters)
+    6. Assess relevance of representatives using AI
+    7. Generate comprehensive results CSV (all datasets) and batch analysis CSV (filtered)
+    """
     parser = argparse.ArgumentParser(
         description='Identify and evaluate relevant RNA-seq datasets from GEO for a biological research query',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
@@ -555,6 +565,10 @@ def main():
     search_group = parser.add_argument_group('Search Options', 'Control dataset search and evaluation')
     search_group.add_argument('--max-datasets', type=int, default=1000,
                              help='Maximum datasets to retrieve per search term')
+    search_group.add_argument('--cluster-divisor', type=int, default=10,
+                             help='Divisor for cluster count (total_datasets / divisor). Smaller values = more clusters.')
+    search_group.add_argument('--assessment-budget', type=int, default=300,
+                             help='Maximum number of datasets to assess for relevance (distributed proportionally across clusters)')
 
     # === Advanced Parameters ===
     advanced_group = parser.add_argument_group('Advanced Options', 'Fine-tune algorithm behavior (expert users)')
@@ -570,9 +584,8 @@ def main():
     # Check for required email (Entrez guidelines)
     if not os.getenv("ENTREZ_EMAIL"):
         logging.error("Email is required for NCBI Entrez API access. Please set ENTREZ_EMAIL environment variable.")
-        print("ERROR: Email is required for NCBI Entrez API access.")
-        print("Please set the ENTREZ_EMAIL environment variable with your email address.")
-        print("This is required by NCBI guidelines for API usage.")
+        logging.error("Please set the ENTREZ_EMAIL environment variable with your email address.")
+        logging.error("This is required by NCBI guidelines for API usage.")
         return
 
     # Auto-determine API delay based on API key presence
@@ -588,14 +601,14 @@ def main():
     # Log API key detection status and rate limiting configuration
     if os.getenv("ENTREZ_API_KEY"):
         logging.info("NCBI API key detected - using faster rate limits")
-        logging.info("⚙️  Rate Limiting Configuration:")
-        logging.info(f"   🔄 API delay: {1.0/7.0:.3f}s (~7 req/sec)")
-        logging.info(f"   👥 GEO workers: 6, SRA workers: 6")
+        logging.info("Rate Limiting Configuration:")
+        logging.info(f"API delay: {1.0/7.0:.3f}s (~7 req/sec)")
+        logging.info(f"GEO workers: 6, SRA workers: 6")
     else:
         logging.info("No NCBI API key found - using standard rate limits")
-        logging.info("⚙️  Rate Limiting Configuration:")
-        logging.info(f"   🔄 API delay: {1.0/2.0:.3f}s (~2 req/sec)")
-        logging.info(f"   👥 GEO workers: 1, SRA workers: 1")
+        logging.info("Rate Limiting Configuration:")
+        logging.info(f"API delay: {1.0/2.0:.3f}s (~2 req/sec)")
+        logging.info(f"GEO workers: 1, SRA workers: 1")
 
     research_query = args.query
     logging.info(f"Starting dataset identification for query: {research_query}")
@@ -605,15 +618,12 @@ def main():
 
     try:
         # Step 1: Extract terms from research query
-        logging.info("Extracting search terms...")
+        logging.info("Determining search terms...")
         terms = extract_terms(research_query)
-        logging.info(f"Extracted terms: {terms.extracted_terms}")
-        logging.info(f"Expanded terms: {terms.expanded_terms}")
 
         # Step 2: Search GEO database
-        logging.info("Searching GEO database...")
         search_terms = set(terms.extracted_terms + terms.expanded_terms)
-        logging.info(f"Using {len(search_terms)} unique search terms: {', '.join(search_terms)}")
+        logging.info(f"Searching GEO using {len(search_terms)} unique search terms: {', '.join(search_terms)}")
 
         geo_ids = []
         for term in tqdm(search_terms, desc="Searching GEO database", unit="term"):
@@ -640,11 +650,10 @@ def main():
             return
 
         # Step 4: Use complete dataset information from esummary v2.0
-        logging.info("Using complete dataset information from esummary v2.0...")
         enriched_datasets_df = basic_datasets_df
 
         # Step 5: Fetch SRA data for ALL datasets to determine validity (optimal workflow)
-        logging.info(f"🔗 Fetching SRA metadata for ALL {len(enriched_datasets_df)} datasets to determine validity...")
+        logging.info(f"Fetching SRA metadata for {len(enriched_datasets_df)} datasets to determine validity...")
         to_fetch = enriched_datasets_df  # Fetch SRA data for ALL datasets
 
         def fetch_sra_for_dataset(row, api_delay):
@@ -706,13 +715,6 @@ def main():
         sra_elapsed_time = sra_end_time - sra_start_time
         datasets_per_second = len(to_fetch) / sra_elapsed_time if sra_elapsed_time > 0 else 0
         success_rate = (successful_datasets / len(to_fetch)) * 100 if len(to_fetch) > 0 else 0
-
-        logging.info(f"📊 SRA Fetching Performance Summary:")
-        logging.info(f"   ✅ Processed: {len(to_fetch)} datasets in {sra_elapsed_time:.1f}s")
-        logging.info(f"   ⚡ Rate: {datasets_per_second:.2f} datasets/second")
-        logging.info(f"   📈 Success: {successful_datasets}/{len(to_fetch)} ({success_rate:.1f}%)")
-        logging.info(f"   🔗 Total runs: {total_runs_fetched}")
-        logging.info(f"   👥 Workers: {sra_workers} (API key: {'Yes' if os.getenv('ENTREZ_API_KEY') else 'No'})")
 
         if runs:
             sra_df = pd.concat(runs, ignore_index=True)
@@ -861,11 +863,11 @@ def main():
             embedded_df = embed_datasets(valid_datasets_df)
 
             tqdm.write("Clustering valid datasets...")
-            clustered_df = cluster_datasets(embedded_df)
+            clustered_df = cluster_datasets(embedded_df, cluster_divisor=args.cluster_divisor)
 
             # Step 9: Select representative datasets
             tqdm.write("Selecting representative datasets for assessment...")
-            representatives_df = select_representative_datasets(clustered_df, 300)
+            representatives_df = select_representative_datasets(clustered_df, args.assessment_budget)
 
             # Step 10: Assess relevance of representatives
             tqdm.write(f"Assessing relevance of {len(representatives_df)} representative datasets...")
@@ -880,18 +882,9 @@ def main():
                 invalid_datasets_df
             ], ignore_index=True)
 
-        # Apply relevance score threshold
-        if args.threshold > 0:
-            pre_threshold_count = len(final_results)
-            # Keep datasets that either don't have a relevance score (invalid) or meet the threshold
-            final_results = final_results[
-                (final_results['RelevanceScore'].isna()) |
-                (final_results['RelevanceScore'] >= args.threshold)
-            ]
-            post_threshold_count = len(final_results)
-            filtered_count = pre_threshold_count - post_threshold_count
-            if filtered_count > 0:
-                logging.info(f"Applied relevance threshold {args.threshold}: filtered out {filtered_count} datasets")
+        # Note: We include ALL datasets in the main results file regardless of threshold
+        # The threshold will be applied only to the batch_analysis_input.csv file
+        logging.info(f"Main results will include all {len(final_results)} datasets (threshold applied only to batch analysis file)")
 
         # Remove embedding column to prevent CSV malformation
         if 'embedding' in final_results.columns:
@@ -934,46 +927,58 @@ def main():
         final.to_csv(main_output_file, index=False)
         message = f'Saved combined table to {main_output_file}'
         logging.info(message)
-        print(message)
 
         # Generate multi-dataset CSV for batch analysis (default behavior)
+        # This CSV only includes datasets that are valid, assessed, and above threshold
         multi_df = final[['GEO_Accession', 'Species', 'RelevanceScore', 'Valid', 'DatasetSizeGB']].copy()
-        multi_df = multi_df[multi_df['Valid'] == 'Yes']
-        multi_df = multi_df.dropna(subset=['RelevanceScore'])  # Only include assessed datasets
-        multi_df = multi_df[multi_df['RelevanceScore'] >= args.threshold]  # Apply threshold to batch CSV
-        multi_df = multi_df.sort_values('RelevanceScore', ascending=False)
+
+        # Filter for batch analysis CSV (more restrictive than main results)
+        valid_datasets = multi_df[multi_df['Valid'] == 'Yes']
+        assessed_datasets = valid_datasets.dropna(subset=['RelevanceScore'])  # Only assessed datasets
+        above_threshold = assessed_datasets[assessed_datasets['RelevanceScore'] >= args.threshold]  # Apply threshold
+
+        multi_df = above_threshold.sort_values('RelevanceScore', ascending=False)
         multi_df = multi_df.rename(columns={'Species': 'organism', 'GEO_Accession': 'Accession'})
+
+        # Log filtering steps for transparency
+        logging.info(f"Batch analysis filtering: {len(valid_datasets)} valid → {len(assessed_datasets)} assessed → {len(above_threshold)} above threshold ({args.threshold})")
 
         # Set path for the multi-dataset CSV in the output directory
         multi_csv_path = output_path / 'batch_analysis_input.csv'
 
         multi_df.to_csv(multi_csv_path, index=False)
-        message = f"Generated batch analysis input CSV at {multi_csv_path} (threshold {args.threshold} applied)"
+        message = f"Generated batch analysis input CSV at {multi_csv_path} with {len(multi_df)} datasets (threshold {args.threshold} applied)"
         logging.info(message)
-        print(message)
 
-        # Print summary results
-        print(f"\n{'='*80}")
-        print("DATASET IDENTIFICATION RESULTS")
-        print(f"{'='*80}")
-        print(f"Research Query: {research_query}")
-        print(f"Total datasets found: {len(final)}")
-        print(f"Valid datasets: {len(final[final['Valid'] == 'Yes'])}")
-        print(f"Invalid datasets: {len(final[final['Valid'] == 'No'])}")
-        print(f"Assessed datasets: {len(final.dropna(subset=['RelevanceScore']))}")
+        # Log summary results
+        logging.info("="*80)
+        logging.info("DATASET IDENTIFICATION RESULTS")
+        logging.info("="*80)
+        logging.info(f"Research Query: {research_query}")
+        logging.info(f"Total datasets found: {len(final)}")
+        logging.info(f"Valid datasets: {len(final[final['Valid'] == 'Yes'])}")
+        logging.info(f"Invalid datasets: {len(final[final['Valid'] == 'No'])}")
+        assessed_count = len(final.dropna(subset=['RelevanceScore']))
+        logging.info(f"Assessed datasets: {assessed_count}")
+        not_assessed_count = len(final[final['Valid'] == 'Yes']) - assessed_count
+        if not_assessed_count > 0:
+            logging.info(f"Valid but not assessed: {not_assessed_count} (not selected as cluster representatives)")
 
         if args.threshold > 0:
-            above_threshold = len(final[final['RelevanceScore'].notna() & (final['RelevanceScore'] >= args.threshold)])
-            print(f"Above threshold ({args.threshold}): {above_threshold}")
+            above_threshold_count = len(final[final['RelevanceScore'].notna() & (final['RelevanceScore'] >= args.threshold)])
+            logging.info(f"Above threshold ({args.threshold}): {above_threshold_count}")
+            logging.info(f"Included in batch analysis CSV: {len(multi_df)}")
 
         assessed_final = final.dropna(subset=['RelevanceScore']).sort_values('RelevanceScore', ascending=False)
         if not assessed_final.empty:
-            print(f"\nTop assessed datasets:")
+            logging.info("Top assessed datasets:")
             for i, (_, row) in enumerate(assessed_final.head(5).iterrows()):
-                print(f"{i+1}. {row['GEO_Accession']}: {row['RelevanceScore']}/10 - {row['Title'][:80]}...")
+                logging.info(f"{i+1}. {row['GEO_Accession']}: {row['RelevanceScore']}/10 - {row['Title'][:80]}...")
 
-        print(f"\nClustering enabled: Yes (default)")
-        print(f"Multi-dataset CSV generated: Yes (default)")
+        logging.info(f"Clustering: {clustered_df['Cluster'].nunique() if 'clustered_df' in locals() else 'N/A'} clusters (total datasets / {args.cluster_divisor})")
+        logging.info(f"Assessment budget: {args.assessment_budget} datasets")
+        logging.info("Note: Dataset_identification_result.csv contains ALL datasets")
+        logging.info("      batch_analysis_input.csv contains only valid, assessed, above-threshold datasets")
 
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
