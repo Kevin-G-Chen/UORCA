@@ -213,7 +213,6 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
 
     # Apply RNA-seq filters - exact matches required
     rna_seq_filter = (
-        (out_df['molecule_ch1'] == "total RNA") &
         (out_df['library_source'] == "transcriptomic") &
         (out_df['library_strategy'] == "RNA-Seq")
     )
@@ -225,7 +224,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     if len(out_df) == 0:
         error_msg = (
             f"No RNA-seq samples found after filtering. Dataset {accession} contains no samples "
-            f"with molecule_ch1='total RNA', library_source='transcriptomic', and library_strategy='RNA-Seq'. "
+            f"library_source='transcriptomic', and library_strategy='RNA-Seq'. "
             f"Dataset will be terminated."
         )
         logger.error("%s", error_msg)
