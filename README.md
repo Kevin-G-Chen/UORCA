@@ -129,12 +129,20 @@ uv run uorca explore ../UORCA_results --port 8501
 # Basic usage
 uv run uorca identify -q "neuroblastoma tumor vs normal" -o my_results
 
-# Advanced options
+# Advanced options with custom model
 uv run uorca identify -q "stem cell differentiation" \
     --threshold 7.5 \
-    --max-datasets 1000 \
-    --scoring-rounds 5 \
-    --verbose
+    --model gpt-4o \
+    -r 5 \
+    -v
+
+# Using convenient short-hand options
+uv run uorca identify -q "cancer stem cells" -m 1000 -a 500 -r 5 -v
+
+# Expert configuration
+uv run uorca identify -q "neuroblastoma research" \
+    -m 800 -a 400 --cluster-divisor 15 \
+    -r 3 -b 25 --model gpt-4o-mini -v
 ```
 
 **Dataset Analysis:**

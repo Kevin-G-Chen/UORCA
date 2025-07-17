@@ -199,10 +199,10 @@ class Assessment(BaseModel):
 class Assessments(BaseModel):
     assessments: List[Assessment]
 
-def call_openai_json(prompt: str, user_input: str, response_format: BaseModel) -> Any:
+def call_openai_json(prompt: str, user_input: str, response_format: BaseModel, model: str = "gpt-4o-mini") -> Any:
     """Make OpenAI API call with JSON response format."""
     response = client.beta.chat.completions.parse(
-        model="gpt-4o-mini",
+        model=model,
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": user_input}
@@ -211,10 +211,10 @@ def call_openai_json(prompt: str, user_input: str, response_format: BaseModel) -
     )
     return response.choices[0].message.parsed
 
-def extract_terms(research_query: str) -> ExtractedTerms:
+def extract_terms(research_query: str, model: str = "gpt-4o-mini") -> ExtractedTerms:
     """Extract search terms from research query."""
     prompt = load_prompt("./main_workflow/prompts/dataset_identification/extract_terms.txt")
-    return call_openai_json(prompt, research_query, ExtractedTerms)
+    return call_openai_json(prompt, research_query, ExtractedTerms, model)
 
 def perform_search(term: str, max_results: int = 2000) -> List[str]:
     """Search GEO database for a single term with RNA-seq filter."""
@@ -443,18 +443,18 @@ def cluster_datasets(datasets_df: pd.DataFrame, n_clusters: int = None, cluster_
 
     return datasets_df
 
-def select_representative_datasets(datasets_df: pd.DataFrame, assessment_budget: int = 300) -> pd.DataFrame:
+def select_representative_datasets(datasets_df: pd.DataFrame, max_assess: int = 300) -> pd.DataFrame:
     """Select datasets for assessment with budget constraint, distributed proportionally across clusters."""
     n_clusters = datasets_df['Cluster'].nunique()
 
-    if len(datasets_df) <= assessment_budget:
-        tqdm.write(f"Assessing all {len(datasets_df)} datasets (within budget of {assessment_budget})")
+    if len(datasets_df) <= max_assess:
+        tqdm.write(f"Assessing all {len(datasets_df)} datasets (within budget of {max_assess})")
         return datasets_df  # Assess all if within budget
 
     # Distribute assessment budget proportionally across clusters
-    datasets_per_cluster = max(1, assessment_budget // n_clusters)
+    datasets_per_cluster = max(1, max_assess // n_clusters)
 
-    tqdm.write(f"Selecting up to {datasets_per_cluster} datasets from each of {n_clusters} clusters (budget: {assessment_budget})")
+    tqdm.write(f"Selecting up to {datasets_per_cluster} datasets from each of {n_clusters} clusters (budget: {max_assess})")
 
     representatives = []
     total_selected = 0
@@ -469,11 +469,9 @@ def select_representative_datasets(datasets_df: pd.DataFrame, assessment_budget:
     tqdm.write(f"Selected {total_selected} total datasets for relevance assessment")
     return pd.DataFrame(representatives).reset_index(drop=True)
 
-# ==================== OPTIONAL: REPEATED ASSESSMENT FUNCTIONS ====================
-# The following functions implement repeated assessment with averaging
-# Remove both assess_subbatch and repeated_relevance if you want single assessment only
-async def assess_subbatch(df: pd.DataFrame, query: str, schema, key: str, rep: int, idx: int, total_batches: int, sem: asyncio.Semaphore) -> List[Assessment]:
-    """Assess a sub-batch of datasets."""
+
+async def assess_subbatch(df: pd.DataFrame, query: str, schema, key: str, rep: int, idx: int, total_batches: int, sem: asyncio.Semaphore, model: str) -> List[Assessment]:
+    """Assess a subbatch of datasets."""
     async with sem:
         try:
             # Prepare data for assessment
@@ -490,29 +488,41 @@ async def assess_subbatch(df: pd.DataFrame, query: str, schema, key: str, rep: i
             prompt = load_prompt("./main_workflow/prompts/dataset_identification/assess_relevance.txt")
             user_input = f"Research Query: {query}\n\nDatasets:\n{json.dumps(assessment_data, indent=2)}"
 
-            assessments = call_openai_json(prompt, user_input, Assessments)
-            logging.info(f"Completed assessment batch {idx+1}/{total_batches} (repetition {rep+1})")
+            assessments = call_openai_json(prompt, user_input, Assessments, model)
             return assessments.assessments
         except Exception as e:
             logging.warning(f"Error in assessment batch {idx+1}/{total_batches} (rep {rep+1}): {e}")
             # Return default assessments
             return [Assessment(ID=row['ID'], RelevanceScore=5, Justification="Assessment failed") for _, row in df.iterrows()]
 
-async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, batch_size: int = 10, openai_api_jobs: int = 3) -> pd.DataFrame:
+async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, batch_size: int = 10, openai_api_jobs: int = 3, model: str = "gpt-4o-mini") -> pd.DataFrame:
     """Perform repeated relevance assessment with averaging."""
     logging.info(f"Starting relevance scoring: {repeats} repetitions, batch size {batch_size}, parallel API jobs: {openai_api_jobs}")
     sem = asyncio.Semaphore(openai_api_jobs)
-    tasks = []
 
     # create sub-batches
     batches = [df.iloc[i:i+batch_size] for i in range(0, len(df), batch_size)]
     total_batches = len(batches)
+    total_tasks = repeats * total_batches
 
-    for rep in range(repeats):
-        for idx, sub in enumerate(batches):
-            tasks.append(assess_subbatch(sub, query, None, "assessments", rep, idx, total_batches, sem))
+    # Create tasks with progress tracking
+    logging.info(f"Processing {total_tasks} assessment batches...")
 
-    all_results = await asyncio.gather(*tasks)
+    async def assess_with_progress(rep, idx, sub, pbar):
+        """Wrapper to update progress bar when task completes."""
+        result = await assess_subbatch(sub, query, None, "assessments", rep, idx, total_batches, sem, model)
+        pbar.update(1)
+        pbar.set_postfix({"Rep": f"{rep+1}/{repeats}", "Batch": f"{(idx+1)+rep*total_batches}/{total_tasks}"})
+        return result
+
+    with tqdm(total=total_tasks, desc="Assessing dataset relevance", unit="batch") as pbar:
+        tasks = []
+        for rep in range(repeats):
+            for idx, sub in enumerate(batches):
+                tasks.append(assess_with_progress(rep, idx, sub, pbar))
+
+        # Execute all tasks and gather results
+        all_results = await asyncio.gather(*tasks)
 
     # flatten and aggregate
     coll: Dict[str, Dict[str, Any]] = {}
@@ -531,7 +541,7 @@ async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, bat
         records.append(rec)
 
     return pd.DataFrame(records)
-# ===============================================================================
+
 
 def main():
     """
@@ -562,21 +572,23 @@ def main():
 
     # === Search Parameters ===
     search_group = parser.add_argument_group('Search Options', 'Control dataset search and evaluation')
-    search_group.add_argument('--max-datasets', type=int, default=1000,
+    search_group.add_argument('-m', '--max-per-term', type=int, default=500,
                              help='Maximum datasets to retrieve per search term')
-    search_group.add_argument('--cluster-divisor', type=int, default=10,
-                             help='Divisor for cluster count (total_datasets / divisor). Smaller values = more clusters.')
-    search_group.add_argument('--assessment-budget', type=int, default=300,
-                             help='Maximum number of datasets to assess for relevance (distributed proportionally across clusters)')
+    search_group.add_argument('-a', '--max-assess', type=int, default=300,
+                             help='Maximum number of datasets to assess for relevance (distributed across clusters)')
 
     # === Advanced Parameters ===
     advanced_group = parser.add_argument_group('Advanced Options', 'Fine-tune algorithm behavior (expert users)')
-    advanced_group.add_argument('--scoring-rounds', type=int, default=3,
+    advanced_group.add_argument('--cluster-divisor', type=int, default=10,
+                               help='Divisor for cluster count (total_datasets / divisor). Smaller values = more clusters.')
+    advanced_group.add_argument('-r', '--rounds', type=int, default=3,
                                help='Number of independent relevance scoring rounds for reliability')
-    advanced_group.add_argument('--batch-size', type=int, default=20,
+    advanced_group.add_argument('-b', '--batch-size', type=int, default=20,
                                help='Datasets per AI evaluation batch (affects memory usage)')
-    advanced_group.add_argument('--verbose', action='store_true',
-                                help='Enable verbose logging (DEBUG level)')
+    advanced_group.add_argument('--model', type=str, default='gpt-4o-mini',
+                               help='OpenAI model to use for relevance assessment')
+    advanced_group.add_argument('-v', '--verbose', action='store_true',
+                               help='Enable verbose logging (DEBUG level)')
 
     args = parser.parse_args()
 
@@ -618,7 +630,7 @@ def main():
     try:
         # Step 1: Extract terms from research query
         logging.info("Determining search terms...")
-        terms = extract_terms(research_query)
+        terms = extract_terms(research_query, args.model)
 
         # Step 2: Search GEO database
         search_terms = set(terms.extracted_terms + terms.expanded_terms)
@@ -626,7 +638,7 @@ def main():
 
         geo_ids = []
         for term in tqdm(search_terms, desc="Searching GEO database", unit="term"):
-            term_ids = perform_search(term, args.max_datasets)
+            term_ids = perform_search(term, args.max_per_term)
             geo_ids.extend(term_ids)
             # Apply rate limiting between searches to follow NCBI guidelines
             time.sleep(api_delay)
@@ -865,11 +877,11 @@ def main():
 
             # Step 9: Select representative datasets
             logging.info("Selecting representative datasets for assessment...")
-            representatives_df = select_representative_datasets(clustered_df, args.assessment_budget)
+            representatives_df = select_representative_datasets(clustered_df, args.max_assess)
 
             # Step 10: Assess relevance of representatives
             logging.info(f"Assessing relevance of {len(representatives_df)} representative datasets...")
-            assessed_df = asyncio.run(repeated_relevance(representatives_df, research_query, repeats=args.scoring_rounds, batch_size=args.batch_size, openai_api_jobs=4))
+            assessed_df = asyncio.run(repeated_relevance(representatives_df, research_query, repeats=args.rounds, batch_size=args.batch_size, openai_api_jobs=4, model=args.model))
 
             # Step 11: Merge assessment results back to valid datasets
             valid_with_scores = valid_datasets_df.merge(assessed_df, on='ID', how='left')

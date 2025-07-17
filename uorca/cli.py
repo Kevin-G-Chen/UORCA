@@ -63,16 +63,22 @@ For more help on a specific command, use:
 
     # Search parameters for identify
     identify_search = identify_parser.add_argument_group('Search Options', 'Control dataset search and evaluation')
-    identify_search.add_argument('--max-datasets', type=int, default=500,
+    identify_search.add_argument('-m', '--max-per-term', type=int, default=500,
                                 help='Maximum datasets to retrieve per search term')
+    identify_search.add_argument('-a', '--max-assess', type=int, default=300,
+                                help='Maximum number of datasets to assess for relevance (distributed across clusters)')
 
     # Advanced parameters for identify
     identify_advanced = identify_parser.add_argument_group('Advanced Options', 'Fine-tune algorithm behavior (expert users)')
-    identify_advanced.add_argument('--scoring-rounds', type=int, default=3,
+    identify_advanced.add_argument('--cluster-divisor', type=int, default=10,
+                                  help='Divisor for cluster count (total_datasets / divisor). Smaller values = more clusters.')
+    identify_advanced.add_argument('-r', '--rounds', type=int, default=3,
                                   help='Number of independent relevance scoring rounds for reliability')
-    identify_advanced.add_argument('--batch-size', type=int, default=20,
+    identify_advanced.add_argument('-b', '--batch-size', type=int, default=20,
                                   help='Datasets per AI evaluation batch (affects memory usage)')
-    identify_advanced.add_argument('--verbose', action='store_true',
+    identify_advanced.add_argument('--model', type=str, default='gpt-4o-mini',
+                                  help='OpenAI model to use for relevance assessment')
+    identify_advanced.add_argument('-v', '--verbose', action='store_true',
                                    help='Enable verbose logging (DEBUG level)')
 
     identify_parser.set_defaults(func=run_identify)
@@ -222,11 +228,14 @@ def run_identify(args):
     sys.argv.extend(['-q', args.query])
     sys.argv.extend(['-o', args.output])
     sys.argv.extend(['-t', str(args.threshold)])
-    sys.argv.extend(['--max-datasets', str(args.max_datasets)])
-    sys.argv.extend(['--scoring-rounds', str(args.scoring_rounds)])
-    sys.argv.extend(['--batch-size', str(args.batch_size)])
+    sys.argv.extend(['-m', str(args.max_per_term)])
+    sys.argv.extend(['--cluster-divisor', str(args.cluster_divisor)])
+    sys.argv.extend(['-a', str(args.max_assess)])
+    sys.argv.extend(['-r', str(args.rounds)])
+    sys.argv.extend(['-b', str(args.batch_size)])
+    sys.argv.extend(['--model', args.model])
     if args.verbose:
-        sys.argv.append('--verbose')
+        sys.argv.append('-v')
 
     # Call the original main function
     identify_main()
