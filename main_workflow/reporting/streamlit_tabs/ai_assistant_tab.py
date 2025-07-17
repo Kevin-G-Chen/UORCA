@@ -1797,7 +1797,6 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                         if summary:
                                             genes_with_data = summary.get('genes_with_data', 0)
                                             total_requested = summary.get('total_genes_requested', 0)
-                                            st.caption(f"Summary: {genes_with_data}/{total_requested} genes with data")
                                     else:
                                         st.info("No variability statistics available")
                                 else:
@@ -1825,7 +1824,6 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                             df = pd.DataFrame(df_data)
                                             st.markdown("**Gene Correlation Matrix (Spearman):**")
                                             st.dataframe(df, use_container_width=True)
-                                            st.caption(f"Analyzed {len(genes_analyzed)} genes across {sample_size} experimental conditions")
                                     else:
                                         st.info("No correlation data available")
                                 else:
