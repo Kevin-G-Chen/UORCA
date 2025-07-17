@@ -244,28 +244,22 @@ async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: floa
     df = df[(df.logFC.abs() >= lfc_thresh) & (df.pvalue < p_thresh)]
 
     if df.empty:
-        return f"Total DEGs: 0\n\nNo significantly differentially expressed genes found in contrast {contrast_id} with the specified thresholds."
+        result = json.dumps({
+            "total_DEGs": 0,
+            "top_genes": [],
+            "mean_logFC": None,
+            "median_logFC": None
+        })
     else:
         top = df.reindex(df.logFC.abs().sort_values(ascending=False).index).head(max_genes)
+        result = json.dumps({
+            "total_DEGs": int(len(df)),
+            "top_genes": [{"gene": r.Gene, "logFC": float(r.logFC)} for _, r in top.iterrows()],
+            "mean_logFC": float(df.logFC.mean()),
+            "median_logFC": float(df.logFC.median())
+        })
 
-        # Format as text statement + table
-        result_text = f"Total DEGs: {len(df)}\n\nTop {min(max_genes, len(top))} Genes by Absolute LogFC:\n\n"
-
-        # Create table
-        import pandas as pd
-        table_data = []
-        for _, row in top.iterrows():
-            table_data.append({
-                "Gene": row.Gene,
-                "LogFC": round(float(row.logFC), 4),
-                "P-value": f"{float(row.pvalue):.2e}" if hasattr(row, 'pvalue') else "N/A"
-            })
-
-        if table_data:
-            table_df = pd.DataFrame(table_data)
-            result_text += table_df.to_string(index=False)
-
-        return result_text
+    return result
 
 
 
@@ -320,18 +314,27 @@ async def calculate_gene_correlation(genes: list) -> str:
                 corr_val = correlation_matrix.loc[gene1, gene2]
                 correlation_dict[gene1][gene2] = None if pd.isna(corr_val) else round(float(corr_val), 4)
 
-        # Format correlation matrix as a table for display
-        import pandas as pd
+        # Extract strong correlations (> 0.5 or < -0.5) excluding self-correlations
+        strong_correlations = []
+        for gene1 in correlation_matrix.columns:
+            for gene2 in correlation_matrix.columns:
+                if gene1 != gene2:
+                    corr_val = correlation_matrix.loc[gene1, gene2]
+                    if not pd.isna(corr_val) and abs(corr_val) > 0.5:
+                        strong_correlations.append({
+                            "gene1": gene1,
+                            "gene2": gene2,
+                            "correlation": round(float(corr_val), 4)
+                        })
 
-        # Round correlation values for display
-        correlation_display = correlation_matrix.round(4)
+        result = {
+            "correlation_matrix": correlation_dict,
+            "strong_correlations": strong_correlations,
+            "genes_analyzed": list(correlation_matrix.columns),
+            "sample_size": len(pivot_data)
+        }
 
-        # Format as string table
-        result_text = "Gene Correlation Matrix (Spearman):\n\n"
-        result_text += correlation_display.to_string()
-        result_text += f"\n\nAnalyzed {len(correlation_matrix.columns)} genes across {len(pivot_data)} experimental conditions."
-
-        return result_text
+        return json.dumps(result)
 
     except Exception as e:
         return json.dumps({"error": f"Correlation calculation failed: {str(e)}", "genes_requested": genes})
@@ -414,43 +417,18 @@ async def calculate_expression_variability(genes: list, contrasts: list = None) 
     variability_stats_errors = [stat for stat in variability_stats if stat.get('std_dev') is None]
     final_stats = variability_stats_valid + variability_stats_errors
 
-    # Format as table for Streamlit display
-    table_data = []
-    for stat in final_stats:
-        if stat.get('std_dev') is not None:
-            table_data.append({
-                "Gene": stat['gene'],
-                "Std_Dev": stat['std_dev'],
-                "Mean_LogFC": stat['mean_logFC'],
-                "Median_LogFC": stat['median_logFC'],
-                "Min_LogFC": stat['min_logFC'],
-                "Max_LogFC": stat['max_logFC'],
-                "Contrast_Count": stat['contrast_count']
-            })
-        else:
-            table_data.append({
-                "Gene": stat['gene'],
-                "Std_Dev": "N/A",
-                "Mean_LogFC": "N/A",
-                "Median_LogFC": "N/A",
-                "Min_LogFC": "N/A",
-                "Max_LogFC": "N/A",
-                "Contrast_Count": 0
-            })
+    result = {
+        "variability_stats": final_stats,
+        "summary": {
+            "total_genes_requested": len(genes),
+            "genes_with_data": len(variability_stats_valid),
+            "most_consistent_gene": variability_stats_valid[0]['gene'] if variability_stats_valid else None,
+            "most_variable_gene": variability_stats_valid[-1]['gene'] if variability_stats_valid else None,
+            "contrasts_analyzed": list(gene_data['contrast_id'].unique()) if contrasts else "all_available"
+        }
+    }
 
-    # Format result for table display
-    if table_data:
-        import pandas as pd
-        df = pd.DataFrame(table_data)
-        result_text = f"Expression Variability Analysis:\n\n{df.to_string(index=False)}\n\n"
-        result_text += f"Summary: {len(variability_stats_valid)}/{len(genes)} genes with data"
-        if variability_stats_valid:
-            result_text += f", Most consistent: {variability_stats_valid[0]['gene']} (SD={variability_stats_valid[0]['std_dev']})"
-            result_text += f", Most variable: {variability_stats_valid[-1]['gene']} (SD={variability_stats_valid[-1]['std_dev']})"
-    else:
-        result_text = "No expression variability data found for the specified genes."
-
-    return result_text
+    return json.dumps(result)
 
 
 if __name__ == "__main__":

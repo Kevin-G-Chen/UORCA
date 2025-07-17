@@ -214,17 +214,17 @@ def _render_tab_descriptions():
     """Render expandable pane describing all tabs."""
     with st.sidebar.expander("Tab Guide", expanded=False):
         st.markdown("""
-        **AI Assistant** - Use an AI agent to automatically analyse contrasts from your selected datasets. You will be able to see the steps the AI took to arrive at its findings.
+        **AI Assistant** - Use an AI agent to automatically analyse contrasts from your selected datasets. You will be able to see the steps the AI took to arrive at its findings
 
-        **Explore DEG Heatmap** - Create heatmaps showing log2 fold changes for selected genes across multiple contrasts.
+        **Explore DEG Heatmap** - Create heatmaps showing log2 fold changes for selected genes across multiple contrasts
 
-        **Plot Gene Expression** - Generate boxplots displaying gene expression distributions across sample groups.
+        **Plot Gene Expression** - Generate boxplots displaying gene expression distributions across sample groups
 
-        **View Dataset Analyses** - Explore quality control and differential expression plots for individual datasets. View PCA plots, volcano plots, MA plots, and DEG heatmaps.
+        **View Dataset Analyses** - Explore quality control and differential expression plots for individual datasets. View PCA plots, volcano plots, MA plots, and DEG heatmaps
 
-        **View Dataset Info** - Browse dataset information including study titles, summaries, experimental designs, and organism information.
+        **View Dataset Info** - Browse dataset information including study titles, summaries, experimental designs, and organism information
 
-        **View Contrast Info** - Browse all available contrasts across all datasets to get an overview of the comparisons available for analysis.
+        **View Contrast Info** - Browse all available contrasts across all datasets to get an overview of the comparisons available for analysis
         """)
 
 
@@ -236,10 +236,10 @@ def _render_ai_assistant_help():
         1. Select datasets in the sidebar (e.g., GSE123456, GSE789012)
         2. Go to **AI Assistant** tab
         3. Enter your research question (e.g., "What contrasts are most relevant to T cell activation?")
-        4. Click "**Run Complete AI Analysis**." Do note this will typically take a few minutes.
+        4. Click "**Run Complete AI Analysis**." Do note this will typically take around 10 minutes
         5. You will be able to evaluate the agent's results and methodology
 
-        **Note**: AI will only analyse contrasts from your selected datasets.
+        **Note**: The agent will only analyse contrasts from your selected datasets.
         """)
 
 

@@ -901,7 +901,7 @@ def _display_unified_ai_results(
     # Create tabs for organized display
     gene_tab, contrast_tab, heatmap_tab, table_tab, logs_tab, downloads_tab = st.tabs([
         "Selected Genes",
-        "Contrast Selection",
+        "Selected Contrasts",
         "Heatmap",
         "Expression Data",
         "Tool Logs",
@@ -1717,7 +1717,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                     if genes:
                                         # Display genes as wrapped text
                                         gene_text = ', '.join(genes)
-                                        st.text_area("Genes:", value=gene_text, height=150, disabled=True)
+                                        st.text_area("Genes:", value=gene_text, height=150, disabled=True, key=f"genes_output_{call.get('call_id', hash(gene_text))}")
                                         st.caption(f"Total genes: {len(genes)}")
                                     else:
                                         st.write("No genes found")
@@ -1748,11 +1748,88 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                     st.info("No gene statistics available")
 
                             elif tool_name == 'summarize_contrast' and parsed_output:
-                                # Display with text wrapping
+                                # Display total DEGs as text and top genes as table
                                 if isinstance(parsed_output, dict):
-                                    st.json(parsed_output)
+                                    total_degs = parsed_output.get('total_DEGs', 0)
+                                    st.markdown(f"**Total DEGs:** {total_degs}")
+
+                                    top_genes = parsed_output.get('top_genes', [])
+                                    if top_genes:
+                                        st.markdown("**Top Genes by Absolute LogFC:**")
+                                        df_data = []
+                                        for gene_info in top_genes:
+                                            if isinstance(gene_info, dict) and 'gene' in gene_info and 'logFC' in gene_info:
+                                                df_data.append({
+                                                    'Gene': gene_info['gene'],
+                                                    'LogFC': round(gene_info['logFC'], 4)
+                                                })
+                                        if df_data:
+                                            import pandas as pd
+                                            df = pd.DataFrame(df_data)
+                                            st.dataframe(df, use_container_width=True)
                                 else:
-                                    st.text_area("Summary:", value=str(parsed_output), height=100, disabled=True)
+                                    st.text_area("Summary:", value=str(parsed_output), height=100, disabled=True, key=f"summary_output_{call.get('call_id', hash(str(parsed_output)))}")
+
+                            elif tool_name == 'calculate_expression_variability' and parsed_output:
+                                # Display as table with genes and variability statistics
+                                if isinstance(parsed_output, dict) and 'variability_stats' in parsed_output:
+                                    variability_stats = parsed_output['variability_stats']
+                                    if variability_stats:
+                                        df_data = []
+                                        for stat in variability_stats:
+                                            if isinstance(stat, dict) and 'gene' in stat:
+                                                df_data.append({
+                                                    'Gene': stat.get('gene', ''),
+                                                    'Std_Dev': stat.get('std_dev', 'N/A'),
+                                                    'Mean_LogFC': stat.get('mean_logFC', 'N/A'),
+                                                    'Median_LogFC': stat.get('median_logFC', 'N/A'),
+                                                    'Min_LogFC': stat.get('min_logFC', 'N/A'),
+                                                    'Max_LogFC': stat.get('max_logFC', 'N/A'),
+                                                    'Contrast_Count': stat.get('contrast_count', 0)
+                                                })
+                                        if df_data:
+                                            import pandas as pd
+                                            df = pd.DataFrame(df_data)
+                                            st.dataframe(df, use_container_width=True)
+
+                                        # Show summary if available
+                                        summary = parsed_output.get('summary', {})
+                                        if summary:
+                                            genes_with_data = summary.get('genes_with_data', 0)
+                                            total_requested = summary.get('total_genes_requested', 0)
+                                            st.caption(f"Summary: {genes_with_data}/{total_requested} genes with data")
+                                    else:
+                                        st.info("No variability statistics available")
+                                else:
+                                    st.json(parsed_output)
+
+                            elif tool_name == 'calculate_gene_correlation' and parsed_output:
+                                # Display correlation matrix as table
+                                if isinstance(parsed_output, dict) and 'correlation_matrix' in parsed_output:
+                                    correlation_matrix = parsed_output['correlation_matrix']
+                                    genes_analyzed = parsed_output.get('genes_analyzed', [])
+                                    sample_size = parsed_output.get('sample_size', 0)
+
+                                    if correlation_matrix and genes_analyzed:
+                                        # Convert correlation matrix to DataFrame
+                                        import pandas as pd
+                                        df_data = []
+                                        for gene1 in genes_analyzed:
+                                            row_data = {'Gene': gene1}
+                                            for gene2 in genes_analyzed:
+                                                corr_val = correlation_matrix.get(gene1, {}).get(gene2)
+                                                row_data[gene2] = corr_val if corr_val is not None else 'N/A'
+                                            df_data.append(row_data)
+
+                                        if df_data:
+                                            df = pd.DataFrame(df_data)
+                                            st.markdown("**Gene Correlation Matrix (Spearman):**")
+                                            st.dataframe(df, use_container_width=True)
+                                            st.caption(f"Analyzed {len(genes_analyzed)} genes across {sample_size} experimental conditions")
+                                    else:
+                                        st.info("No correlation data available")
+                                else:
+                                    st.json(parsed_output)
 
                             else:
                                 # Default display for other tools or unparseable output
@@ -1777,7 +1854,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                     if clean_output.strip().startswith(('{', '[')):
                                         st.code(clean_output, language='json')
                                     else:
-                                        st.text_area("Raw Output:", value=clean_output, height=100, disabled=True)
+                                        st.text_area("Raw Output:", value=clean_output, height=100, disabled=True, key=f"raw_output_{call.get('call_id', hash(clean_output))}")
                     elif not output_snippet or not output_snippet.strip():
                         st.info("Tool completed successfully but returned no output")
                     else:
