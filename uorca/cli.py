@@ -155,6 +155,8 @@ For more help on a specific command, use:
                              help="Clean up FASTQ and SRA files after analysis")
     local_parser.add_argument("--timeout_hours", type=float, default=6,
                              help="Timeout per job in hours")
+    local_parser.add_argument("--dev-mode", action="store_true",
+                             help="Run in development mode (direct Python execution instead of Docker)")
 
     local_parser.set_defaults(func=run_batch_local)
 
@@ -289,7 +291,8 @@ def run_batch_local(args):
         params = {
             'cleanup': args.cleanup,
             'resource_dir': args.resource_dir,
-            'timeout_hours': args.timeout_hours
+            'timeout_hours': args.timeout_hours,
+            'dev_mode': args.dev_mode
         }
 
         # Add optional parameters if specified

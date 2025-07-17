@@ -268,11 +268,13 @@ class BatchProcessor(ABC):
         """
         missing = []
 
-        # Check for common environment variables
-        required_env_vars = ['ENTREZ_EMAIL', 'OPENAI_API_KEY']
-        for var in required_env_vars:
-            if not os.getenv(var):
-                missing.append(f"Environment variable: {var}")
+        # Check for required environment variables
+        if not os.getenv('ENTREZ_EMAIL'):
+            missing.append("Environment variable: ENTREZ_EMAIL")
+
+        # Check for optional environment variables (warn but don't fail)
+        if not os.getenv('OPENAI_API_KEY'):
+            print("Warning: OPENAI_API_KEY not set. AI-powered features will be disabled.")
 
         return missing
 

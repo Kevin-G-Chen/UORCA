@@ -2,7 +2,7 @@
 Local Batch Processor
 
 This module provides local parallel processing capabilities for UORCA datasets
-without requiring an HPC scheduler. It uses multiprocessing to run jobs in parallel
+using Docker containers. It uses multiprocessing to run jobs in parallel
 while respecting resource constraints.
 """
 
@@ -22,18 +22,21 @@ from .base import BatchProcessor
 
 
 def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
-                           cleanup: bool, status_dir: str) -> Dict[str, Any]:
+                           cleanup: bool, status_dir: str, docker_image: str = "kevingchen/uorca:0.1.0",
+                           dev_mode: bool = False) -> Dict[str, Any]:
     """
-    Run a single dataset analysis locally.
+    Run a single dataset analysis locally using Docker or direct Python execution.
 
     This function is designed to be run in a separate process.
 
     Args:
         accession: Dataset accession ID
-        output_dir: Output directory
-        resource_dir: Resource directory for Kallisto indices
+        output_dir: Output directory on host
+        resource_dir: Resource directory for Kallisto indices on host
         cleanup: Whether to cleanup intermediate files
-        status_dir: Directory for status tracking
+        status_dir: Directory for status tracking on host
+        docker_image: Docker image to use (ignored in dev_mode)
+        dev_mode: If True, run directly with Python instead of Docker
 
     Returns:
         Dictionary with job results
@@ -60,31 +63,73 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             json.dump(status, f, indent=2)
 
     try:
-        # Find the project root and master script
-        current_dir = Path(__file__).parent
-        project_root = current_dir.parent.parent
-        master_script = project_root / "main_workflow" / "master.py"
+        # Setup paths
+        output_path = Path(output_dir).absolute()
+        resource_path = Path(resource_dir).absolute()
 
-        if not master_script.exists():
-            raise FileNotFoundError(f"Master script not found: {master_script}")
+        # Create directories if they don't exist
+        output_path.mkdir(parents=True, exist_ok=True)
+        resource_path.mkdir(parents=True, exist_ok=True)
 
-        # Build command
-        cmd = [
-            'uv', 'run', str(master_script),
-            '--accession', accession,
-            '--output_dir', output_dir,
-            '--resource_dir', resource_dir
-        ]
+        if dev_mode:
+            # Development mode: run directly with Python
+            # Find the project root and master script
+            current_dir = Path(__file__).parent
+            project_root = current_dir.parent.parent
+            master_script = project_root / "main_workflow" / "master.py"
 
-        if cleanup:
-            cmd.append('--cleanup')
+            if not master_script.exists():
+                raise FileNotFoundError(f"Master script not found: {master_script}")
+
+            # Build command for direct Python execution
+            cmd = [
+                'uv', 'run', str(master_script),
+                '--accession', accession,
+                '--output_dir', str(output_path),
+                '--resource_dir', str(resource_path)
+            ]
+
+            if cleanup:
+                cmd.append('--cleanup')
+
+            # Set working directory for dev mode
+            cwd = project_root
+        else:
+            # Docker mode: run in container
+            # Docker paths (inside container)
+            docker_output_dir = "/app/output"
+            docker_resource_dir = "/app/resources"
+
+            # Build Docker command
+            cmd = [
+                'docker', 'run', '--rm',
+                # Mount volumes
+                '-v', f'{output_path}:{docker_output_dir}',
+                '-v', f'{resource_path}:{docker_resource_dir}',
+                # Pass environment variables
+                '-e', f'ENTREZ_EMAIL={os.getenv("ENTREZ_EMAIL", "")}',
+                '-e', f'OPENAI_API_KEY={os.getenv("OPENAI_API_KEY", "")}',
+                # Use the specified Docker image
+                docker_image,
+                # Command to run inside container
+                'uv', 'run', 'python', 'main_workflow/master.py',
+                '--accession', accession,
+                '--output_dir', docker_output_dir,
+                '--resource_dir', docker_resource_dir
+            ]
+
+            if cleanup:
+                cmd.append('--cleanup')
+
+            # No working directory needed for Docker
+            cwd = None
 
         # Run the analysis
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            cwd=project_root,
+            cwd=cwd,
             timeout=21600  # 6 hours timeout
         )
 
@@ -97,7 +142,9 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             'completed_time': end_time.isoformat(),
             'runtime_seconds': (end_time - start_time).total_seconds(),
             'return_code': result.returncode,
-            'success': success
+            'success': success,
+            'stdout': result.stdout[-2000:] if result.stdout else '',  # Last 2000 chars
+            'stderr': result.stderr[-2000:] if result.stderr else ''   # Last 2000 chars
         }
 
         if status_file.exists():
@@ -121,7 +168,8 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         final_status = {
             'state': 'timeout',
             'completed_time': datetime.now().isoformat(),
-            'error': 'Job exceeded 6 hour timeout'
+            'error': 'Job exceeded 6 hour timeout',
+            'return_code': -1
         }
 
         if status_file.exists():
@@ -143,7 +191,8 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         final_status = {
             'state': 'failed',
             'completed_time': datetime.now().isoformat(),
-            'error': str(e)
+            'error': str(e),
+            'return_code': -1
         }
 
         if status_file.exists():
@@ -163,10 +212,10 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
 
 class LocalBatchProcessor(BatchProcessor):
     """
-    Local parallel batch processor for UORCA datasets.
+    Local parallel batch processor for UORCA datasets using Docker.
 
     This processor handles parallel execution of dataset analyses on the local machine
-    using multiprocessing, with resource management and job tracking.
+    using Docker containers, with resource management and job tracking.
     """
 
     def __init__(self):
@@ -175,6 +224,48 @@ class LocalBatchProcessor(BatchProcessor):
         self.executor = None
         self.futures = {}  # Map accession -> Future
         self.job_counter = 0
+
+    def validate_csv_file(self, csv_file: str) -> pd.DataFrame:
+        """
+        Validate and load the CSV file containing dataset information.
+        Override base class to handle DatasetSizeGB column.
+
+        Args:
+            csv_file: Path to CSV file
+
+        Returns:
+            Validated DataFrame
+
+        Raises:
+            FileNotFoundError: If CSV file doesn't exist
+            ValueError: If required columns are missing
+        """
+        csv_path = Path(csv_file)
+        if not csv_path.exists():
+            raise FileNotFoundError(f"CSV file not found: {csv_file}")
+
+        try:
+            df = pd.read_csv(csv_path)
+        except Exception as e:
+            raise ValueError(f"Failed to read CSV file: {e}")
+
+        # Check required columns
+        required_columns = ['Accession']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
+
+        # Handle storage size column - prefer DatasetSizeGB, fallback to DatasetSizeBytes
+        if 'DatasetSizeGB' in df.columns:
+            df['SafeStorageGB'] = df['DatasetSizeGB'] * 3.0  # Apply safety factor
+        elif 'DatasetSizeBytes' in df.columns:
+            df['SafeStorageGB'] = (df['DatasetSizeBytes'] / (1024**3)) * 3.0
+            print("Using DatasetSizeBytes column for storage calculations")
+        else:
+            df['SafeStorageGB'] = 30.0  # Default safety value of 30GB per dataset
+            print("Warning: Neither DatasetSizeGB nor DatasetSizeBytes column found, using default value of 30GB per dataset")
+
+        return df
 
     @property
     def default_parameters(self) -> Dict[str, Any]:
@@ -192,12 +283,46 @@ class LocalBatchProcessor(BatchProcessor):
             'cleanup': True,
             'resource_dir': './data/kallisto_indices/',
             'check_interval': 10,
-            'timeout_hours': 6
+            'timeout_hours': 6,
+            'docker_image': 'kevingchen/uorca',
+            'dev_mode': False
         }
+
+    def check_environment_requirements(self, dev_mode: bool = False) -> List[str]:
+        """
+        Check if all required environment variables and tools are available.
+
+        Args:
+            dev_mode: If True, skip Docker requirements
+
+        Returns:
+            List of missing requirements (empty if all satisfied)
+        """
+        missing = []
+
+        # Check for Docker (unless in dev mode)
+        if not dev_mode:
+            try:
+                result = subprocess.run(['docker', '--version'],
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode != 0:
+                    missing.append("Docker (not available or not running)")
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                missing.append("Docker (not installed or not in PATH)")
+
+        # Check for environment variables (only ENTREZ_EMAIL is strictly required)
+        if not os.getenv('ENTREZ_EMAIL'):
+            missing.append("Environment variable: ENTREZ_EMAIL")
+
+        # OPENAI_API_KEY is optional for basic functionality but warn if missing
+        if not os.getenv('OPENAI_API_KEY'):
+            print("Warning: OPENAI_API_KEY not set. AI-powered features will be disabled.")
+
+        return missing
 
     def submit_datasets(self, csv_file: str, output_dir: str, **kwargs) -> int:
         """
-        Submit datasets for local parallel processing.
+        Submit datasets for local parallel processing using Docker.
 
         Args:
             csv_file: Path to CSV file containing dataset information
@@ -215,10 +340,49 @@ class LocalBatchProcessor(BatchProcessor):
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Check environment requirements
-        missing_reqs = self.check_environment_requirements()
+        # Check environment requirements and handle Docker availability
+        missing_reqs = self.check_environment_requirements(params.get('dev_mode', False))
+
+        # If Docker is missing, automatically enable dev mode
+        if not params.get('dev_mode', False) and any('Docker' in req for req in missing_reqs):
+            print("⚠️  Docker not available, enabling development mode...")
+            print("   Running analyses directly with Python instead of Docker containers")
+            params['dev_mode'] = True
+            # Re-check requirements without Docker
+            missing_reqs = self.check_environment_requirements(dev_mode=True)
+
         if missing_reqs:
             raise EnvironmentError(f"Missing requirements: {missing_reqs}")
+
+        # Test Docker image availability (only if not in dev mode)
+        if not params.get('dev_mode', False):
+            try:
+                print(f"🐳 Checking Docker image: {params['docker_image']}")
+                result = subprocess.run([
+                    'docker', 'image', 'inspect', params['docker_image']
+                ], capture_output=True, text=True, timeout=30)
+
+                if result.returncode != 0:
+                    print(f"⬇️  Pulling Docker image: {params['docker_image']}")
+                    pull_result = subprocess.run([
+                        'docker', 'pull', params['docker_image']
+                    ], timeout=300)  # 5 minute timeout for pull
+
+                    if pull_result.returncode != 0:
+                        print(f"❌ Failed to pull Docker image: {params['docker_image']}")
+                        print("🔧 Falling back to development mode...")
+                        params['dev_mode'] = True
+                    else:
+                        print(f"✅ Docker image {params['docker_image']} pulled successfully")
+                else:
+                    print(f"✅ Docker image {params['docker_image']} is available")
+
+            except subprocess.TimeoutExpired:
+                print("❌ Docker operations timed out. Falling back to development mode...")
+                params['dev_mode'] = True
+            except Exception as e:
+                print(f"❌ Docker error: {e}. Falling back to development mode...")
+                params['dev_mode'] = True
 
         # Setup job tracking
         status_dir = self.setup_job_tracking(output_dir)
@@ -250,7 +414,9 @@ class LocalBatchProcessor(BatchProcessor):
             print("No datasets to process after storage filtering.")
             return 0
 
+        execution_mode = "development mode (direct Python)" if params.get('dev_mode', False) else f"Docker ({params['docker_image']})"
         print(f"\n🚀 Starting local parallel processing...")
+        print(f"   Execution mode: {execution_mode}")
         print(f"   Max workers: {params['max_workers']}")
         print(f"   Total datasets: {len(datasets_to_process)}")
         print(f"   Total storage needed: {total_storage_needed:.2f} GB")
@@ -275,7 +441,9 @@ class LocalBatchProcessor(BatchProcessor):
                     accession=accession,
                     job_id=job_id,
                     storage_gb=storage_gb,
-                    max_workers=params['max_workers']
+                    max_workers=params['max_workers'],
+                    docker_image=params['docker_image'],
+                    dev_mode=params.get('dev_mode', False)
                 )
 
                 # Submit job
@@ -285,7 +453,9 @@ class LocalBatchProcessor(BatchProcessor):
                     output_dir=output_dir,
                     resource_dir=params['resource_dir'],
                     cleanup=params['cleanup'],
-                    status_dir=str(status_dir)
+                    status_dir=str(status_dir),
+                    docker_image=params['docker_image'],
+                    dev_mode=params.get('dev_mode', False)
                 )
 
                 self.futures[accession] = future
@@ -331,7 +501,12 @@ class LocalBatchProcessor(BatchProcessor):
                             if result['success']:
                                 print(f"  ✅ {accession} completed successfully ({result['runtime']:.0f}s)")
                             else:
-                                print(f"  ❌ {accession} failed: {result.get('error', 'Unknown error')}")
+                                error_msg = result.get('error', 'Unknown error')
+                                if 'stderr' in result and result['stderr']:
+                                    print(f"  ❌ {accession} failed: {error_msg}")
+                                    print(f"      stderr: {result['stderr'][:200]}...")  # First 200 chars
+                                else:
+                                    print(f"  ❌ {accession} failed: {error_msg}")
                         except Exception as e:
                             print(f"  ❌ {accession} failed with exception: {e}")
 
@@ -421,6 +596,15 @@ class LocalBatchProcessor(BatchProcessor):
         except AttributeError:
             pass  # Windows doesn't have getloadavg
 
+        # Check Docker status
+        docker_status = "unknown"
+        try:
+            result = subprocess.run(['docker', 'info'],
+                                  capture_output=True, text=True, timeout=10)
+            docker_status = "running" if result.returncode == 0 else "error"
+        except:
+            docker_status = "not available"
+
         return {
             'system': 'local',
             'cpu_cores': cpu_count,
@@ -432,6 +616,7 @@ class LocalBatchProcessor(BatchProcessor):
             'disk_free_gb': disk.free / (1024**3),
             'disk_percent_used': (disk.used / disk.total) * 100,
             'load_average': load_avg,
+            'docker_status': docker_status,
             'active_jobs': len(self.futures) if self.futures else 0
         }
 
