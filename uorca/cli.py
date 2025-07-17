@@ -63,7 +63,7 @@ For more help on a specific command, use:
 
     # Search parameters for identify
     identify_search = identify_parser.add_argument_group('Search Options', 'Control dataset search and evaluation')
-    identify_search.add_argument('--max-datasets', type=int, default=2000,
+    identify_search.add_argument('--max-datasets', type=int, default=500,
                                 help='Maximum datasets to retrieve per search term')
 
     # Advanced parameters for identify

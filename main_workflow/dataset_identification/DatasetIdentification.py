@@ -377,7 +377,6 @@ def calculate_dataset_sizes_from_runinfo(sra_df: pd.DataFrame) -> Dict[str, int]
     # Log results
     total_datasets = len(dataset_sizes)
     total_size_gb = sum(dataset_sizes.values()) / (1024**3)
-    logging.info(f"Dataset size calculation (valid samples only): {total_datasets} datasets, total: {total_size_gb:.2f} GB")
 
     return dataset_sizes
 
@@ -725,7 +724,7 @@ def main():
         # Calculate dataset sizes using runinfo data
         dataset_sizes = {}
         if not sra_df.empty:
-            logging.info("🔍 Calculating dataset sizes from runinfo data...")
+            logging.info("Calculating dataset sizes from runinfo data...")
             dataset_sizes = calculate_dataset_sizes_from_runinfo(sra_df)
 
         # Add dataset sizes to enriched datasets before merging
@@ -746,7 +745,6 @@ def main():
             right_on='GEO_Accession',
             how='left'
         )
-        logging.info(f"Merged GEO and SRA data for {len(final_results)} total records")
 
         # Step 6: Validate ALL datasets based on complete SRA criteria (dataset-level validation)
         validation_data = []
@@ -859,18 +857,18 @@ def main():
             final_results = pd.concat([valid_datasets_df, invalid_datasets_df], ignore_index=True)
         else:
             # Step 8: Embed and cluster valid datasets
-            tqdm.write(f"Embedding {len(valid_datasets_df)} valid datasets...")
+            logging.info(f"Embedding {len(valid_datasets_df)} valid datasets...")
             embedded_df = embed_datasets(valid_datasets_df)
 
-            tqdm.write("Clustering valid datasets...")
+            logging.info("Clustering valid datasets...")
             clustered_df = cluster_datasets(embedded_df, cluster_divisor=args.cluster_divisor)
 
             # Step 9: Select representative datasets
-            tqdm.write("Selecting representative datasets for assessment...")
+            logging.info("Selecting representative datasets for assessment...")
             representatives_df = select_representative_datasets(clustered_df, args.assessment_budget)
 
             # Step 10: Assess relevance of representatives
-            tqdm.write(f"Assessing relevance of {len(representatives_df)} representative datasets...")
+            logging.info(f"Assessing relevance of {len(representatives_df)} representative datasets...")
             assessed_df = asyncio.run(repeated_relevance(representatives_df, research_query, repeats=args.scoring_rounds, batch_size=args.batch_size, openai_api_jobs=4))
 
             # Step 11: Merge assessment results back to valid datasets
@@ -970,15 +968,6 @@ def main():
             logging.info(f"Included in batch analysis CSV: {len(multi_df)}")
 
         assessed_final = final.dropna(subset=['RelevanceScore']).sort_values('RelevanceScore', ascending=False)
-        if not assessed_final.empty:
-            logging.info("Top assessed datasets:")
-            for i, (_, row) in enumerate(assessed_final.head(5).iterrows()):
-                logging.info(f"{i+1}. {row['GEO_Accession']}: {row['RelevanceScore']}/10 - {row['Title'][:80]}...")
-
-        logging.info(f"Clustering: {clustered_df['Cluster'].nunique() if 'clustered_df' in locals() else 'N/A'} clusters (total datasets / {args.cluster_divisor})")
-        logging.info(f"Assessment budget: {args.assessment_budget} datasets")
-        logging.info("Note: Dataset_identification_result.csv contains ALL datasets")
-        logging.info("      batch_analysis_input.csv contains only valid, assessed, above-threshold datasets")
 
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
