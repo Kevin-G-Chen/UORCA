@@ -16,7 +16,7 @@ UORCA provides:
 The workflow automatically handles:
 - Data extraction from GEO/SRA
 - Metadata cleaning and experimental design
-- RNA-seq quantification and differential expression analysis  
+- RNA-seq quantification and differential expression analysis
 - Statistical analysis and visualization
 - Report generation with publication-quality figures
 
@@ -35,7 +35,12 @@ The workflow automatically handles:
 Get started with UORCA in just a few steps:
 
 ```bash
-# 1. Install UORCA package (enables CLI)
+# Clone the repository
+git clone https://github.com/Kevin-G-Chen/UORCA.git
+cd UORCA
+
+# Set up the uv environment
+uv venv
 uv pip install -e .
 
 # 2. Find relevant datasets for your research
@@ -47,7 +52,7 @@ uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results  # For H
 uv run uorca run local --csv datasets.csv --output_dir ../UORCA_results  # For local machines
 
 # 4. Explore results interactively
-uv run uorca explore ../UORCA_results --port 8501
+uv run uorca explore ../UORCA_results
 ```
 
 ## End Result
@@ -61,7 +66,7 @@ For each processed dataset, UORCA generates:
 
 For multiple datasets, additional integration tools provide:
 - Meta-analysis across datasets identifying consistent patterns
-- Interactive multi-dataset visualizations 
+- Interactive multi-dataset visualizations
 - Integrated gene prioritization and pathway analysis
 
 ## Who will benefit from UORCA?
@@ -103,7 +108,7 @@ uv pip install -e .
 # Dataset identification - find relevant GEO datasets
 uv run uorca identify -q "cancer stem cell differentiation" -o results.csv
 
-# Dataset analysis - run batch RNA-seq pipeline  
+# Dataset analysis - run batch RNA-seq pipeline
 uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results
 
 # Results exploration - launch interactive web app
@@ -175,7 +180,7 @@ UORCA provides efficient batch processing for multiple datasets:
 # SLURM batch processing
 uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results --cleanup
 
-# Local parallel processing  
+# Local parallel processing
 uv run uorca run local --csv datasets.csv --output_dir ../UORCA_results --max_workers 4 --cleanup
 ```
 
@@ -328,7 +333,7 @@ uv run uorca explore ../UORCA_results --port 8501
    ```bash
    # Using the CLI (direct Python execution)
    uv run uorca explore ../UORCA_results --port 8501
-   
+
    # Or using container script (containerized execution)
    ./run_uorca_explorer.sh ../UORCA_results 8501
    ```
@@ -344,7 +349,7 @@ uv run uorca explore ../UORCA_results --port 8501
 
 **Interactive Analysis:**
 - **Smart Gene Selection**: Auto-identified DEGs with intelligent ranking or custom gene lists with validation
-- **Dataset & Contrast Selection**: Interactive tables for selecting subsets of datasets and contrasts for focused analysis  
+- **Dataset & Contrast Selection**: Interactive tables for selecting subsets of datasets and contrasts for focused analysis
 - **Dynamic Visualization**: Real-time heatmaps, expression plots, and statistical summaries with advanced caching
 - **Export Capabilities**: Download results as CSV or interactive HTML reports
 
