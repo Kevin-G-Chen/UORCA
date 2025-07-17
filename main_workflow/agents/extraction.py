@@ -223,8 +223,7 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
     # Check if any samples remain after filtering
     if len(out_df) == 0:
         error_msg = (
-            f"No RNA-seq samples found after filtering. Dataset {accession} contains no samples "
-            f"library_source='transcriptomic', and library_strategy='RNA-Seq'. "
+            f"No RNA-seq samples found after filtering. Dataset {accession} contains no samples with library_source='transcriptomic', and library_strategy='RNA-Seq'. "
             f"Dataset will be terminated."
         )
         logger.error("%s", error_msg)
@@ -405,9 +404,9 @@ async def download_fastqs(
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
-            logger.error("❌ Prefetch failed for %s: %s", srr, stderr.decode().strip())
+            logger.error("Prefetch failed for %s: %s", srr, stderr.decode().strip())
         elif stderr:
-            logger.debug("📤 Prefetch stderr for %s: %s", srr, stderr.decode().strip())
+            logger.debug("Prefetch stderr for %s: %s", srr, stderr.decode().strip())
         return {
             "srr": srr,
             "returncode": proc.returncode,
@@ -434,11 +433,11 @@ async def download_fastqs(
                 for res in results:
                     if res["returncode"] == 0:
                         successful_prefetch += 1
-                        logger.info("✅ Successfully prefetched %s", res["srr"])
+                        logger.info("Successfully prefetched %s", res["srr"])
                     else:
-                        logger.error("❌ Failed to prefetch %s", res["srr"])
+                        logger.error("Failed to prefetch %s", res["srr"])
 
-            logger.info("✅ Prefetch completed - %d/%d successful", successful_prefetch, len(need_prefetch))
+            logger.info("Prefetch completed - %d/%d successful", successful_prefetch, len(need_prefetch))
 
     # Check which SRRs we need to convert to FASTQ
     need_conversion = [srr for srr in srrs if not fastq_ready(srr) and sra_path(srr).exists()]
@@ -447,16 +446,16 @@ async def download_fastqs(
     # Find pigz for faster compression
     pigz = shutil.which("pigz")
     if pigz:
-        logger.info("🔧 Found pigz for faster parallel compression")
+        logger.info("Found pigz for faster parallel compression")
     else:
-        logger.info("⚠️ pigz not found, falling back to standard gzip")
+        logger.info("pigz not found, falling back to standard gzip")
 
     # Process conversions (fasterq-dump + compression)
     converted = 0
     for srr in need_conversion:
         sra = sra_path(srr)
         if not sra.exists():
-            logger.warning("⚠ %s: .sra missing after prefetch – skip.", srr)
+            logger.warning("%s: .sra missing after prefetch – skip.", srr)
             continue
 
         # Calculate threads for this conversion based on total available
@@ -483,12 +482,12 @@ async def download_fastqs(
 
         # Log the stdout/stderr for debugging
         if stdout:
-            logger.debug("📤 Fasterq-dump stdout for %s: %s", srr, stdout.decode().strip())
+            logger.debug("Fasterq-dump stdout for %s: %s", srr, stdout.decode().strip())
         if stderr:
-            logger.info("📤 Fasterq-dump stderr for %s: %s", srr, stderr.decode().strip())
+            logger.info("Fasterq-dump stderr for %s: %s", srr, stderr.decode().strip())
 
         if proc.returncode != 0:
-            logger.warning("⚠ fasterq-dump failed on %s with code %d", srr, proc.returncode)
+            logger.warning("fasterq-dump failed on %s with code %d", srr, proc.returncode)
             continue
 
         # Compress the FASTQ files one by one (simpler approach)
@@ -512,19 +511,19 @@ async def download_fastqs(
                 )
                 stdout, stderr = await proc.communicate()
                 if proc.returncode == 0:
-                    logger.info("✅ Compressed %s successfully", fq.name)
+                    logger.info("Compressed %s successfully", fq.name)
                 else:
-                    logger.warning("⚠ Compression failed for %s: %s", fq, stderr.decode().strip())
+                    logger.warning("Compression failed for %s: %s", fq, stderr.decode().strip())
 
 
 
         converted += 1
-        logger.info("✅ Completed processing for %s (%d/%d)",
+        logger.info("Completed processing for %s (%d/%d)",
                     srr, converted, len(need_conversion))
 
     # Update context for downstream agents
     ctx.deps.fastq_dir = str(fastq_dir)
-    logger.info("✅ FASTQ conversion finished: %d new SRRs converted", converted)
+    logger.info("FASTQ conversion finished: %d new SRRs converted", converted)
 
     # Update checkpoint: FASTQ extraction completed successfully
     if hasattr(ctx.deps, 'checkpoints') and ctx.deps.checkpoints:
@@ -533,7 +532,7 @@ async def download_fastqs(
         cp.details = f"Downloaded and converted {converted} SRRs to FASTQ files"
         cp.error_message = None
         cp.timestamp = datetime.datetime.now().isoformat()
-        logger.info("✅ Checkpoint: FASTQ extraction completed successfully")
+        logger.info("Checkpoint: FASTQ extraction completed successfully")
 
     return (
         "FASTQ download complete.\n"
@@ -556,7 +555,7 @@ async def run_agent_async(prompt: str, deps: ExtractionContext, usage=None):
     if hasattr(result, 'usage') and result.usage:
         try:
             usage_stats = result.usage()
-            logger.info("📊 Extraction agent usage: %s", usage_stats)
+            logger.info("Extraction agent usage: %s", usage_stats)
         except Exception as e:
             logger.debug("Could not get usage stats: %s", e)
 

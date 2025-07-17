@@ -1,6 +1,7 @@
 import logging, os, asyncio, json, argparse, subprocess, glob, pathlib
 from typing import Optional, List, Dict, Any
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.usage import UsageLimits
 from dotenv import load_dotenv, find_dotenv
 from shared import RNAseqCoreContext, AnalysisContext, CheckpointStatus
 from shared.workflow_logging import log_tool, setup_logging
@@ -609,7 +610,7 @@ def main():
     try:
         # Run the master agent
         logger.info("🤖 Running master orchestration agent")
-        result = master.run_sync(orchestration_prompt, deps=ctx, request_limit=100)
+        result = master.run_sync(orchestration_prompt, deps=ctx, usage_limits=UsageLimits(request_limit=100))
 
         # Create a simple context object for save_analysis_info
         class SimpleContext:
