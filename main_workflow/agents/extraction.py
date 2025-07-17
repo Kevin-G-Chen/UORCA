@@ -70,6 +70,8 @@ async def fetch_geo_metadata(ctx: RunContext[RNAseqCoreContext], accession: str)
             logger.warning("GEO metadata fetch failed for %s (%s), trying wget fallback", accession, str(e))
 
         # Construct wget URL - format: https://ftp.ncbi.nlm.nih.gov/geo/series/GSE{base}nnn/{accession}/soft/{accession}_family.soft.gz
+
+        # NOTE - THIS FALLBACK MUST BE RETAINED
         number_part = accession.replace('GSE', '')
         if len(number_part) > 3:
             base_part = number_part[:-3] + 'nnn'
