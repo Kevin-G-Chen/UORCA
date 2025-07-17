@@ -1,21 +1,54 @@
-UORCA/repository_navigation.md
 # UORCA Repository Navigation Guide for Agents
 
 This document provides an overview of the repository structure of the UORCA project to assist AI agents in efficiently navigating the repository for their tasks.
 
 ## Overall notes
 
-The repository uses `uv` for package management. This means that you will typically conduct tests and run scripts using `uv run <script_name>` or `uv run <command>`, rather than directly executing Python files. This is important to remember when navigating the repository and running code.
+The repository uses `uv` for package management and has been restructured as a proper Python package. UORCA can now be installed and run via a unified CLI interface with the `uorca` command. You will typically run commands using `uv run uorca <subcommand>` or directly via `uorca <subcommand>` if installed. The package supports containerized execution via Docker and Apptainer.
 
 ---
 
 ## High-Level Structure
 
-- **main_workflow/**: Core directory containing all major code and scripts for the UORCA RNA-seq analysis pipeline.
-- **sample_inputs/**: Contains example input files (CSV) for testing and running batch analyses.
-- **scratch/**: Miscellaneous information not needed for code editing.
-- **data/**: Raw data files not needed for code editing.
-- **archive/**: Contains old code that is not relevant for current development or editing.
+- **uorca/**: Core Python package containing CLI interface and batch processing modules
+- **main_workflow/**: Core directory containing all major code and scripts for the UORCA RNA-seq analysis pipeline
+- **sample_inputs/**: Contains example input files (CSV) for testing and running batch analyses
+- **logs/**: Runtime logs and AI tool call tracking
+- **scratch/**: Miscellaneous information not needed for code editing
+- **data/**: Raw data files not needed for code editing
+
+---
+
+## Package Structure (uorca/)
+
+The main package provides a unified CLI interface and modular batch processing:
+
+### 1. **CLI Interface**
+
+- **uorca/cli.py**
+  Main command-line interface providing three primary subcommands:
+  - `uorca identify`: Dataset identification from GEO using AI-powered relevance assessment
+  - `uorca run`: Batch RNA-seq analysis pipeline (supports both SLURM and local execution)
+  - `uorca explore`: Interactive results explorer web application
+
+- **uorca/identify.py**
+  Wrapper for dataset identification functionality, integrating with the main workflow
+
+- **uorca/explore.py**
+  Launcher for the Streamlit-based UORCA Explorer web application
+
+### 2. **Batch Processing Framework**
+
+Modular batch processing system supporting different execution backends:
+
+- **uorca/batch/base.py**
+  Abstract base class defining the batch processing interface
+
+- **uorca/batch/slurm.py**
+  SLURM cluster batch processing implementation with resource management and job monitoring
+
+- **uorca/batch/local.py**
+  Local multiprocessing batch execution with automatic resource detection
 
 ---
 
@@ -36,20 +69,21 @@ Contains specialized agents handling different parts of the workflow:
 
 - **agents/reporting.py** (legacy - reporting functionality has been moved to main_workflow/reporting/ with comprehensive modular architecture)
 
-### 2. **Additional scripts**
+### 2. **Dataset Identification**
+
+AI-powered dataset discovery and relevance assessment:
+
+- **dataset_identification/DatasetIdentification.py**
+  Identifies relevant GEO datasets based on a research query using AI-powered term extraction, GEO search, clustering, and multi-round relevance scoring. Supports configurable thresholds and batch processing.
+
+### 3. **Additional scripts**
 
 - **additional_scripts/RNAseq.R**
   R script that performs the main edgeR/limma differential expression workflow, visualizations, and result export.
 
-- **additional_scripts/DatasetIdentification.py**
-  Identifies relevant GEO datasets based on a research query using AI-powered term extraction, GEO search, ESC, and clustering.
+### 4. **Run helpers**
 
-- **additional_scripts/ResultsIntegration.py**
-  Integrates results from multiple RNA-seq analyses, identifies important genes, and creates interactive heatmaps and expression plots.
-
-### 3. **Run helpers**
-
-Scripts to help submit and manage SLURM batch jobs:
+Scripts to help submit and manage SLURM batch jobs (legacy - functionality moved to uorca.batch):
 
 - **run_helpers/submit_datasets.py**
   Handles batch submission of multiple datasets with resource (storage) management and monitors job status.
@@ -57,7 +91,7 @@ Scripts to help submit and manage SLURM batch jobs:
 - **run_helpers/run_single_dataset.sbatch.j2** and **run_helpers/run_dataset_array.sbatch.j2**
   Jinja2 job script templates for single and array dataset submission.
 
-### 4. **Reporting**
+### 5. **Reporting**
 
 The reporting directory contains a comprehensive modular Streamlit application (UORCA Explorer) and supporting tools for interactive analysis and visualization:
 
@@ -113,6 +147,10 @@ The reporting directory contains a comprehensive modular Streamlit application (
     - Categorization of contrasts (primary, control, comparative, supportive)
     - Batch processing with parallel API calls and result aggregation
 
+  - **tool_relevance_analyzer.py**: Advanced tool usage analysis and optimization for AI workflows
+
+  - **config_loader.py**: Configuration management for the reporting system
+
 #### Supporting Infrastructure
   - **example_output_files/**: Example files demonstrating output structure:
     - **analysis_info.json**: Analysis metadata with checkpoints and organism information
@@ -131,8 +169,7 @@ The reporting directory contains a comprehensive modular Streamlit application (
   - **Interactive Visualizations**: All plots feature hover information, biological context, and export capabilities
   - **Comprehensive Analysis**: From raw results to publication-ready insights with AI-powered interpretation
 
-
-### 5. **Prompts**
+### 6. **Prompts**
 
 - **prompts/**: Contains text prompt templates used by agents for different workflow steps, including:
 
@@ -144,9 +181,7 @@ The reporting directory contains a comprehensive modular Streamlit application (
 
   - `master.txt`: Orchestration agent prompt.
 
-  - `dataset_identification/`: Prompts for dataset identification submodule.
-
-### 6. **Shared**
+### 7. **Shared**
 
 - **shared/**: Core utilities and context definitions shared across agents, including:
 
@@ -156,6 +191,33 @@ The reporting directory contains a comprehensive modular Streamlit application (
 
   - `workflow_logging.py`: Logging decorators and setup utilities.
 
+### 8. **Master Workflow**
+
+- **master.py**: Main orchestration script that coordinates the entire workflow from data extraction through analysis and reporting.
+
+---
+
+## Supporting Infrastructure
+
+### 1. **Container Support**
+
+- **run_uorca_explorer.sh**: Comprehensive container launcher script supporting both Docker and Apptainer execution with automatic engine detection, environment variable handling, and SSH tunneling instructions.
+
+- **Dockerfile**: Container definition for reproducible UORCA deployments.
+
+### 2. **Package Configuration**
+
+- **pyproject.toml**: Python package configuration with dependencies, entry points, and workspace definitions. Defines the `uorca` CLI command.
+
+- **uv.lock**: Dependency lock file for reproducible environments.
+
+### 3. **Development and Testing**
+
+- **logs/**: Runtime logging directory containing:
+  - AI tool call tracking and transparency logs
+  - Dataset identification logs
+  - Streamlit application logs
+
 ---
 
 ## Notes on Other Directories
@@ -164,20 +226,47 @@ The reporting directory contains a comprehensive modular Streamlit application (
 
 - **data/**: Includes raw data files used for testing or references but not required for code editing.
 
-- **archive/**: Contains outdated or retired code not relevant for current analysis or development.
-
 ---
+
+## CLI Usage Summary
+
+The UORCA package provides a unified command-line interface:
+
+### Dataset Identification
+```bash
+uorca identify -q "cancer stem cell differentiation" -o results.csv
+```
+
+### Batch Analysis
+```bash
+# SLURM cluster execution
+uorca run slurm --csv datasets.csv --output_dir ../UORCA_results
+
+# Local multiprocessing execution
+uorca run local --csv datasets.csv --output_dir ../UORCA_results
+```
+
+### Results Exploration
+```bash
+uorca explore ../UORCA_results --port 8501
+```
 
 ## Usage Summary for Agents
 
-- When performing **data extraction**, focus on `agents/extraction.py`.
+- When performing **dataset identification**, use the CLI command `uorca identify` or work directly with `main_workflow/dataset_identification/DatasetIdentification.py`.
+
+- For **data extraction**, focus on `agents/extraction.py`.
 
 - For **metadata processing and contrast design**, use `agents/metadata.py`.
 
 - For **RNA-seq quantification and differential expression analysis**, utilize `agents/analysis.py` along with the R script in `additional_scripts/RNAseq.R`.
 
-- To **generate integrated reports or explore results**, use the scripts and APIs under `main_workflow/reporting/`.
+- To **generate integrated reports or explore results**, use the scripts and APIs under `main_workflow/reporting/` or run `uorca explore`.
 
-- For managing **batch runs and resource-aware scheduling**, look in `run_helpers/`.
+- For managing **batch runs**, use the CLI commands `uorca run slurm` or `uorca run local`, or work directly with the batch processing modules in `uorca/batch/`.
 
-- For **AI assistance or dataset identification**, use `additional_scripts/DatasetIdentification.py` and the AI prompt definitions.
+- For **containerized execution**, use `run_uorca_explorer.sh` or the Docker/Apptainer containers directly.
+
+- For **AI assistance or dataset identification**, use the CLI or the integrated AI analysis features in the UORCA Explorer.
+
+- All components support the `uv` package manager workflow and can be run via `uv run` commands or direct CLI execution after installation.
