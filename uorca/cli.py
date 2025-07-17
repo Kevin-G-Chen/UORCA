@@ -118,8 +118,8 @@ For more help on a specific command, use:
                              help="Maximum number of parallel jobs")
     slurm_parser.add_argument("--max_storage_gb", type=float, default=500,
                              help="Maximum storage usage in GB")
-    slurm_parser.add_argument("--cleanup", action="store_true",
-                             help="Clean up FASTQ and SRA files after analysis")
+    slurm_parser.add_argument("--no-cleanup", action="store_true",
+                             help="Skip cleanup of FASTQ and SRA files after analysis")
     slurm_parser.add_argument("--partition", default="tki_agpdev",
                              help="SLURM partition to use")
     slurm_parser.add_argument("--constraint", default="icx",
@@ -151,12 +151,11 @@ For more help on a specific command, use:
                              help="Maximum number of parallel workers (default: auto-detect 75%% of CPU cores)")
     local_parser.add_argument("--max_storage_gb", type=float,
                              help="Maximum storage usage in GB (default: auto-detect 75%% of available memory)")
-    local_parser.add_argument("--cleanup", action="store_true",
-                             help="Clean up FASTQ and SRA files after analysis")
+    local_parser.add_argument("--no-cleanup", action="store_true",
+                             help="Skip cleanup of FASTQ and SRA files after analysis")
     local_parser.add_argument("--timeout_hours", type=float, default=6,
                              help="Timeout per job in hours")
-    local_parser.add_argument("--dev-mode", action="store_true",
-                             help="Run in development mode (direct Python execution instead of Docker)")
+
 
     local_parser.set_defaults(func=run_batch_local)
 
@@ -256,7 +255,7 @@ def run_batch_slurm(args):
         params = {
             'max_parallel': args.max_parallel,
             'max_storage_gb': args.max_storage_gb,
-            'cleanup': args.cleanup,
+            'cleanup': not args.no_cleanup,
             'resource_dir': args.resource_dir,
             'partition': args.partition,
             'constraint': args.constraint,
@@ -289,10 +288,9 @@ def run_batch_local(args):
 
         # Prepare parameters
         params = {
-            'cleanup': args.cleanup,
+            'cleanup': not args.no_cleanup,
             'resource_dir': args.resource_dir,
-            'timeout_hours': args.timeout_hours,
-            'dev_mode': args.dev_mode
+            'timeout_hours': args.timeout_hours
         }
 
         # Add optional parameters if specified

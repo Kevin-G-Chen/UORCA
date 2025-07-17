@@ -17,15 +17,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 import multiprocessing as mp
+from dotenv import load_dotenv, find_dotenv
 
 from .base import BatchProcessor
 
 
 def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
-                           cleanup: bool, status_dir: str, docker_image: str = "kevingchen/uorca:0.1.0",
-                           dev_mode: bool = False) -> Dict[str, Any]:
+                           cleanup: bool, status_dir: str, docker_image: str = "kevingchen/uorca:0.1.0") -> Dict[str, Any]:
     """
-    Run a single dataset analysis locally using Docker or direct Python execution.
+    Run a single dataset analysis locally using Docker.
 
     This function is designed to be run in a separate process.
 
@@ -35,8 +35,7 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         resource_dir: Resource directory for Kallisto indices on host
         cleanup: Whether to cleanup intermediate files
         status_dir: Directory for status tracking on host
-        docker_image: Docker image to use (ignored in dev_mode)
-        dev_mode: If True, run directly with Python instead of Docker
+        docker_image: Docker image to use
 
     Returns:
         Dictionary with job results
@@ -71,65 +70,37 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         output_path.mkdir(parents=True, exist_ok=True)
         resource_path.mkdir(parents=True, exist_ok=True)
 
-        if dev_mode:
-            # Development mode: run directly with Python
-            # Find the project root and master script
-            current_dir = Path(__file__).parent
-            project_root = current_dir.parent.parent
-            master_script = project_root / "main_workflow" / "master.py"
+        # Docker paths (inside container)
+        docker_output_dir = "/app/output"
+        docker_resource_dir = "/app/resources"
 
-            if not master_script.exists():
-                raise FileNotFoundError(f"Master script not found: {master_script}")
+        # Build Docker command
+        cmd = [
+            'docker', 'run', '--rm',
+            # Mount volumes
+            '-v', f'{output_path}:{docker_output_dir}',
+            '-v', f'{resource_path}:{docker_resource_dir}',
+            # Pass environment variables
+            '-e', f'ENTREZ_EMAIL={os.getenv("ENTREZ_EMAIL", "")}',
+            '-e', f'OPENAI_API_KEY={os.getenv("OPENAI_API_KEY", "")}',
+            '-e', f'ENTREZ_API_KEY={os.getenv("ENTREZ_API_KEY", "")}',
+            # Use the specified Docker image
+            docker_image,
+            # Command to run inside container
+            'uv', 'run', 'python', 'main_workflow/master.py',
+            '--accession', accession,
+            '--output_dir', docker_output_dir,
+            '--resource_dir', docker_resource_dir
+        ]
 
-            # Build command for direct Python execution
-            cmd = [
-                'uv', 'run', str(master_script),
-                '--accession', accession,
-                '--output_dir', str(output_path),
-                '--resource_dir', str(resource_path)
-            ]
-
-            if cleanup:
-                cmd.append('--cleanup')
-
-            # Set working directory for dev mode
-            cwd = project_root
-        else:
-            # Docker mode: run in container
-            # Docker paths (inside container)
-            docker_output_dir = "/app/output"
-            docker_resource_dir = "/app/resources"
-
-            # Build Docker command
-            cmd = [
-                'docker', 'run', '--rm',
-                # Mount volumes
-                '-v', f'{output_path}:{docker_output_dir}',
-                '-v', f'{resource_path}:{docker_resource_dir}',
-                # Pass environment variables
-                '-e', f'ENTREZ_EMAIL={os.getenv("ENTREZ_EMAIL", "")}',
-                '-e', f'OPENAI_API_KEY={os.getenv("OPENAI_API_KEY", "")}',
-                # Use the specified Docker image
-                docker_image,
-                # Command to run inside container
-                'uv', 'run', 'python', 'main_workflow/master.py',
-                '--accession', accession,
-                '--output_dir', docker_output_dir,
-                '--resource_dir', docker_resource_dir
-            ]
-
-            if cleanup:
-                cmd.append('--cleanup')
-
-            # No working directory needed for Docker
-            cwd = None
+        if cleanup:
+            cmd.append('--cleanup')
 
         # Run the analysis
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            cwd=cwd,
             timeout=21600  # 6 hours timeout
         )
 
@@ -280,43 +251,66 @@ class LocalBatchProcessor(BatchProcessor):
         return {
             'max_workers': max_workers,
             'max_storage_gb': max_storage_gb,
-            'cleanup': True,
+            'cleanup': True,  # Default to cleanup
             'resource_dir': './data/kallisto_indices/',
             'check_interval': 10,
             'timeout_hours': 6,
-            'docker_image': 'kevingchen/uorca',
-            'dev_mode': False
+            'docker_image': 'kevingchen/uorca:0.1.0'
         }
 
-    def check_environment_requirements(self, dev_mode: bool = False) -> List[str]:
+    def load_environment_variables(self):
+        """Load environment variables from .env file."""
+        # Try to find and load .env file
+        project_root = Path(__file__).resolve().parent.parent.parent
+        env_file = project_root / ".env"
+
+        if env_file.exists():
+            load_dotenv(env_file)
+            print(f"Loaded environment variables from {env_file}")
+        else:
+            # Try to find .env in current directory or parent directories
+            load_dotenv(find_dotenv())
+
+    def check_environment_requirements(self) -> List[str]:
         """
         Check if all required environment variables and tools are available.
-
-        Args:
-            dev_mode: If True, skip Docker requirements
 
         Returns:
             List of missing requirements (empty if all satisfied)
         """
+        # Load environment variables first
+        self.load_environment_variables()
+
         missing = []
 
-        # Check for Docker (unless in dev mode)
-        if not dev_mode:
-            try:
-                result = subprocess.run(['docker', '--version'],
-                                      capture_output=True, text=True, timeout=10)
-                if result.returncode != 0:
-                    missing.append("Docker (not available or not running)")
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                missing.append("Docker (not installed or not in PATH)")
+        # Check for Docker
+        try:
+            result = subprocess.run(['docker', '--version'],
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode != 0:
+                missing.append("Docker (not available or not running)")
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            missing.append("Docker (not installed or not in PATH)")
 
-        # Check for environment variables (only ENTREZ_EMAIL is strictly required)
+        # Check for required environment variables
         if not os.getenv('ENTREZ_EMAIL'):
             missing.append("Environment variable: ENTREZ_EMAIL")
+            print("\nMissing required environment variables!")
+            print("Please create a .env file in your project root with the following variables:")
+            print("")
+            print("  ENTREZ_EMAIL=your_value_here  # Required for NCBI API access")
+            print("")
+            print("Example .env file:")
+            print("  ENTREZ_EMAIL=your.email@example.com")
+            print("  OPENAI_API_KEY=sk-your-openai-api-key  # Optional, for AI features")
+            print("  ENTREZ_API_KEY=your_ncbi_api_key  # Optional, for higher rate limits")
 
-        # OPENAI_API_KEY is optional for basic functionality but warn if missing
+        # Check for optional environment variables (warn but don't fail)
         if not os.getenv('OPENAI_API_KEY'):
-            print("Warning: OPENAI_API_KEY not set. AI-powered features will be disabled.")
+            print("Note: OPENAI_API_KEY not set. AI-powered features will be disabled.")
+
+        if not os.getenv('ENTREZ_API_KEY'):
+            print("Note: ENTREZ_API_KEY not set. Using default NCBI rate limits.")
 
         return missing
 
@@ -340,49 +334,35 @@ class LocalBatchProcessor(BatchProcessor):
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Check environment requirements and handle Docker availability
-        missing_reqs = self.check_environment_requirements(params.get('dev_mode', False))
-
-        # If Docker is missing, automatically enable dev mode
-        if not params.get('dev_mode', False) and any('Docker' in req for req in missing_reqs):
-            print("⚠️  Docker not available, enabling development mode...")
-            print("   Running analyses directly with Python instead of Docker containers")
-            params['dev_mode'] = True
-            # Re-check requirements without Docker
-            missing_reqs = self.check_environment_requirements(dev_mode=True)
-
+        # Check environment requirements
+        missing_reqs = self.check_environment_requirements()
         if missing_reqs:
             raise EnvironmentError(f"Missing requirements: {missing_reqs}")
 
-        # Test Docker image availability (only if not in dev mode)
-        if not params.get('dev_mode', False):
-            try:
-                print(f"🐳 Checking Docker image: {params['docker_image']}")
-                result = subprocess.run([
-                    'docker', 'image', 'inspect', params['docker_image']
-                ], capture_output=True, text=True, timeout=30)
+        # Test Docker image availability
+        try:
+            print(f"Checking Docker image: {params['docker_image']}")
+            result = subprocess.run([
+                'docker', 'image', 'inspect', params['docker_image']
+            ], capture_output=True, text=True, timeout=30)
 
-                if result.returncode != 0:
-                    print(f"⬇️  Pulling Docker image: {params['docker_image']}")
-                    pull_result = subprocess.run([
-                        'docker', 'pull', params['docker_image']
-                    ], timeout=300)  # 5 minute timeout for pull
+            if result.returncode != 0:
+                print(f"Pulling Docker image: {params['docker_image']}")
+                pull_result = subprocess.run([
+                    'docker', 'pull', params['docker_image']
+                ], timeout=300)  # 5 minute timeout for pull
 
-                    if pull_result.returncode != 0:
-                        print(f"❌ Failed to pull Docker image: {params['docker_image']}")
-                        print("🔧 Falling back to development mode...")
-                        params['dev_mode'] = True
-                    else:
-                        print(f"✅ Docker image {params['docker_image']} pulled successfully")
+                if pull_result.returncode != 0:
+                    raise EnvironmentError(f"Failed to pull Docker image: {params['docker_image']}")
                 else:
-                    print(f"✅ Docker image {params['docker_image']} is available")
+                    print(f"Successfully pulled Docker image: {params['docker_image']}")
+            else:
+                print(f"Docker image {params['docker_image']} is available")
 
-            except subprocess.TimeoutExpired:
-                print("❌ Docker operations timed out. Falling back to development mode...")
-                params['dev_mode'] = True
-            except Exception as e:
-                print(f"❌ Docker error: {e}. Falling back to development mode...")
-                params['dev_mode'] = True
+        except subprocess.TimeoutExpired:
+            raise EnvironmentError("Docker operations timed out. Check Docker daemon status.")
+        except Exception as e:
+            raise EnvironmentError(f"Docker error: {e}")
 
         # Setup job tracking
         status_dir = self.setup_job_tracking(output_dir)
@@ -404,7 +384,7 @@ class LocalBatchProcessor(BatchProcessor):
             storage_needed = row['SafeStorageGB']
 
             if storage_needed > params['max_storage_gb']:
-                print(f"⚠️  Skipping {accession}: exceeds storage limit ({storage_needed:.2f} > {params['max_storage_gb']:.2f} GB)")
+                print(f"Skipping {accession}: exceeds storage limit ({storage_needed:.2f} > {params['max_storage_gb']:.2f} GB)")
                 continue
 
             datasets_to_process.append(row)
@@ -414,13 +394,13 @@ class LocalBatchProcessor(BatchProcessor):
             print("No datasets to process after storage filtering.")
             return 0
 
-        execution_mode = "development mode (direct Python)" if params.get('dev_mode', False) else f"Docker ({params['docker_image']})"
-        print(f"\n🚀 Starting local parallel processing...")
-        print(f"   Execution mode: {execution_mode}")
+        print(f"\nStarting local parallel processing...")
+        print(f"   Docker image: {params['docker_image']}")
         print(f"   Max workers: {params['max_workers']}")
         print(f"   Total datasets: {len(datasets_to_process)}")
         print(f"   Total storage needed: {total_storage_needed:.2f} GB")
         print(f"   Storage limit: {params['max_storage_gb']:.2f} GB")
+        print(f"   Cleanup enabled: {params['cleanup']}")
 
         # Initialize process pool executor
         self.executor = ProcessPoolExecutor(max_workers=params['max_workers'])
@@ -442,8 +422,7 @@ class LocalBatchProcessor(BatchProcessor):
                     job_id=job_id,
                     storage_gb=storage_gb,
                     max_workers=params['max_workers'],
-                    docker_image=params['docker_image'],
-                    dev_mode=params.get('dev_mode', False)
+                    docker_image=params['docker_image']
                 )
 
                 # Submit job
@@ -454,18 +433,17 @@ class LocalBatchProcessor(BatchProcessor):
                     resource_dir=params['resource_dir'],
                     cleanup=params['cleanup'],
                     status_dir=str(status_dir),
-                    docker_image=params['docker_image'],
-                    dev_mode=params.get('dev_mode', False)
+                    docker_image=params['docker_image']
                 )
 
                 self.futures[accession] = future
                 jobs_submitted += 1
 
-                print(f"  ✅ Submitted {accession} (job {job_id})")
+                print(f"  Submitted {accession} (job {job_id})")
 
-            print(f"\n📊 All {jobs_submitted} jobs submitted")
-            print(f"📁 Job logs will be written to: {logs_dir}")
-            print(f"📊 Job status tracking: {status_dir}")
+            print(f"\nAll {jobs_submitted} jobs submitted")
+            print(f"Job logs will be written to: {logs_dir}")
+            print(f"Job status tracking: {status_dir}")
 
             # Monitor job progress
             self._monitor_jobs(params['check_interval'])
@@ -485,7 +463,7 @@ class LocalBatchProcessor(BatchProcessor):
         Args:
             check_interval: Check interval in seconds
         """
-        print(f"\n⏳ Monitoring job progress (checking every {check_interval}s)...")
+        print(f"\nMonitoring job progress (checking every {check_interval}s)...")
         print("   Press Ctrl+C to stop monitoring (jobs will continue running)")
 
         try:
@@ -499,16 +477,16 @@ class LocalBatchProcessor(BatchProcessor):
                         try:
                             result = future.result()
                             if result['success']:
-                                print(f"  ✅ {accession} completed successfully ({result['runtime']:.0f}s)")
+                                print(f"  {accession} completed successfully ({result['runtime']:.0f}s)")
                             else:
                                 error_msg = result.get('error', 'Unknown error')
                                 if 'stderr' in result and result['stderr']:
-                                    print(f"  ❌ {accession} failed: {error_msg}")
+                                    print(f"  {accession} failed: {error_msg}")
                                     print(f"      stderr: {result['stderr'][:200]}...")  # First 200 chars
                                 else:
-                                    print(f"  ❌ {accession} failed: {error_msg}")
+                                    print(f"  {accession} failed: {error_msg}")
                         except Exception as e:
-                            print(f"  ❌ {accession} failed with exception: {e}")
+                            print(f"  {accession} failed with exception: {e}")
 
                 # Remove completed jobs
                 for accession in completed_jobs:
@@ -519,12 +497,12 @@ class LocalBatchProcessor(BatchProcessor):
 
                 # Show status
                 running_count = len(self.futures)
-                print(f"  📊 {running_count} jobs still running...")
+                print(f"  {running_count} jobs still running...")
 
                 time.sleep(check_interval)
 
         except KeyboardInterrupt:
-            print(f"\n⚠️  Monitoring stopped. {len(self.futures)} jobs still running in background.")
+            print(f"\nMonitoring stopped. {len(self.futures)} jobs still running in background.")
             print("   Check status files for progress updates.")
 
     def check_job_status(self, job_id: str) -> Dict[str, Any]:
@@ -538,15 +516,6 @@ class LocalBatchProcessor(BatchProcessor):
             Dictionary containing job status information
         """
         # For local jobs, we check the futures dict and process status
-        accession = None
-
-        # Try to find accession from futures
-        for acc, future in self.futures.items():
-            if future and not future.done():
-                # Check if this matches somehow - local job IDs are generated
-                pass
-
-        # Default response for local jobs
         return {
             'job_id': job_id,
             'state': 'UNKNOWN',
