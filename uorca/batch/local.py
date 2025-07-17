@@ -2,15 +2,17 @@
 Local Batch Processor
 
 This module provides local parallel processing capabilities for UORCA datasets
-using Docker containers. It uses multiprocessing to run jobs in parallel
-while respecting resource constraints.
+using Docker containers. It implements storage-aware queueing and proper job
+cancellation while respecting resource constraints.
 """
 
 import json
 import os
 import psutil
+import signal
 import subprocess
 import time
+import threading
 import pandas as pd
 from concurrent.futures import ProcessPoolExecutor, Future, as_completed
 from datetime import datetime
@@ -38,12 +40,13 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         docker_image: Docker image to use
 
     Returns:
-        Dictionary with job results
+        Dictionary with job results including container_id
     """
     import subprocess
     import json
     from datetime import datetime
     from pathlib import Path
+    import re
 
     process_id = os.getpid()
     start_time = datetime.now()
@@ -107,6 +110,15 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         end_time = datetime.now()
         success = result.returncode == 0
 
+        # Extract container ID if available (for cleanup purposes)
+        container_id = None
+        if result.stderr:
+            # Try to extract container ID from Docker output
+            import re
+            container_match = re.search(r'[a-f0-9]{12,}', result.stderr)
+            if container_match:
+                container_id = container_match.group()
+
         # Update final status
         final_status = {
             'state': 'completed' if success else 'failed',
@@ -115,7 +127,8 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             'return_code': result.returncode,
             'success': success,
             'stdout': result.stdout[-2000:] if result.stdout else '',  # Last 2000 chars
-            'stderr': result.stderr[-2000:] if result.stderr else ''   # Last 2000 chars
+            'stderr': result.stderr[-2000:] if result.stderr else '',   # Last 2000 chars
+            'container_id': container_id
         }
 
         if status_file.exists():
@@ -131,7 +144,8 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             'return_code': result.returncode,
             'runtime': (end_time - start_time).total_seconds(),
             'stdout': result.stdout,
-            'stderr': result.stderr
+            'stderr': result.stderr,
+            'container_id': container_id
         }
 
     except subprocess.TimeoutExpired:
@@ -186,15 +200,20 @@ class LocalBatchProcessor(BatchProcessor):
     Local parallel batch processor for UORCA datasets using Docker.
 
     This processor handles parallel execution of dataset analyses on the local machine
-    using Docker containers, with resource management and job tracking.
+    using Docker containers, with storage-aware queueing and proper job cancellation.
     """
 
     def __init__(self):
         """Initialize the local batch processor."""
         super().__init__()
         self.executor = None
-        self.futures = {}  # Map accession -> Future
+        self.running_jobs = {}  # accession -> {'future': Future, 'storage_gb': float}
+        self.job_queue = []     # List of datasets waiting to run
+        self.current_storage_used = 0.0
         self.job_counter = 0
+        self.cancelled = False
+        self.monitor_thread = None
+        self.lock = threading.Lock()
 
     def validate_csv_file(self, csv_file: str) -> pd.DataFrame:
         """
@@ -253,7 +272,7 @@ class LocalBatchProcessor(BatchProcessor):
             'max_storage_gb': max_storage_gb,
             'cleanup': True,  # Default to cleanup
             'resource_dir': './data/kallisto_indices/',
-            'check_interval': 10,
+            'check_interval': 600,  # 10 minutes
             'timeout_hours': 6,
             'docker_image': 'kevingchen/uorca:0.1.0'
         }
@@ -314,9 +333,170 @@ class LocalBatchProcessor(BatchProcessor):
 
         return missing
 
+    def setup_signal_handlers(self):
+        """Setup signal handlers for graceful shutdown."""
+        def signal_handler(signum, frame):
+            if not self.cancelled:
+                print(f"\nReceived interrupt signal. Cancelling running jobs...")
+                self.cancelled = True
+                self.cancel_all_jobs()
+                # Exit immediately to prevent reentrant calls
+                os._exit(1)
+
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
+    def cancel_all_jobs(self):
+        """Cancel all running jobs and Docker containers."""
+        try:
+            with self.lock:
+                # Cancel all futures
+                for accession, job_info in self.running_jobs.items():
+                    future = job_info['future']
+                    if not future.done():
+                        print(f"  Cancelling {accession}...")
+                        future.cancel()
+
+                # Try to kill any running Docker containers
+                self._kill_docker_containers()
+
+                # Clear the queue
+                self.job_queue.clear()
+
+            # Shutdown executor forcefully
+            if self.executor:
+                self.executor.shutdown(wait=False)
+                self.executor = None
+
+            print("All jobs cancelled.")
+        except Exception as e:
+            print(f"Error during cancellation: {e}")
+
+    def _kill_docker_containers(self):
+        """Kill any running Docker containers for this batch."""
+        try:
+            # Get all running containers
+            result = subprocess.run([
+                'docker', 'ps', '--format', '{{.ID}} {{.Image}}'
+            ], capture_output=True, text=True, timeout=10)
+
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if line and 'kevingchen/uorca' in line:
+                        container_id = line.split()[0]
+                        print(f"  Killing Docker container: {container_id}")
+                        subprocess.run(['docker', 'kill', container_id],
+                                     capture_output=True, timeout=10)
+        except Exception as e:
+            print(f"  Warning: Could not kill Docker containers: {e}")
+
+    def submit_next_job_if_possible(self, params: Dict[str, Any], status_dir: Path):
+        """Submit the next job from queue if storage allows."""
+        with self.lock:
+            if not self.job_queue or self.cancelled:
+                return
+
+            # Find the largest job that fits in remaining storage
+            max_storage = params['max_storage_gb']
+            available_storage = max_storage - self.current_storage_used
+
+            for i, job_info in enumerate(self.job_queue):
+                row = job_info['row']
+                storage_needed = row['SafeStorageGB']
+
+                if storage_needed <= available_storage:
+                    # Submit this job
+                    accession = row['Accession']
+                    job_id = f"local_{self.job_counter:04d}"
+                    self.job_counter += 1
+
+                    # Create job status file
+                    self.create_job_status_file(
+                        status_dir=status_dir,
+                        accession=accession,
+                        job_id=job_id,
+                        storage_gb=storage_needed,
+                        max_workers=params['max_workers'],
+                        docker_image=params['docker_image']
+                    )
+
+                    # Submit job
+                    future = self.executor.submit(
+                        run_single_dataset_local,
+                        accession=accession,
+                        output_dir=job_info['output_dir'],
+                        resource_dir=params['resource_dir'],
+                        cleanup=params['cleanup'],
+                        status_dir=str(status_dir),
+                        docker_image=params['docker_image']
+                    )
+
+                    # Track the running job
+                    self.running_jobs[accession] = {
+                        'future': future,
+                        'storage_gb': storage_needed
+                    }
+                    self.current_storage_used += storage_needed
+
+                    # Remove from queue
+                    self.job_queue.pop(i)
+
+                    print(f"  Started {accession} (job {job_id}) - Storage: {self.current_storage_used:.1f}/{max_storage:.1f} GB")
+                    print(f"  Queue: {len(self.job_queue)} datasets waiting")
+                    break
+
+    def monitor_jobs(self, params: Dict[str, Any], status_dir: Path):
+        """Monitor running jobs and submit new ones as they complete."""
+        check_interval = params['check_interval']
+
+        while not self.cancelled and (self.running_jobs or self.job_queue):
+            time.sleep(check_interval)
+
+            if self.cancelled:
+                break
+
+            completed_jobs = []
+
+            with self.lock:
+                for accession, job_info in list(self.running_jobs.items()):
+                    future = job_info['future']
+
+                    if future.done():
+                        completed_jobs.append(accession)
+                        storage_freed = job_info['storage_gb']
+                        self.current_storage_used -= storage_freed
+
+                        try:
+                            result = future.result()
+                            if result['success']:
+                                print(f"  {accession} completed successfully ({result['runtime']:.0f}s)")
+                            else:
+                                error_msg = result.get('error', 'Unknown error')
+                                if 'stderr' in result and result['stderr']:
+                                    print(f"  {accession} failed: {error_msg}")
+                                    print(f"      stderr: {result['stderr'][:200]}...")
+                                else:
+                                    print(f"  {accession} failed: {error_msg}")
+                        except Exception as e:
+                            print(f"  {accession} failed with exception: {e}")
+
+                        # Remove from running jobs
+                        del self.running_jobs[accession]
+
+            # Try to submit next job if any completed
+            if completed_jobs and not self.cancelled:
+                self.submit_next_job_if_possible(params, status_dir)
+
+            # Show current status
+            if not self.cancelled:
+                running_count = len(self.running_jobs)
+                queue_count = len(self.job_queue)
+                if running_count > 0 or queue_count > 0:
+                    print(f"  Running: {running_count}, Queued: {queue_count}, Storage: {self.current_storage_used:.1f}/{params['max_storage_gb']:.1f} GB")
+
     def submit_datasets(self, csv_file: str, output_dir: str, **kwargs) -> int:
         """
-        Submit datasets for local parallel processing using Docker.
+        Submit datasets for local parallel processing with storage-aware queueing.
 
         Args:
             csv_file: Path to CSV file containing dataset information
@@ -326,6 +506,9 @@ class LocalBatchProcessor(BatchProcessor):
         Returns:
             Number of jobs submitted
         """
+        # Setup signal handlers
+        self.setup_signal_handlers()
+
         # Merge default parameters with provided kwargs
         params = {**self.default_parameters, **kwargs}
 
@@ -375,10 +558,8 @@ class LocalBatchProcessor(BatchProcessor):
         # Display scheduling information
         self.display_scheduling_order(df_sorted, params['max_storage_gb'])
 
-        # Filter datasets that fit within storage constraints
+        # Filter out datasets that exceed storage limit individually
         datasets_to_process = []
-        total_storage_needed = 0
-
         for _, row in df_sorted.iterrows():
             accession = row['Accession']
             storage_needed = row['SafeStorageGB']
@@ -387,12 +568,16 @@ class LocalBatchProcessor(BatchProcessor):
                 print(f"Skipping {accession}: exceeds storage limit ({storage_needed:.2f} > {params['max_storage_gb']:.2f} GB)")
                 continue
 
-            datasets_to_process.append(row)
-            total_storage_needed += storage_needed
+            datasets_to_process.append({
+                'row': row,
+                'output_dir': output_dir
+            })
 
         if not datasets_to_process:
             print("No datasets to process after storage filtering.")
             return 0
+
+        total_storage_needed = sum(job['row']['SafeStorageGB'] for job in datasets_to_process)
 
         print(f"\nStarting local parallel processing...")
         print(f"   Docker image: {params['docker_image']}")
@@ -402,108 +587,58 @@ class LocalBatchProcessor(BatchProcessor):
         print(f"   Storage limit: {params['max_storage_gb']:.2f} GB")
         print(f"   Cleanup enabled: {params['cleanup']}")
 
+        # Initialize the queue with all datasets (largest first)
+        self.job_queue = datasets_to_process.copy()
+
         # Initialize process pool executor
         self.executor = ProcessPoolExecutor(max_workers=params['max_workers'])
-        jobs_submitted = 0
 
         try:
-            # Submit all jobs
-            for row in datasets_to_process:
-                accession = row['Accession']
-                storage_gb = row['SafeStorageGB']
+            # Submit initial jobs up to storage limit
+            initial_submitted = 0
+            while self.job_queue and not self.cancelled:
+                self.submit_next_job_if_possible(params, status_dir)
+                current_submitted = len(self.running_jobs)
+                if current_submitted == initial_submitted:
+                    break  # No more jobs could be submitted due to storage
+                initial_submitted = current_submitted
 
-                # Create job status file
-                job_id = f"local_{self.job_counter:04d}"
-                self.job_counter += 1
+            if self.running_jobs:
+                print(f"\nInitial jobs submitted: {len(self.running_jobs)}")
+                print(f"Jobs in queue: {len(self.job_queue)}")
+                print(f"Job logs will be written to: {logs_dir}")
+                print(f"Job status tracking: {status_dir}")
+                print(f"\nMonitoring job progress (checking every {params['check_interval']//60} minutes)...")
+                print("   Press Ctrl+C to cancel all jobs")
 
-                self.create_job_status_file(
-                    status_dir=status_dir,
-                    accession=accession,
-                    job_id=job_id,
-                    storage_gb=storage_gb,
-                    max_workers=params['max_workers'],
-                    docker_image=params['docker_image']
+                # Start monitoring in a separate thread
+                self.monitor_thread = threading.Thread(
+                    target=self.monitor_jobs,
+                    args=(params, status_dir)
                 )
+                self.monitor_thread.start()
 
-                # Submit job
-                future = self.executor.submit(
-                    run_single_dataset_local,
-                    accession=accession,
-                    output_dir=output_dir,
-                    resource_dir=params['resource_dir'],
-                    cleanup=params['cleanup'],
-                    status_dir=str(status_dir),
-                    docker_image=params['docker_image']
-                )
+                # Wait for monitoring to complete
+                if self.monitor_thread:
+                    self.monitor_thread.join()
 
-                self.futures[accession] = future
-                jobs_submitted += 1
+            else:
+                print("No jobs could be submitted due to storage constraints.")
 
-                print(f"  Submitted {accession} (job {job_id})")
-
-            print(f"\nAll {jobs_submitted} jobs submitted")
-            print(f"Job logs will be written to: {logs_dir}")
-            print(f"Job status tracking: {status_dir}")
-
-            # Monitor job progress
-            self._monitor_jobs(params['check_interval'])
-
+        except KeyboardInterrupt:
+            print("\nOperation cancelled by user.")
+            self.cancelled = True
         finally:
             # Clean up executor
-            if self.executor:
+            if self.executor and not self.cancelled:
+                self.executor.shutdown(wait=True)
+                self.executor = None
+            elif self.executor:
                 self.executor.shutdown(wait=False)
                 self.executor = None
 
-        return jobs_submitted
-
-    def _monitor_jobs(self, check_interval: int):
-        """
-        Monitor running jobs and display progress.
-
-        Args:
-            check_interval: Check interval in seconds
-        """
-        print(f"\nMonitoring job progress (checking every {check_interval}s)...")
-        print("   Press Ctrl+C to stop monitoring (jobs will continue running)")
-
-        try:
-            while self.futures:
-                completed_jobs = []
-
-                for accession, future in self.futures.items():
-                    if future.done():
-                        completed_jobs.append(accession)
-
-                        try:
-                            result = future.result()
-                            if result['success']:
-                                print(f"  {accession} completed successfully ({result['runtime']:.0f}s)")
-                            else:
-                                error_msg = result.get('error', 'Unknown error')
-                                if 'stderr' in result and result['stderr']:
-                                    print(f"  {accession} failed: {error_msg}")
-                                    print(f"      stderr: {result['stderr'][:200]}...")  # First 200 chars
-                                else:
-                                    print(f"  {accession} failed: {error_msg}")
-                        except Exception as e:
-                            print(f"  {accession} failed with exception: {e}")
-
-                # Remove completed jobs
-                for accession in completed_jobs:
-                    del self.futures[accession]
-
-                if not self.futures:
-                    break
-
-                # Show status
-                running_count = len(self.futures)
-                print(f"  {running_count} jobs still running...")
-
-                time.sleep(check_interval)
-
-        except KeyboardInterrupt:
-            print(f"\nMonitoring stopped. {len(self.futures)} jobs still running in background.")
-            print("   Check status files for progress updates.")
+        total_submitted = initial_submitted + len([job for job in datasets_to_process if job not in self.job_queue])
+        return total_submitted
 
     def check_job_status(self, job_id: str) -> Dict[str, Any]:
         """
@@ -515,7 +650,6 @@ class LocalBatchProcessor(BatchProcessor):
         Returns:
             Dictionary containing job status information
         """
-        # For local jobs, we check the futures dict and process status
         return {
             'job_id': job_id,
             'state': 'UNKNOWN',
@@ -537,12 +671,14 @@ class LocalBatchProcessor(BatchProcessor):
         # Try to cancel futures if they exist
         cancelled_count = 0
 
-        for accession, future in list(self.futures.items()):
-            if future and not future.done():
-                if future.cancel():
-                    cancelled_count += 1
-                    del self.futures[accession]
-                    print(f"Cancelled job for {accession}")
+        with self.lock:
+            for accession, job_info in list(self.running_jobs.items()):
+                future = job_info['future']
+                if future and not future.done():
+                    if future.cancel():
+                        cancelled_count += 1
+                        del self.running_jobs[accession]
+                        print(f"Cancelled job for {accession}")
 
         return cancelled_count > 0
 
@@ -586,7 +722,9 @@ class LocalBatchProcessor(BatchProcessor):
             'disk_percent_used': (disk.used / disk.total) * 100,
             'load_average': load_avg,
             'docker_status': docker_status,
-            'active_jobs': len(self.futures) if self.futures else 0
+            'active_jobs': len(self.running_jobs),
+            'queued_jobs': len(self.job_queue),
+            'current_storage_used_gb': self.current_storage_used
         }
 
     def list_active_jobs(self) -> List[Dict[str, Any]]:
@@ -598,37 +736,38 @@ class LocalBatchProcessor(BatchProcessor):
         """
         jobs = []
 
-        if self.futures:
-            for accession, future in self.futures.items():
-                if future and not future.done():
-                    jobs.append({
-                        'accession': accession,
-                        'state': 'running',
-                        'system': 'local'
-                    })
-                elif future and future.done():
-                    try:
-                        result = future.result()
-                        jobs.append({
-                            'accession': accession,
-                            'state': 'completed' if result['success'] else 'failed',
-                            'system': 'local'
-                        })
-                    except Exception:
-                        jobs.append({
-                            'accession': accession,
-                            'state': 'failed',
-                            'system': 'local'
-                        })
+        with self.lock:
+            for accession, job_info in self.running_jobs.items():
+                future = job_info['future']
+                jobs.append({
+                    'accession': accession,
+                    'state': 'running',
+                    'system': 'local',
+                    'storage_gb': job_info['storage_gb']
+                })
+
+            # Add queued jobs
+            for job_info in self.job_queue:
+                row = job_info['row']
+                jobs.append({
+                    'accession': row['Accession'],
+                    'state': 'queued',
+                    'system': 'local',
+                    'storage_gb': row['SafeStorageGB']
+                })
 
         return jobs
 
     def cleanup(self):
         """Clean up resources and shutdown executor."""
+        self.cancelled = True
+        if self.monitor_thread and self.monitor_thread.is_alive():
+            self.monitor_thread.join(timeout=2)
         if self.executor:
-            self.executor.shutdown(wait=True)
+            self.executor.shutdown(wait=False)
             self.executor = None
-        self.futures.clear()
+        self.running_jobs.clear()
+        self.job_queue.clear()
 
     def __del__(self):
         """Destructor to ensure cleanup."""

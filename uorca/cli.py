@@ -246,7 +246,7 @@ def run_batch_slurm(args):
     """Run batch processing using SLURM."""
     from uorca.batch import get_batch_processor
 
-    print("🚀 Starting SLURM batch processing...")
+    print("Starting SLURM batch processing...")
 
     try:
         processor = get_batch_processor('slurm')
@@ -268,12 +268,12 @@ def run_batch_slurm(args):
         jobs_submitted = processor.submit_datasets(args.csv, args.output_dir, **params)
 
         if jobs_submitted > 0:
-            print(f"\n✅ Successfully submitted {jobs_submitted} jobs to SLURM")
+            print(f"\nSuccessfully submitted {jobs_submitted} jobs to SLURM")
         else:
-            print("\n⚠️  No jobs were submitted")
+            print("\nNo jobs were submitted")
 
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\nError: {e}")
         sys.exit(1)
 
 
@@ -281,7 +281,7 @@ def run_batch_local(args):
     """Run batch processing locally."""
     from uorca.batch import get_batch_processor
 
-    print("🚀 Starting local batch processing...")
+    print("Starting local batch processing...")
 
     try:
         processor = get_batch_processor('local')
@@ -303,12 +303,12 @@ def run_batch_local(args):
         jobs_submitted = processor.submit_datasets(args.csv, args.output_dir, **params)
 
         if jobs_submitted > 0:
-            print(f"\n✅ Successfully processed {jobs_submitted} datasets")
+            print(f"\nSuccessfully processed {jobs_submitted} datasets")
         else:
-            print("\n⚠️  No datasets were processed")
+            print("\nNo datasets were processed")
 
     except Exception as e:
-        print(f"\n❌ Error: {e}")
+        print(f"\nError: {e}")
         sys.exit(1)
 
 
