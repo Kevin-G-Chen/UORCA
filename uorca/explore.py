@@ -51,16 +51,17 @@ def find_available_port(host, start_port, max_attempts=10):
     return None
 
 
-def attempt_port_cleanup(host, port):
+def attempt_conservative_port_cleanup(host, port):
     """
-    Attempt to find and terminate processes using the specified port.
+    Conservatively attempt to terminate only Python processes using the specified port.
+    Only kills processes if there's exactly one Python process using the port.
 
     Args:
         host: Host address
         port: Port number to clean up
 
     Returns:
-        bool: True if cleanup was attempted, False otherwise
+        bool: True if cleanup was attempted and successful, False otherwise
     """
     try:
         import signal
@@ -69,49 +70,85 @@ def attempt_port_cleanup(host, port):
         # Try to find processes using the port on Unix-like systems
         if os.name == 'posix':
             try:
-                # Use lsof to find processes using the port
-                result = subprocess.run(['lsof', '-ti', f':{port}'],
+                # Use lsof to find processes using the port, filtering for Python
+                result = subprocess.run(['lsof', '-i', f':{port}'],
                                       capture_output=True, text=True, timeout=5)
                 if result.returncode == 0 and result.stdout.strip():
-                    pids = result.stdout.strip().split('\n')
-                    print(f"Found {len(pids)} process(es) using port {port}. Attempting cleanup...")
+                    lines = result.stdout.strip().split('\n')[1:]  # Skip header
+                    python_processes = []
 
-                    for pid in pids:
+                    for line in lines:
+                        if 'python' in line.lower() or 'streamlit' in line.lower():
+                            parts = line.split()
+                            if len(parts) >= 2:
+                                try:
+                                    pid = int(parts[1])
+                                    python_processes.append(pid)
+                                except ValueError:
+                                    continue
+
+                    if len(python_processes) == 1:
+                        pid = python_processes[0]
                         try:
-                            pid = int(pid.strip())
                             os.kill(pid, signal.SIGTERM)
-                            print(f"Sent SIGTERM to process {pid}")
-                        except (ValueError, ProcessLookupError, PermissionError) as e:
+                            print(f"Terminated Python process {pid} using port {port}")
+                            time.sleep(2)
+                            return True
+                        except (ProcessLookupError, PermissionError) as e:
                             print(f"Could not terminate process {pid}: {e}")
-
-                    # Give processes time to terminate gracefully
-                    time.sleep(2)
-                    return True
+                    elif len(python_processes) > 1:
+                        print(f"Found {len(python_processes)} Python processes using port {port}. Not terminating for safety.")
+                        print("Please manually stop the processes or use a different port.")
+                    else:
+                        print(f"No Python processes found using port {port}.")
 
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 # lsof not available or timed out
                 pass
 
-        # On Windows, try netstat approach
+        # On Windows, be similarly conservative
         elif os.name == 'nt':
             try:
+                # Find processes using the port
                 result = subprocess.run(['netstat', '-ano'],
                                       capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
                     lines = result.stdout.split('\n')
+                    pids = []
                     for line in lines:
                         if f':{port} ' in line and 'LISTENING' in line:
                             parts = line.split()
                             if len(parts) >= 5:
                                 try:
                                     pid = int(parts[-1])
-                                    subprocess.run(['taskkill', '/F', '/PID', str(pid)],
-                                                 capture_output=True, timeout=5)
-                                    print(f"Terminated process {pid} using port {port}")
-                                    time.sleep(1)
-                                    return True
-                                except (ValueError, subprocess.TimeoutExpired):
+                                    pids.append(pid)
+                                except ValueError:
                                     pass
+
+                    # Check if any of these PIDs are Python processes
+                    python_pids = []
+                    for pid in pids:
+                        try:
+                            tasklist_result = subprocess.run(['tasklist', '/FI', f'PID eq {pid}', '/FO', 'CSV'],
+                                                           capture_output=True, text=True, timeout=3)
+                            if 'python' in tasklist_result.stdout.lower() or 'streamlit' in tasklist_result.stdout.lower():
+                                python_pids.append(pid)
+                        except subprocess.TimeoutExpired:
+                            pass
+
+                    if len(python_pids) == 1:
+                        pid = python_pids[0]
+                        try:
+                            subprocess.run(['taskkill', '/F', '/PID', str(pid)],
+                                         capture_output=True, timeout=5)
+                            print(f"Terminated Python process {pid} using port {port}")
+                            time.sleep(1)
+                            return True
+                        except subprocess.TimeoutExpired:
+                            print(f"Could not terminate process {pid}")
+                    elif len(python_pids) > 1:
+                        print(f"Found {len(python_pids)} Python processes using port {port}. Not terminating for safety.")
+
             except (subprocess.TimeoutExpired, FileNotFoundError):
                 pass
 
@@ -119,6 +156,48 @@ def attempt_port_cleanup(host, port):
         print(f"Port cleanup attempt failed: {e}")
 
     return False
+
+
+def validate_dataset_success(results_dir):
+    """
+    Validate that the results directory contains successful UORCA analyses.
+
+    Args:
+        results_dir: Path to UORCA results directory
+
+    Returns:
+        tuple: (is_valid, error_message, success_count)
+    """
+    try:
+        results_path = Path(results_dir).resolve()
+
+        # Look for GSE*/metadata/analysis_info.json files
+        analysis_info_files = list(results_path.glob("*/metadata/analysis_info.json"))
+
+        if not analysis_info_files:
+            return False, "No analysis_info.json files found in GSE*/metadata/ subdirectories", 0
+
+        success_count = 0
+        total_files = len(analysis_info_files)
+
+        for info_file in analysis_info_files:
+            try:
+                import json
+                with open(info_file, 'r') as f:
+                    data = json.load(f)
+                    if data.get('analysis_success') is True:
+                        success_count += 1
+            except (json.JSONDecodeError, IOError) as e:
+                # Skip files that can't be read or parsed
+                continue
+
+        if success_count == 0:
+            return False, f"No successful analyses found. Found {total_files} analysis files but none have 'analysis_success': true", 0
+
+        return True, f"Found {success_count} successful analyses out of {total_files} total", success_count
+
+    except Exception as e:
+        return False, f"Error validating dataset: {e}", 0
 
 
 def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
@@ -159,17 +238,14 @@ def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
             print(f"Error: Results path is not a directory: {results_dir}")
             sys.exit(1)
 
-        # Check if it looks like a UORCA results directory
-        # Look for the specific UORCA structure: GSE*/metadata/analysis_info.json, etc.
-        has_analysis_info = list(results_path.glob("*/metadata/analysis_info.json"))
-        has_contrasts = list(results_path.glob("*/metadata/contrasts.csv"))
-        has_cpm_data = list(results_path.glob("*/RNAseqAnalysis/CPM.csv"))
+        # Validate that the directory contains successful UORCA analyses
+        is_valid, validation_message, success_count = validate_dataset_success(results_dir)
 
-        if not (has_analysis_info or has_contrasts or has_cpm_data):
-            print(f"Error: Directory does not contain UORCA results: {results_dir}")
-            print("Expected structure: GSE*/metadata/analysis_info.json, GSE*/metadata/contrasts.csv, GSE*/RNAseqAnalysis/CPM.csv")
-            print("Please provide a valid UORCA results directory.")
+        if not is_valid:
+            print("""Please provide a directory with successful UORCA analyses. \n\nIf you believe that the directory is correct, please run: cat GSE*/metadata/analysis_info.json | grep '"analysis_success": true' - this checks for successful analyses.""")
             sys.exit(1)
+        else:
+            print(f"Validation successful: {validation_message}")
 
         # Count analysis folders using same logic as ResultsIntegrator
         analysis_folders = []
@@ -227,25 +303,15 @@ def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
 
     # Check if the requested port is available
     if not is_port_available(host, port):
-        print(f"Port {port} is already in use.")
-
-        # Attempt to clean up the port
-        print("Attempting to free up the port...")
-        cleanup_success = attempt_port_cleanup(host, port)
-
-        # Check if port is now available after cleanup attempt
-        if cleanup_success and is_port_available(host, port):
-            print(f"Successfully freed up port {port}")
+        print(f"Port {port} is already in use. Finding an available port...")
+        available_port = find_available_port(host, port)
+        if available_port is None:
+            print(f"Error: Could not find an available port starting from {port}")
+            print("Please try a different port or manually stop the existing service.")
+            sys.exit(1)
         else:
-            print("Could not free up the port. Finding an available port...")
-            available_port = find_available_port(host, port)
-            if available_port is None:
-                print(f"Error: Could not find an available port starting from {port}")
-                print("Please try a different port or manually stop the existing service.")
-                sys.exit(1)
-            else:
-                print(f"Using port {available_port} instead of {port}")
-                port = available_port
+            print(f"Using port {available_port} instead of {port}")
+            port = available_port
 
     # Build streamlit command for direct execution
     cmd = [
@@ -326,6 +392,11 @@ def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
         sys.exit(1)
     except KeyboardInterrupt:
         print("\n\nStopping UORCA Explorer...")
+
+        # Attempt conservative cleanup of the port we were using
+        print("Cleaning up...")
+        attempt_conservative_port_cleanup(host, port)
+
         print("Thanks for using UORCA Explorer! Hopefully you found the analyses to be well orca-strated!")
         sys.exit(0)
 
