@@ -226,7 +226,7 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
 # 4) Contrast mini-summary
 @server.tool()
 @log_ai_agent_tool
-async def summarize_contrast(contrast_id: str, lfc_thresh: float, p_thresh: float, max_genes: int = 10) -> str:
+async def summarise_contrast(contrast_id: str, lfc_thresh: float, p_thresh: float, max_genes: int = 10) -> str:
     """
     Generate a comprehensive summary of differential expression within a specific experimental contrast, providing both quantitative overview and identification of the most significantly changed genes. This tool gives you a rapid assessment of the scope and magnitude of differential expression in any single experimental condition. The summary includes the total count of significantly differentially expressed genes (which indicates the overall transcriptional response magnitude), the top most significantly changed genes ranked by absolute log fold change (which identifies the strongest individual responses), and summary statistics like mean and median log fold changes (which characterize the overall direction and magnitude of expression changes). Use this tool when you want to quickly assess whether a particular contrast shows strong differential expression signals worth investigating further, or to get context about the biological magnitude of responses in specific experimental conditions.
 

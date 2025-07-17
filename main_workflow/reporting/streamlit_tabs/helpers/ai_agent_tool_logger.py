@@ -262,7 +262,7 @@ def log_ai_agent_tool(func):
     - get_most_common_genes
     - get_gene_contrast_stats
     - filter_genes_by_contrast_sets
-    - summarize_contrast
+    - summarise_contrast
     """
     tool_logger = get_ai_tool_logger()
 

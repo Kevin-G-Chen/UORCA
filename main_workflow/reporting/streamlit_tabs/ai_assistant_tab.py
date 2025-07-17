@@ -439,7 +439,7 @@ Please perform comprehensive analysis using your four tools:
 1. Use get_most_common_genes() to find genes frequently differentially expressed across these selected contrasts
 2. Use filter_genes_by_contrast_sets() to find genes specific to subsets of contrasts (e.g., treatment-specific vs control-specific)
 3. Use get_gene_contrast_stats() to drill into interesting genes
-4. Use summarize_contrast() to understand individual contrast patterns
+4. Use summarise_contrast() to understand individual contrast patterns
 
 Choose reasonable thresholds and return:
 1. Key genes identified with their biological significance
@@ -1251,7 +1251,7 @@ def _get_tool_description(tool_name: str) -> str:
 
         'get_gene_contrast_stats': "Looks up detailed information about how multiple genes behave across different experimental conditions, including how much they changed and how confident we are in those changes.",
 
-        'summarize_contrast': "Provides an overview of a specific experimental comparison, including the most important genes and overall patterns of change.",
+        'summarise_contrast': "Provides an overview of a specific experimental comparison, including the most important genes and overall patterns of change.",
 
         'calculate_gene_correlation': "Calculates how similarly genes are expressed across different experimental conditions using their average expression levels. This helps identify genes that work together in biological pathways or are co-regulated.",
 
@@ -1316,18 +1316,23 @@ data <- read.csv("ai_agent_working_dataset.csv")
 set_a <- {set_a_str}
 set_b <- {set_b_str}
 
-# Filter for significant genes in set A
-genes_a <- data[data$contrast_id %in% set_a &
-                abs(data$logFC) >= {lfc_thresh} &
-                data$pvalue < {p_thresh}, "Gene"]
+# Find genes significant in ALL contrasts of set A
+sig_data_a <- data[data$contrast_id %in% set_a &
+                   abs(data$logFC) >= {lfc_thresh} &
+                   data$pvalue < {p_thresh}, ]
 
-# Filter for significant genes in set B
+# Count how many set A contrasts each gene appears in
+gene_counts_a <- table(sig_data_a$Gene)
+# Keep only genes that appear in ALL set A contrasts
+genes_all_a <- names(gene_counts_a[gene_counts_a == length(set_a)])
+
+# Filter for significant genes in ANY contrast of set B
 genes_b <- data[data$contrast_id %in% set_b &
                 abs(data$logFC) >= {lfc_thresh} &
                 data$pvalue < {p_thresh}, "Gene"]
 
-# Find genes unique to set A
-unique_to_a <- setdiff(unique(genes_a), unique(genes_b))
+# Find genes unique to set A (significant in ALL A, but not in any B)
+unique_to_a <- setdiff(genes_all_a, unique(genes_b))
 print(paste("Genes unique to set A:", length(unique_to_a)))
 print(unique_to_a)'''
 
@@ -1340,22 +1345,27 @@ data = pd.read_csv("ai_agent_working_dataset.csv")
 set_a = {set_a_py}
 set_b = {set_b_py}
 
-# Filter for significant genes in set A
-genes_a = set(data[
+# Find genes significant in ALL contrasts of set A
+sig_data_a = data[
     (data['contrast_id'].isin(set_a)) &
     (abs(data['logFC']) >= {lfc_thresh}) &
     (data['pvalue'] < {p_thresh})
-]['Gene'])
+]
 
-# Filter for significant genes in set B
+# Count how many set A contrasts each gene appears in
+gene_counts_a = sig_data_a.groupby('Gene')['contrast_id'].nunique()
+# Keep only genes that appear in ALL set A contrasts
+genes_all_a = set(gene_counts_a[gene_counts_a == len(set_a)].index)
+
+# Filter for significant genes in ANY contrast of set B
 genes_b = set(data[
     (data['contrast_id'].isin(set_b)) &
     (abs(data['logFC']) >= {lfc_thresh}) &
     (data['pvalue'] < {p_thresh})
 ]['Gene'])
 
-# Find genes unique to set A
-unique_to_a = genes_a - genes_b
+# Find genes unique to set A (significant in ALL A, but not in any B)
+unique_to_a = genes_all_a - genes_b
 print(f"Genes unique to set A: {{len(unique_to_a)}}")
 print(list(unique_to_a))'''
 
@@ -1391,7 +1401,7 @@ data = pd.read_csv("ai_agent_working_dataset.csv")
 gene_stats = data[{py_filter}][["Gene", "contrast_id", "logFC", "pvalue"]]
 print(gene_stats)'''
 
-    elif tool_name == 'summarize_contrast':
+    elif tool_name == 'summarise_contrast':
         contrast_id = parameters.get('contrast_id', 'contrast1')
         lfc_thresh = parameters.get('lfc_thresh', 1.0)
         p_thresh = parameters.get('p_thresh', 0.05)
@@ -1717,7 +1727,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                     if genes:
                                         # Display genes as wrapped text
                                         gene_text = ', '.join(genes)
-                                        st.text_area("Genes:", value=gene_text, height=150, disabled=True, key=f"genes_output_{call.get('call_id', hash(gene_text))}")
+                                        st.code(gene_text, language = 'r')
                                         st.caption(f"Total genes: {len(genes)}")
                                     else:
                                         st.write("No genes found")
@@ -1747,7 +1757,7 @@ def _display_tool_calls_detailed(tool_calls: List[Dict]):
                                 else:
                                     st.info("No gene statistics available")
 
-                            elif tool_name == 'summarize_contrast' and parsed_output:
+                            elif tool_name == 'summarise_contrast' and parsed_output:
                                 # Display total DEGs as text and top genes as table
                                 if isinstance(parsed_output, dict):
                                     total_degs = parsed_output.get('total_DEGs', 0)
