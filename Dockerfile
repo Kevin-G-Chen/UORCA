@@ -1,51 +1,32 @@
 FROM rocker/r-base:4.5.0
 
-# Debian testing provides Python 3.12 (and distutils has moved to its own wheel)
+# Install system dependencies including Python 3.13
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.12 python3.12-dev python3.12-venv \
+    python3.13 python3.13-dev python3.13-venv \
     build-essential wget curl git ca-certificates gnupg \
     libxml2-dev libssl-dev libcurl4-openssl-dev libgit2-dev \
     libpng-dev libjpeg-dev libtiff5-dev zlib1g-dev pigz less vim \
-    && ln -s /usr/bin/python3.12 /usr/local/bin/python \
+    && ln -s /usr/bin/python3.13 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-# Bioconductor that matches the R in this image
+# Install uv
+ENV CARGO_HOME=/root/.cargo
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv
+
+# Install R packages
 RUN Rscript -e "install.packages('BiocManager', repos='https://cloud.r-project.org', ask=FALSE)" \
     && Rscript -e "BiocManager::install(version='3.21', ask=FALSE, update=FALSE)" \
     && Rscript -e "BiocManager::install(c('edgeR','limma','tximport','ComplexHeatmap','gplots'), ask=FALSE, update=FALSE)"
 
-###############################################################################
-#  2.  Python 3.11 + uv (system-site install via --system)
-###############################################################################
-
-ENV CARGO_HOME=/root/.cargo
-# Install uv and make it available in PATH
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    ln -sf /root/.local/bin/uv /usr/local/bin/uv
-
-# ---- dependency layer (better cache) ----
-WORKDIR /workspace
-COPY ./pyproject.toml uv.lock* ./
-
-# install all Python deps straight into the image-wide interpreter
-RUN uv sync --no-cache-dir   # reproducible, lock-file aware
-
-# project code copied afterwards so dependency cache stays hot
-COPY ./main_workflow /workspace/main_workflow
-
-###############################################################################
-#  3.  Command-line genomics tools
-###############################################################################
+# Install genomics tools
 ARG KALLISTO_VER=0.51.1
 RUN wget -q https://github.com/pachterlab/kallisto/releases/download/v${KALLISTO_VER}/kallisto_linux-v${KALLISTO_VER}.tar.gz && \
     tar -xzf kallisto_linux-v${KALLISTO_VER}.tar.gz && \
     mv kallisto/kallisto /usr/local/bin/ && \
     rm -rf kallisto*.tar.gz kallisto
 
-
-###############################################################################
-#  SRA Toolkit 3.2.1  (adds fasterq-dump, prefetch, etc.)
-###############################################################################
+# Install SRA Toolkit
 ARG SRA_VER=3.2.1
 RUN set -eux; \
     arch="$(uname -m)"; \
@@ -61,32 +42,46 @@ RUN set -eux; \
     mkdir -p /root/.ncbi && \
     printf '/LIBS/GUID = "docker-build-guid"\nconfig/default = "true"\n' > /root/.ncbi/user-settings.mkfg
 
-# NCBI Entrez Direct (EDirect) – official one-liner
-
+# Install NCBI Entrez Direct (EDirect)
 RUN set -eux; \
     echo ">>> Installing EDirect …"; \
     sh -c "$(curl -fsSL https://ftp.ncbi.nlm.nih.gov/entrez/entrezdirect/install-edirect.sh)"; \
-    # Option A – one-liner that symlinks every helper into /usr/local/bin
     find /root/edirect -maxdepth 1 -type f -perm -u+x -exec ln -sf {} /usr/local/bin/ \; ; \
-    # Option B – instead of the line above, keep them in place and export PATH:
-    #     echo 'export PATH=$PATH:/root/edirect' > /etc/profile.d/edirect.sh ; \
-    #     ENV PATH="/root/edirect:${PATH}"                                    ; \
-    # Quick build-time check:
     /root/edirect/esearch -version | head -1
-###############################################################################
-#  4.  Final image metadata
-###############################################################################
+
+# Set up workspace and create proper venv
 WORKDIR /workspace
+
+# Copy dependency files first for better caching
+COPY pyproject.toml uv.lock ./
+
+# Create venv with correct Python interpreter that will be available at runtime
+RUN uv venv .venv --python=/usr/bin/python3.13
+
+# Install dependencies into the venv
+RUN uv sync --no-cache
+
+# Set up environment to use the venv
+ENV PATH="/workspace/.venv/bin:${PATH}"
+ENV VIRTUAL_ENV="/workspace/.venv"
+ENV UV_NO_SYNC=1
+
+# Copy project code
+COPY uorca/ ./uorca/
+COPY main_workflow/ ./main_workflow/
+
+# Install the UORCA package in development mode so entry points are available
+RUN uv pip install -e .
+
+# Verify installation
+RUN which uorca && uorca --help
+
+# Final environment check
 RUN echo ">>> FINAL ENVIRONMENT:"; \
     echo "PATH=$PATH"; \
-    which python uv edirect || true; \
-    env | sort
+    echo "VIRTUAL_ENV=$VIRTUAL_ENV"; \
+    which python uv uorca edirect || true; \
+    python --version; \
+    uv --version
 
 CMD ["/bin/bash"]
-
-###############################################################################
-#  Build:
-#     docker build -t uorca:0.2 .
-#  Run:
-#     docker run --rm -it -v $(pwd):/workspace uorca:0.2
-###############################################################################

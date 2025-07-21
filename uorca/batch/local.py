@@ -90,14 +90,14 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             '-v', f'{project_root}:/workspace',
             '--workdir', '/workspace',  # Mount source code so we use local changes
             # Pass environment variables
-
+            '-e', 'UV_NO_SYNC=1',
             '-e', f'ENTREZ_EMAIL={os.getenv("ENTREZ_EMAIL", "")}',
             '-e', f'OPENAI_API_KEY={os.getenv("OPENAI_API_KEY", "")}',
             '-e', f'ENTREZ_API_KEY={os.getenv("ENTREZ_API_KEY", "")}',
             # Use the specified Docker image
             docker_image,
             # Command to run inside container
-            'uv', 'run', 'python', 'main_workflow/master.py',
+            'python', 'main_workflow/master.py',
             '--accession', accession,
             '--output_dir', docker_output_dir,
             '--resource_dir', docker_resource_dir
