@@ -2,6 +2,45 @@
 
 A fully containerized, AI-powered workflow for automated RNA-seq analysis of public datasets from the Gene Expression Omnibus (GEO).
 
+## Quickstart
+
+Get started with UORCA in just a few steps:
+
+```bash
+# Clone the repository
+git clone https://github.com/Kevin-G-Chen/UORCA.git
+cd UORCA
+
+# Set up the uv environment
+uv venv
+uv pip install -e .
+```
+
+From here, specify your OpenAI API key and Entrez email in a `.env` file. Follow the template in `.env.example`:
+
+```bash
+ENTREZ_EMAIL=your.email@example.com
+OPENAI_API_KEY=sk-your-openai-api-key-here
+# Optional: If you have an NCBI API key, you can also set it here
+# This is recommended for higher rate limits and better performance
+ENTREZ_API_KEY=your-ncbi-api-key-here
+```
+
+```bash
+# 1. Find relevant datasets for your research
+uv run uorca identify -q "cancer stem cell differentiation" -o datasets
+
+# An output CSV file (`datasets.csv`) will be generated with valid and relevant GEO accessions.
+
+# 2. Process datasets
+uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results  # For HPC clusters
+# OR
+uv run uorca run local --csv datasets.csv --output_dir ../UORCA_results  # For local machines
+
+# 3. Explore results interactively
+uv run uorca explore ../UORCA_results
+```
+
 ## Objective and purpose
 
 UORCA addresses a critical bottleneck in genomics research: the time-consuming process of manually analyzing public RNA-seq datasets. While thousands of high-quality datasets exist in public repositories like GEO, researchers often lack the time, expertise, or computational resources to systematically analyze them for their research questions.
@@ -20,41 +59,6 @@ The workflow automatically handles:
 - Statistical analysis and visualization
 - Report generation with publication-quality figures
 
-## What specific value would UORCA provide?
-
-1. **Time savings**: Reduces weeks of manual analysis to hours of automated processing
-2. **Consistency**: Standardized analysis pipeline ensures reproducible results across datasets
-3. **Accessibility**: No bioinformatics expertise required - just provide a GEO accession
-4. **Scalability**: Process dozens of datasets simultaneously using HPC resources
-5. **Quality**: AI-powered metadata processing handles complex experimental designs
-6. **Integration**: Tools for meta-analysis across multiple datasets
-7. **Exploration**: Interactive web interface for deep-dive analysis of results
-
-## Quickstart
-
-Get started with UORCA in just a few steps:
-
-```bash
-# Clone the repository
-git clone https://github.com/Kevin-G-Chen/UORCA.git
-cd UORCA
-
-# Set up the uv environment
-uv venv
-uv pip install -e .
-
-# 2. Find relevant datasets for your research
-uv run uorca identify -q "cancer stem cell differentiation" -o datasets.csv
-
-# 3. Process datasets (choose your environment)
-uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results  # For HPC clusters
-# OR
-uv run uorca run local --csv datasets.csv --output_dir ../UORCA_results  # For local machines
-
-# 4. Explore results interactively
-uv run uorca explore ../UORCA_results
-```
-
 ## End Result
 
 For each processed dataset, UORCA generates:
@@ -68,14 +72,6 @@ For multiple datasets, additional integration tools provide:
 - Meta-analysis across datasets identifying consistent patterns
 - Interactive multi-dataset visualizations
 - Integrated gene prioritization and pathway analysis
-
-## Who will benefit from UORCA?
-
-- **Biologists** seeking to leverage public data without bioinformatics expertise
-- **Bioinformaticians** looking to standardize and accelerate their analysis workflows
-- **Research groups** wanting to systematically analyze multiple related datasets
-- **Meta-analysis researchers** integrating findings across studies
-- **Educational institutions** teaching RNA-seq analysis with real datasets
 
 ## Prerequisites
 
