@@ -954,7 +954,7 @@ def main():
         logging.info(f"Batch analysis filtering: {len(valid_datasets)} valid → {len(assessed_datasets)} assessed → {len(above_threshold)} above threshold ({args.threshold})")
 
         # Set path for the multi-dataset CSV in the output directory
-        multi_csv_path = output_path / 'batch_analysis_input.csv'
+        multi_csv_path = output_path / 'selected_datasets.csv'
 
         multi_df.to_csv(multi_csv_path, index=False)
         message = f"Generated batch analysis input CSV at {multi_csv_path} with {len(multi_df)} datasets (threshold {args.threshold} applied)"
