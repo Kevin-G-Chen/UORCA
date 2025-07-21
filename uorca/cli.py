@@ -110,6 +110,8 @@ For more help on a specific command, use:
 
     slurm_parser.add_argument("--csv", required=True,
                              help="CSV file with dataset information (must have 'Accession' column)")
+    slurm_parser.add_argument("--config",
+                             help="YAML configuration file for SLURM settings (default: slurm_config.yaml if exists)")
     slurm_parser.add_argument("--output_dir", default="../UORCA_results",
                              help="Output directory for results")
     slurm_parser.add_argument("--resource_dir", default="./data/kallisto_indices/",
@@ -244,14 +246,25 @@ def run_identify(args):
 
 def run_batch_slurm(args):
     """Run batch processing using SLURM."""
-    from uorca.batch import get_batch_processor
+    from uorca.batch.slurm import SlurmBatchProcessor
+    from pathlib import Path
 
     print("Starting SLURM batch processing...")
 
     try:
-        processor = get_batch_processor('slurm')
+        # Handle config file auto-detection
+        config_file = args.config
+        if not config_file:
+            # Auto-detect slurm_config.yaml in current directory
+            default_config = Path("slurm_config.yaml")
+            if default_config.exists():
+                config_file = str(default_config)
+                print(f"Auto-detected config file: {config_file}")
 
-        # Prepare parameters
+        # Initialize processor with config file
+        processor = SlurmBatchProcessor(config_file=config_file)
+
+        # Prepare parameters - CLI args override config file settings
         params = {
             'max_parallel': args.max_parallel,
             'max_storage_gb': args.max_storage_gb,

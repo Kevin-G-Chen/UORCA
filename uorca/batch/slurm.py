@@ -10,6 +10,7 @@ import os
 import subprocess
 import time
 import pandas as pd
+import yaml
 from datetime import datetime
 from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
@@ -26,8 +27,10 @@ class SlurmBatchProcessor(BatchProcessor):
     specifically for SLURM-based HPC systems.
     """
 
-    def __init__(self):
+    def __init__(self, config_file: Optional[str] = None):
         """Initialize the SLURM batch processor."""
+        self.config_file = config_file
+        self._previous_job_states = {}  # Track job states for change detection
         super().__init__()
         self._validate_slurm_environment()
 
@@ -44,20 +47,54 @@ class SlurmBatchProcessor(BatchProcessor):
             raise EnvironmentError(f"Missing SLURM commands: {missing_commands}")
 
     @property
+    def _load_config(self) -> Dict[str, Any]:
+        """Load configuration from YAML file if provided."""
+        if not self.config_file:
+            return {}
+
+        try:
+            config_path = Path(self.config_file)
+            if not config_path.exists():
+                logging.warning(f"Config file not found: {self.config_file}, using defaults")
+                return {}
+
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+
+            logging.info(f"Loaded SLURM configuration from {self.config_file}")
+            return config or {}
+        except Exception as e:
+            logging.warning(f"Failed to load config file {self.config_file}: {e}, using defaults")
+            return {}
+
     def default_parameters(self) -> Dict[str, Any]:
-        """Get default parameters for SLURM batch processing."""
-        return {
-            'max_parallel': 10,
-            'max_storage_gb': 500,
+        """Get default parameters for SLURM batch processing, merging config file and defaults."""
+        # Load config file
+        config = self._load_config()
+
+        # Extract relevant sections
+        slurm_config = config.get('slurm', {})
+        resource_config = config.get('resource_management', {})
+        container_config = config.get('container', {})
+
+        # Merge with defaults (CLI args will override these later)
+        defaults = {
+            'max_parallel': resource_config.get('max_parallel', 10),
+            'max_storage_gb': resource_config.get('max_storage_gb', 500),
             'cleanup': True,
             'resource_dir': './data/kallisto_indices/',
-            'partition': 'tki_agpdev',
-            'constraint': 'icx',
-            'cpus_per_task': 8,
-            'memory': '16G',
-            'time_limit': '6:00:00',
-            'check_interval': 30
+            'partition': slurm_config.get('partition', 'tki_agpdev'),
+            'constraint': slurm_config.get('constraint', 'icx'),
+            'cpus_per_task': slurm_config.get('cpus_per_task', 8),
+            'memory': slurm_config.get('memory', '16G'),
+            'time_limit': slurm_config.get('time_limit', '6:00:00'),
+            'check_interval': resource_config.get('check_interval', 30),
+            'container_engine': container_config.get('engine', 'apptainer'),
+            'apptainer_image': container_config.get('apptainer_image', '/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/container_testing/uorca_0.1.0.sif'),
+            'docker_image': container_config.get('docker_image', 'kevingchen/uorca:0.1.0')
         }
+
+        return defaults
 
     def submit_datasets(self, csv_file: str, output_dir: str, **kwargs) -> int:
         """
@@ -228,6 +265,13 @@ class SlurmBatchProcessor(BatchProcessor):
         env = Environment(loader=FileSystemLoader(str(template_dir)))
         template = env.get_template('run_single_dataset.sbatch.j2')
 
+        # Determine container engine and image
+        container_engine = params.get('container_engine', 'apptainer')
+        if container_engine == 'apptainer':
+            container_image = params.get('apptainer_image', '/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/container_testing/uorca_0.1.0.sif')
+        else:
+            container_image = params.get('docker_image', 'kevingchen/uorca:0.1.0')
+
         # Render template with parameters
         script_content = template.render(
             accession=accession,
@@ -240,7 +284,9 @@ class SlurmBatchProcessor(BatchProcessor):
             constraint=params.get('constraint', 'icx'),
             cpus_per_task=params.get('cpus_per_task', 8),
             memory=params.get('memory', '16G'),
-            time_limit=params.get('time_limit', '6:00:00')
+            time_limit=params.get('time_limit', '6:00:00'),
+            container_engine=container_engine,
+            container_image=container_image
         )
 
         return script_content
@@ -302,6 +348,96 @@ class SlurmBatchProcessor(BatchProcessor):
 
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return 0
+
+    def monitor_job_progress(self, output_dir: str) -> Dict[str, int]:
+        """
+        Monitor job progress and only print updates when status changes.
+
+        Args:
+            output_dir: Output directory containing job status files
+
+        Returns:
+            Dictionary with counts of jobs in each state
+        """
+        status_dir = Path(output_dir) / "job_status"
+
+        if not status_dir.exists():
+            return {'running': 0, 'completed': 0, 'failed': 0}
+
+        current_states = {}
+        state_counts = {'running': 0, 'completed': 0, 'failed': 0}
+
+        # Read current job statuses
+        for status_file in status_dir.glob("*_status.json"):
+            try:
+                with open(status_file, 'r') as f:
+                    status = json.load(f)
+
+                accession = status.get('accession', 'unknown')
+                job_state = status.get('state', 'unknown')
+                job_id = status.get('job_id', 'unknown')
+
+                current_states[accession] = {
+                    'state': job_state,
+                    'job_id': job_id,
+                    'storage_gb': status.get('storage_gb', 0)
+                }
+
+                # Count states
+                if job_state in state_counts:
+                    state_counts[job_state] += 1
+
+            except Exception as e:
+                logging.warning(f"Failed to read status file {status_file}: {e}")
+                continue
+
+        # Check for changes and print updates
+        changes_detected = False
+        for accession, current_info in current_states.items():
+            previous_info = self._previous_job_states.get(accession)
+
+            if previous_info is None:
+                # New job
+                print(f"  ▶ {accession} (Job {current_info['job_id']}) - {current_info['state']}")
+                changes_detected = True
+            elif previous_info['state'] != current_info['state']:
+                # State change
+                old_state = previous_info['state']
+                new_state = current_info['state']
+
+                if new_state == 'completed':
+                    print(f"  ✅ {accession} - COMPLETED (was {old_state})")
+                elif new_state == 'failed':
+                    print(f"  ❌ {accession} - FAILED (was {old_state})")
+                elif new_state == 'running':
+                    print(f"  🔄 {accession} - STARTED (was {old_state})")
+                else:
+                    print(f"  ℹ️  {accession} - {old_state} → {new_state}")
+
+                changes_detected = True
+
+        # Check for jobs that disappeared (shouldn't happen normally)
+        for accession in self._previous_job_states:
+            if accession not in current_states:
+                print(f"  ⚠️  {accession} - Status file removed")
+                changes_detected = True
+
+        # Update tracking
+        self._previous_job_states = current_states.copy()
+
+        # Print summary only if there were changes or this is the first check
+        if changes_detected or not hasattr(self, '_monitoring_initialized'):
+            running = state_counts['running']
+            completed = state_counts['completed']
+            failed = state_counts['failed']
+            total = running + completed + failed
+
+            if total > 0:
+                print(f"  📊 Status: {running} running, {completed} completed, {failed} failed (total: {total})")
+
+            self._monitoring_initialized = True
+
+        return state_counts
 
     def check_job_status(self, job_id: str) -> Dict[str, Any]:
         """

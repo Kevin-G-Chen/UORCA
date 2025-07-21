@@ -1,0 +1,26 @@
+# UORCA SLURM Configuration File
+# This file contains cluster-specific settings for SLURM job submission
+# CLI arguments will override these settings when provided
+
+# Basic SLURM job parameters
+slurm:
+  partition: "name"
+  constraint: "contraint"
+  cpus_per_task: 8
+  memory: "16G"
+  time_limit: "6:00:00"
+
+# Resource management
+resource_management:
+  max_parallel: 10
+  max_storage_gb: 500
+  check_interval: 30
+
+# Container settings
+container:
+  # Primary engine: "apptainer" or "docker"
+  engine: "apptainer"
+
+  # Container image paths/names
+  apptainer_image: "path/to/uorca_0.1.0.sif"
+  docker_image: "kevingchen/uorca:0.1.0"
