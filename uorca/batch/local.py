@@ -84,6 +84,9 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         # Build Docker command
         cmd = [
             'docker', 'run', '--rm',
+            # Storage configuration to prevent disk space exhaustion
+            '--tmpfs', '/tmp:rw,size=20g',  # 20GB temporary filesystem
+            '--shm-size=4g',               # Increase shared memory
             # Mount volumes
             '-v', f'{output_path}:{docker_output_dir}',
             '-v', f'{resource_path}:{docker_resource_dir}',
