@@ -87,10 +87,12 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             # Mount volumes
             '-v', f'{output_path}:{docker_output_dir}',
             '-v', f'{resource_path}:{docker_resource_dir}',
-            '-v', f'{project_root}:/workspace',
-            '--workdir', '/workspace',  # Mount source code so we use local changes
+            '-v', f'{project_root}:/workspace/src',
+            '--workdir', '/workspace/src',  # Mount source code so we use local changes
             # Pass environment variables
             '-e', 'UV_NO_SYNC=1',
+            '-e', 'PATH=/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+            '-e', 'VIRTUAL_ENV=/workspace/.venv',
             '-e', f'ENTREZ_EMAIL={os.getenv("ENTREZ_EMAIL", "")}',
             '-e', f'OPENAI_API_KEY={os.getenv("OPENAI_API_KEY", "")}',
             '-e', f'ENTREZ_API_KEY={os.getenv("ENTREZ_API_KEY", "")}',
