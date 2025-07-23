@@ -384,7 +384,30 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
                     abundance_files.append(res["abundance_path"])
                     logger.info("✅ Kallisto completed for %s", sample)
                 else:
-                    logger.error("❌ Kallisto failed for %s. STDERR: %s", sample, res['stderr'])
+                    # Enhanced diagnostic logging for Kallisto failures
+                    stdout_msg = f"STDOUT: {res['stdout']}" if res['stdout'] else "STDOUT: (empty)"
+                    stderr_msg = f"STDERR: {res['stderr']}" if res['stderr'] else "STDERR: (empty)"
+
+                    # Add diagnostic context
+                    sample_pair = pairs[sample]
+                    r1_size = os.path.getsize(sample_pair[0]) / (1024*1024) if os.path.exists(sample_pair[0]) else -1
+                    r2_size = os.path.getsize(sample_pair[1]) / (1024*1024) if os.path.exists(sample_pair[1]) else -1
+
+                    diagnostic_info = f"R1: {sample_pair[0]} ({r1_size:.1f}MB), R2: {sample_pair[1]} ({r2_size:.1f}MB)"
+
+                    # Provide context-specific suggestions
+                    suggestion = ""
+                    if res['returncode'] == 1:
+                        suggestion = " | Possible index mismatch or corrupted FASTQ files"
+                    elif "pseudoalignment" in res['stderr'].lower():
+                        suggestion = " | Check if index organism matches your samples"
+                    elif "memory" in res['stderr'].lower():
+                        suggestion = " | Possible memory issue, try reducing parallel jobs"
+                    elif r1_size == 0 or r2_size == 0:
+                        suggestion = " | Empty FASTQ files detected"
+
+                    logger.error("❌ Kallisto failed for %s (return code: %d). %s | %s | Files: %s%s",
+                                sample, res['returncode'], stdout_msg, stderr_msg, diagnostic_info, suggestion)
                 results.append(res)
 
         # Store abundance files

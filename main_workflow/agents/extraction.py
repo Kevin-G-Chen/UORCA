@@ -440,8 +440,18 @@ async def download_fastqs(
             logger.info("Prefetch completed - %d/%d successful", successful_prefetch, len(need_prefetch))
 
     # Check which SRRs we need to convert to FASTQ
+    # This checks for existing compressed FASTQ files first, then SRA availability
+    ready_count = sum(1 for srr in srrs if fastq_ready(srr))
+    logger.info("SRRs with ready FASTQ files: %d", ready_count)
+
     need_conversion = [srr for srr in srrs if not fastq_ready(srr) and sra_path(srr).exists()]
     logger.info("SRRs needing conversion to FASTQ: %d", len(need_conversion))
+
+    # Log SRRs that have neither FASTQ nor SRA files
+    missing_both = [srr for srr in srrs if not fastq_ready(srr) and not sra_path(srr).exists()]
+    if missing_both:
+        logger.warning("SRRs missing both FASTQ and SRA files: %d (%s)",
+                      len(missing_both), ", ".join(missing_both[:5]) + ("..." if len(missing_both) > 5 else ""))
 
     # Find pigz for faster compression
     pigz = shutil.which("pigz")
@@ -472,7 +482,8 @@ async def download_fastqs(
         if max_spots:
             cmd += ["-X", str(max_spots)]
 
-        logger.info("▶ Running fasterq-dump on %s with %d threads", srr, conversion_threads)
+        logger.info("▶ Running fasterq-dump on %s with %d threads (SRA size: %.1f MB)",
+                   srr, conversion_threads, sra.stat().st_size / (1024*1024))
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -487,7 +498,7 @@ async def download_fastqs(
             logger.info("Fasterq-dump stderr for %s: %s", srr, stderr.decode().strip())
 
         if proc.returncode != 0:
-            logger.warning("fasterq-dump failed on %s with code %d", srr, proc.returncode)
+            logger.warning("fasterq-dump failed on %s with code %d. Check if SRA file is valid.", srr, proc.returncode)
             continue
 
         # Compress the FASTQ files one by one (simpler approach)
@@ -515,7 +526,16 @@ async def download_fastqs(
                 else:
                     logger.warning("Compression failed for %s: %s", fq, stderr.decode().strip())
 
-
+            # After successful compression, clean up the SRA file to save space
+            if fastq_ready(srr):
+                try:
+                    sra_size_mb = sra.stat().st_size / (1024*1024)
+                    sra.unlink()
+                    logger.info("🗑️  Cleaned up SRA file: %s (freed %.1f MB)", sra.name, sra_size_mb)
+                except Exception as e:
+                    logger.warning("Failed to remove SRA file %s: %s", sra, e)
+            else:
+                logger.warning("FASTQ files not ready after compression for %s, keeping SRA file", srr)
 
         converted += 1
         logger.info("Completed processing for %s (%d/%d)",

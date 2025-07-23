@@ -3,9 +3,11 @@ FROM rocker/r-base:4.5.0
 # Install system dependencies including Python 3.13
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.13 python3.13-dev python3.13-venv \
-    build-essential wget curl git ca-certificates gnupg \
+    build-essential cmake wget curl git ca-certificates gnupg \
     libxml2-dev libssl-dev libcurl4-openssl-dev libgit2-dev \
     libpng-dev libjpeg-dev libtiff5-dev zlib1g-dev pigz less vim \
+    hdf5-tools libhdf5-dev hdf5-helpers libhdf5-serial-dev \
+    autoconf \
     && ln -s /usr/bin/python3.13 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
@@ -19,12 +21,21 @@ RUN Rscript -e "install.packages('BiocManager', repos='https://cloud.r-project.o
     && Rscript -e "BiocManager::install(version='3.21', ask=FALSE, update=FALSE)" \
     && Rscript -e "BiocManager::install(c('edgeR','limma','tximport','ComplexHeatmap','gplots'), ask=FALSE, update=FALSE)"
 
-# Install genomics tools
-ARG KALLISTO_VER=0.51.1
-RUN wget -q https://github.com/pachterlab/kallisto/releases/download/v${KALLISTO_VER}/kallisto_linux-v${KALLISTO_VER}.tar.gz && \
-    tar -xzf kallisto_linux-v${KALLISTO_VER}.tar.gz && \
-    mv kallisto/kallisto /usr/local/bin/ && \
-    rm -rf kallisto*.tar.gz kallisto
+# Install genomics tools - compile Kallisto from source following official instructions
+WORKDIR /tmp
+RUN git clone https://github.com/pachterlab/kallisto.git && \
+    cd kallisto && \
+    cd ext/htslib && \
+    autoheader && \
+    autoconf && \
+    cd ../.. && \
+    mkdir build && \
+    cd build && \
+    cmake .. && \
+    make && \
+    make install && \
+    cd / && \
+    rm -rf /tmp/kallisto
 
 # Install SRA Toolkit
 ARG SRA_VER=3.2.1
