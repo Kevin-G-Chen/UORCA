@@ -9,6 +9,7 @@ data/*
 .env
 *scratch/*
 .aider*
+slurm_config.yaml
 
 # Node.js
 node_modules/
