@@ -109,13 +109,17 @@ class BatchProcessor(ABC):
         if missing_columns:
             raise ValueError(f"Missing required columns: {missing_columns}")
 
-        # Add default values for optional columns
-        if 'DatasetSizeBytes' not in df.columns:
-            df['DatasetSizeBytes'] = 0
-            print("Warning: DatasetSizeBytes column not found, using default value of 0")
-
-        # Calculate storage requirements (with safety factor)
-        df['SafeStorageGB'] = (df['DatasetSizeBytes'] / (1024**3)) * 3.0
+        # Handle dataset size columns (prefer DatasetSizeGB, fallback to DatasetSizeBytes)
+        if 'DatasetSizeGB' in df.columns:
+            # Size already in GB, apply safety factor
+            df['SafeStorageGB'] = df['DatasetSizeGB'] * 3.0
+        elif 'DatasetSizeBytes' in df.columns:
+            # Convert from bytes to GB and apply safety factor
+            df['SafeStorageGB'] = (df['DatasetSizeBytes'] / (1024**3)) * 3.0
+        else:
+            # No size information available
+            df['SafeStorageGB'] = 0
+            print("Warning: Neither DatasetSizeGB nor DatasetSizeBytes column found, using default value of 0")
 
         return df
 

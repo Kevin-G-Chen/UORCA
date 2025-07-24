@@ -104,8 +104,25 @@ For more help on a specific command, use:
     slurm_parser = run_subparsers.add_parser(
         'slurm',
         help='Run batch processing on SLURM cluster',
-        description='Submit batch jobs to SLURM for dataset processing',
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        description='Submit batch jobs to SLURM for dataset processing. SLURM-specific parameters (partition, constraint, CPUs, memory, time limits) should be configured in slurm_config.yaml.',
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        epilog="""
+Configuration:
+  SLURM job parameters are configured via YAML file (default: slurm_config.yaml):
+    - partition, constraint, cpus_per_task, memory, time_limit
+    - container settings (engine, image paths)
+    - resource management (max_parallel, max_storage_gb)
+
+  CLI arguments override workflow-level settings but not SLURM job parameters.
+
+Example slurm_config.yaml:
+  slurm:
+    partition: "tki_agpdev"
+    constraint: "clx"
+    cpus_per_task: 12
+    memory: "16G"
+    time_limit: "6:00:00"
+        """
     )
 
     slurm_parser.add_argument("--csv", required=True,
@@ -122,16 +139,6 @@ For more help on a specific command, use:
                              help="Maximum storage usage in GB")
     slurm_parser.add_argument("--no-cleanup", action="store_true",
                              help="Skip cleanup of FASTQ and SRA files after analysis")
-    slurm_parser.add_argument("--partition", default="tki_agpdev",
-                             help="SLURM partition to use")
-    slurm_parser.add_argument("--constraint", default="icx",
-                             help="SLURM constraint for node selection")
-    slurm_parser.add_argument("--cpus_per_task", type=int, default=8,
-                             help="CPUs per task")
-    slurm_parser.add_argument("--memory", default="16G",
-                             help="Memory per job")
-    slurm_parser.add_argument("--time_limit", default="6:00:00",
-                             help="Time limit per job (HH:MM:SS)")
 
     slurm_parser.set_defaults(func=run_batch_slurm)
 
@@ -269,12 +276,7 @@ def run_batch_slurm(args):
             'max_parallel': args.max_parallel,
             'max_storage_gb': args.max_storage_gb,
             'cleanup': not args.no_cleanup,
-            'resource_dir': args.resource_dir,
-            'partition': args.partition,
-            'constraint': args.constraint,
-            'cpus_per_task': args.cpus_per_task,
-            'memory': args.memory,
-            'time_limit': args.time_limit
+            'resource_dir': args.resource_dir
         }
 
         # Submit jobs

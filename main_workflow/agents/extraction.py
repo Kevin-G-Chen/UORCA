@@ -390,8 +390,14 @@ async def download_fastqs(
     srrs = ctx.deps.metadata_df["SRR"].dropna().astype(str).tolist()
     logger.info("Total SRRs listed: %d", len(srrs))
 
-    need_prefetch = [s for s in srrs if not sra_path(s).exists()]
-    logger.info("SRRs needing prefetch: %d", len(need_prefetch))
+    # First check which SRRs already have FASTQ files - no need to download SRA for these
+    ready_count = sum(1 for srr in srrs if fastq_ready(srr))
+    logger.info("SRRs with ready FASTQ files: %d", ready_count)
+
+    # Only prefetch SRAs for SRRs that don't have FASTQ files and don't have SRA files
+    srrs_needing_fastq = [s for s in srrs if not fastq_ready(s)]
+    need_prefetch = [s for s in srrs_needing_fastq if not sra_path(s).exists()]
+    logger.info("SRRs needing SRA prefetch (no FASTQ, no SRA): %d", len(need_prefetch))
 
     # Helper function for prefetching a single SRR
     async def prefetch_single(srr: str):
@@ -439,18 +445,14 @@ async def download_fastqs(
 
             logger.info("Prefetch completed - %d/%d successful", successful_prefetch, len(need_prefetch))
 
-    # Check which SRRs we need to convert to FASTQ
-    # This checks for existing compressed FASTQ files first, then SRA availability
-    ready_count = sum(1 for srr in srrs if fastq_ready(srr))
-    logger.info("SRRs with ready FASTQ files: %d", ready_count)
+    # Check which SRRs need conversion to FASTQ (have SRA but no FASTQ)
+    need_conversion = [srr for srr in srrs_needing_fastq if sra_path(srr).exists()]
+    logger.info("SRRs needing conversion to FASTQ (have SRA, no FASTQ): %d", len(need_conversion))
 
-    need_conversion = [srr for srr in srrs if not fastq_ready(srr) and sra_path(srr).exists()]
-    logger.info("SRRs needing conversion to FASTQ: %d", len(need_conversion))
-
-    # Log SRRs that have neither FASTQ nor SRA files
-    missing_both = [srr for srr in srrs if not fastq_ready(srr) and not sra_path(srr).exists()]
+    # Log SRRs that have neither FASTQ nor SRA files after prefetch attempt
+    missing_both = [srr for srr in srrs_needing_fastq if not sra_path(srr).exists()]
     if missing_both:
-        logger.warning("SRRs missing both FASTQ and SRA files: %d (%s)",
+        logger.warning("SRRs missing both FASTQ and SRA files after prefetch: %d (%s)",
                       len(missing_both), ", ".join(missing_both[:5]) + ("..." if len(missing_both) > 5 else ""))
 
     # Find pigz for faster compression

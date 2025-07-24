@@ -6,6 +6,7 @@ It adapts the existing submit_datasets.py functionality into the new batch proce
 """
 
 import json
+import logging
 import os
 import subprocess
 import time
@@ -46,7 +47,6 @@ class SlurmBatchProcessor(BatchProcessor):
         if missing_commands:
             raise EnvironmentError(f"Missing SLURM commands: {missing_commands}")
 
-    @property
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from YAML file if provided."""
         if not self.config_file:
@@ -67,6 +67,7 @@ class SlurmBatchProcessor(BatchProcessor):
             logging.warning(f"Failed to load config file {self.config_file}: {e}, using defaults")
             return {}
 
+    @property
     def default_parameters(self) -> Dict[str, Any]:
         """Get default parameters for SLURM batch processing, merging config file and defaults."""
         # Load config file
@@ -131,6 +132,9 @@ class SlurmBatchProcessor(BatchProcessor):
 
         # Display scheduling information
         self.display_scheduling_order(df_sorted, params['max_storage_gb'])
+
+        # Display SLURM configuration being used
+        self._display_slurm_configuration(params)
 
         # Submit jobs with storage-aware scheduling
         jobs_submitted = 0
@@ -290,6 +294,53 @@ class SlurmBatchProcessor(BatchProcessor):
         )
 
         return script_content
+
+    def _display_slurm_configuration(self, params: Dict[str, Any]):
+        """
+        Display the SLURM configuration parameters being used for job submission.
+
+        Args:
+            params: Dictionary of parameters being used
+        """
+        print(f"\n{'='*60}")
+        print(f"SLURM CONFIGURATION")
+        print(f"{'='*60}")
+
+        # SLURM job parameters
+        print(f"Job Parameters:")
+        print(f"  Partition:        {params.get('partition', 'N/A')}")
+        print(f"  Constraint:       {params.get('constraint', 'N/A')}")
+        print(f"  CPUs per task:    {params.get('cpus_per_task', 'N/A')}")
+        print(f"  Memory per job:   {params.get('memory', 'N/A')}")
+        print(f"  Time limit:       {params.get('time_limit', 'N/A')}")
+
+        # Resource management
+        print(f"\nResource Management:")
+        print(f"  Max parallel jobs:    {params.get('max_parallel', 'N/A')}")
+        print(f"  Max storage (GB):     {params.get('max_storage_gb', 'N/A')}")
+        print(f"  Check interval (s):   {params.get('check_interval', 'N/A')}")
+
+        # Container settings
+        print(f"\nContainer Settings:")
+        print(f"  Engine:           {params.get('container_engine', 'N/A')}")
+        if params.get('container_engine') == 'apptainer':
+            print(f"  Image:            {params.get('apptainer_image', 'N/A')}")
+        else:
+            print(f"  Image:            {params.get('docker_image', 'N/A')}")
+
+        # Workflow settings
+        print(f"\nWorkflow Settings:")
+        print(f"  Resource dir:     {params.get('resource_dir', 'N/A')}")
+        print(f"  Cleanup enabled:  {params.get('cleanup', 'N/A')}")
+
+        # Configuration source
+        config_source = "Configuration file" if self.config_file else "Built-in defaults"
+        if self.config_file:
+            print(f"\nConfiguration loaded from: {self.config_file}")
+        else:
+            print(f"\nUsing built-in default configuration")
+
+        print(f"{'='*60}\n")
 
     def _wait_for_resources(self, output_dir: str, storage_needed: float,
                           max_parallel: int, max_storage_gb: float, check_interval: int):
