@@ -267,20 +267,13 @@ class BatchProcessor(ABC):
         """
         Check if all required environment variables and tools are available.
 
+        Note: Environment variable validation is now handled at the CLI level.
+
         Returns:
             List of missing requirements (empty if all satisfied)
         """
-        missing = []
-
-        # Check for required environment variables
-        if not os.getenv('ENTREZ_EMAIL'):
-            missing.append("Environment variable: ENTREZ_EMAIL")
-
-        # Check for optional environment variables (warn but don't fail)
-        if not os.getenv('OPENAI_API_KEY'):
-            print("Warning: OPENAI_API_KEY not set. AI-powered features will be disabled.")
-
-        return missing
+        # Environment variables are now validated in CLI before reaching this point
+        return []
 
     @property
     @abstractmethod

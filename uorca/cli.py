@@ -213,25 +213,68 @@ Example slurm_config.yaml:
         sys.exit(1)
 
 
-def run_identify(args):
-    """Run the dataset identification workflow."""
-    # Import here to avoid startup overhead when not needed
-    from uorca.identify import main as identify_main
-
+def _load_environment_variables():
+    """Load environment variables from .env file and validate requirements."""
     # Load environment variables from the project root .env file
     project_root = Path(__file__).resolve().parent.parent
     env_file = project_root / ".env"
     if env_file.exists():
         load_dotenv(env_file)
+        print(f"Loaded environment variables from: {env_file}")
     else:
         load_dotenv(find_dotenv())
+        print("Loaded environment variables from system .env file")
 
-    # Check for required environment variable here to fail fast
+def _check_environment_requirements(require_openai: bool = False):
+    """Check environment requirements and provide clear instructions if missing."""
+    missing = []
+
+    # Check required variables
     if not os.getenv("ENTREZ_EMAIL"):
-        print("ERROR: Email is required for NCBI Entrez API access.")
-        print("Please set the ENTREZ_EMAIL environment variable with your email address.")
-        print("This is required by NCBI guidelines for API usage.")
+        missing.append("ENTREZ_EMAIL")
+
+    if require_openai and not os.getenv("OPENAI_API_KEY"):
+        missing.append("OPENAI_API_KEY")
+
+    # Warn about optional variables
+    if not os.getenv("ENTREZ_API_KEY"):
+        print("Warning: ENTREZ_API_KEY not set. API requests may be rate-limited.")
+        print("Consider setting ENTREZ_API_KEY for better performance.")
+
+    if not require_openai and not os.getenv("OPENAI_API_KEY"):
+        print("Warning: OPENAI_API_KEY not set. AI-powered features will be disabled.")
+
+    # If missing required variables, show instructions and exit
+    if missing:
+        print("\n" + "="*60)
+        print("ERROR: Missing required environment variables")
+        print("="*60)
+        print(f"Missing: {', '.join(missing)}")
+        print("\nTo fix this, create or update your .env file:")
+        print(f"  File location: {Path(__file__).resolve().parent.parent / '.env'}")
+        print("\nAdd these lines to your .env file:")
+        for var in missing:
+            if var == "ENTREZ_EMAIL":
+                print(f"  {var}='your.email@institution.edu'")
+            elif var == "OPENAI_API_KEY":
+                print(f"  {var}='sk-proj-...'  # Your OpenAI API key")
+        print("\nOptional (for better performance):")
+        print("  ENTREZ_API_KEY='your_ncbi_api_key'  # Get from: https://www.ncbi.nlm.nih.gov/account/settings/")
+        print("\nExample .env file:")
+        print("  ENTREZ_EMAIL='researcher@university.edu'")
+        print("  OPENAI_API_KEY='sk-proj-abc123...'")
+        print("  ENTREZ_API_KEY='your_ncbi_key'")
+        print("="*60)
         sys.exit(1)
+
+def run_identify(args):
+    """Run the dataset identification workflow."""
+    # Import here to avoid startup overhead when not needed
+    from uorca.identify import main as identify_main
+
+    # Load and validate environment variables
+    _load_environment_variables()
+    _check_environment_requirements(require_openai=True)  # Identify needs OpenAI
 
     # Rebuild sys.argv to match what the original script expects
     sys.argv = ['identify']
@@ -257,6 +300,10 @@ def run_batch_slurm(args):
     from pathlib import Path
 
     print("Starting SLURM batch processing...")
+
+    # Load and validate environment variables
+    _load_environment_variables()
+    _check_environment_requirements(require_openai=True)  # Pipeline needs OpenAI
 
     try:
         # Handle config file auto-detection
@@ -297,6 +344,10 @@ def run_batch_local(args):
     from uorca.batch import get_batch_processor
 
     print("Starting local batch processing...")
+
+    # Load and validate environment variables
+    _load_environment_variables()
+    _check_environment_requirements(require_openai=True)  # Pipeline needs OpenAI
 
     try:
         processor = get_batch_processor('local')

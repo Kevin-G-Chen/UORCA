@@ -117,10 +117,7 @@ class SlurmBatchProcessor(BatchProcessor):
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Check environment requirements
-        missing_reqs = self.check_environment_requirements()
-        if missing_reqs:
-            raise EnvironmentError(f"Missing requirements: {missing_reqs}")
+        # Environment requirements are now checked at CLI level
 
         # Setup job tracking
         status_dir = self.setup_job_tracking(output_dir)

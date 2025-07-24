@@ -304,14 +304,13 @@ class LocalBatchProcessor(BatchProcessor):
 
     def check_environment_requirements(self) -> List[str]:
         """
-        Check if all required environment variables and tools are available.
+        Check if all required tools are available.
+
+        Note: Environment variable validation is now handled at the CLI level.
 
         Returns:
             List of missing requirements (empty if all satisfied)
         """
-        # Load environment variables first
-        self.load_environment_variables()
-
         missing = []
 
         # Check for Docker
@@ -323,25 +322,7 @@ class LocalBatchProcessor(BatchProcessor):
         except (subprocess.TimeoutExpired, FileNotFoundError):
             missing.append("Docker (not installed or not in PATH)")
 
-        # Check for required environment variables
-        if not os.getenv('ENTREZ_EMAIL'):
-            missing.append("Environment variable: ENTREZ_EMAIL")
-            print("\nMissing required environment variables!")
-            print("Please create a .env file in your project root with the following variables:")
-            print("")
-            print("  ENTREZ_EMAIL=your_value_here  # Required for NCBI API access")
-            print("")
-            print("Example .env file:")
-            print("  ENTREZ_EMAIL=your.email@example.com")
-            print("  OPENAI_API_KEY=sk-your-openai-api-key  # Optional, for AI features")
-            print("  ENTREZ_API_KEY=your_ncbi_api_key  # Optional, for higher rate limits")
-
-        # Check for optional environment variables (warn but don't fail)
-        if not os.getenv('OPENAI_API_KEY'):
-            print("Note: OPENAI_API_KEY not set. AI-powered features will be disabled.")
-
-        if not os.getenv('ENTREZ_API_KEY'):
-            print("Note: ENTREZ_API_KEY not set. Using default NCBI rate limits.")
+        return missing
 
         return missing
 
@@ -529,7 +510,7 @@ class LocalBatchProcessor(BatchProcessor):
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # Check environment requirements
+        # Check tool requirements (environment variables checked at CLI level)
         missing_reqs = self.check_environment_requirements()
         if missing_reqs:
             raise EnvironmentError(f"Missing requirements: {missing_reqs}")
