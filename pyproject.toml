@@ -44,10 +44,9 @@ uorca = "uorca.cli:main"
 [tool.setuptools.packages.find]
 include = ["uorca*"]
 
-[tool.uv.workspace]
-members = [
-    "lib/memory",
-    "lib/data_identification",
-    "lib/data_extraction",
-    "lib/data_analysis",
-]
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
