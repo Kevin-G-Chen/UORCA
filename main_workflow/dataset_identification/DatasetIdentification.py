@@ -30,6 +30,7 @@ Usage:
 
 import argparse
 import asyncio
+import datetime
 import io
 import json
 import logging
@@ -627,6 +628,9 @@ def main():
     # Save query to config file for Streamlit app
     save_query_config(research_query)
 
+    # Track timing for metadata
+    start_time = datetime.datetime.now()
+
     try:
         # Step 1: Extract terms from research query
         logging.info("Determining search terms...")
@@ -980,6 +984,29 @@ def main():
             logging.info(f"Included in batch analysis CSV: {len(multi_df)}")
 
         assessed_final = final.dropna(subset=['RelevanceScore']).sort_values('RelevanceScore', ascending=False)
+
+        # Generate metadata JSON file
+        end_time = datetime.datetime.now()
+
+        # Calculate metadata
+        total_datasets_assessed = len(final.dropna(subset=['RelevanceScore'])) if 'RelevanceScore' in final.columns else 0
+        datasets_deemed_relevant = len(final[final['RelevanceScore'].notna() & (final['RelevanceScore'] >= args.threshold)]) if 'RelevanceScore' in final.columns and args.threshold > 0 else 0
+
+        metadata = {
+            "input_query": research_query,
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "total_datasets_assessed": total_datasets_assessed,
+            "datasets_deemed_relevant": datasets_deemed_relevant,
+            "threshold_used": args.threshold
+        }
+
+        # Save metadata JSON
+        metadata_file = output_path / "identification_metadata.json"
+        with open(metadata_file, 'w') as f:
+            json.dump(metadata, f, indent=2)
+
+        logging.info(f"Saved identification metadata to: {metadata_file}")
 
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
