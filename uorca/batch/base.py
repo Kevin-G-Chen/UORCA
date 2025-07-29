@@ -111,11 +111,13 @@ class BatchProcessor(ABC):
 
         # Handle dataset size columns (prefer DatasetSizeGB, fallback to DatasetSizeBytes)
         if 'DatasetSizeGB' in df.columns:
-            # Size already in GB, apply safety factor
-            df['SafeStorageGB'] = df['DatasetSizeGB'] * 3.0
+            # Size already in GB, apply 2x safety factor
+            df['SafeStorageGB'] = df['DatasetSizeGB'] * 2.0
+            print("Using recorded dataset size × 2 as approximation for required storage space")
         elif 'DatasetSizeBytes' in df.columns:
-            # Convert from bytes to GB and apply safety factor
-            df['SafeStorageGB'] = (df['DatasetSizeBytes'] / (1024**3)) * 3.0
+            # Convert from bytes to GB and apply 2x safety factor
+            df['SafeStorageGB'] = (df['DatasetSizeBytes'] / (1024**3)) * 2.0
+            print("Using recorded dataset size × 2 as approximation for required storage space")
         else:
             # No size information available
             df['SafeStorageGB'] = 0

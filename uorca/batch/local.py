@@ -259,10 +259,11 @@ class LocalBatchProcessor(BatchProcessor):
 
         # Handle storage size column - prefer DatasetSizeGB, fallback to DatasetSizeBytes
         if 'DatasetSizeGB' in df.columns:
-            df['SafeStorageGB'] = df['DatasetSizeGB'] * 3.0  # Apply safety factor
+            df['SafeStorageGB'] = df['DatasetSizeGB'] * 2.0  # Apply 2x safety factor
+            print("Using recorded dataset size × 2 as approximation for required storage space")
         elif 'DatasetSizeBytes' in df.columns:
-            df['SafeStorageGB'] = (df['DatasetSizeBytes'] / (1024**3)) * 3.0
-            print("Using DatasetSizeBytes column for storage calculations")
+            df['SafeStorageGB'] = (df['DatasetSizeBytes'] / (1024**3)) * 2.0
+            print("Using recorded dataset size × 2 as approximation for required storage space")
         else:
             df['SafeStorageGB'] = 30.0  # Default safety value of 30GB per dataset
             print("Warning: Neither DatasetSizeGB nor DatasetSizeBytes column found, using default value of 30GB per dataset")

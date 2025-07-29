@@ -89,7 +89,7 @@ class SlurmBatchProcessor(BatchProcessor):
             'cpus_per_task': slurm_config.get('cpus_per_task', 8),
             'memory': slurm_config.get('memory', '16G'),
             'time_limit': slurm_config.get('time_limit', '6:00:00'),
-            'check_interval': resource_config.get('check_interval', 30),
+            'check_interval': resource_config.get('check_interval', 300),
             'container_engine': container_config.get('engine', 'apptainer'),
             'apptainer_image': container_config.get('apptainer_image', '/data/tki_agpdev/kevin/phd/aim1/UORCA/scratch/container_testing/uorca_0.1.0.sif'),
             'docker_image': container_config.get('docker_image', 'kevingchen/uorca:0.1.0')
@@ -136,38 +136,67 @@ class SlurmBatchProcessor(BatchProcessor):
         # Submit jobs with storage-aware scheduling
         jobs_submitted = 0
 
+        # Create a list of datasets to process (excluding those that exceed storage limit)
+        processable_datasets = []
+        oversized_datasets = []
+
         for _, row in df_sorted.iterrows():
-            accession = row['Accession']
-            storage_needed = row['SafeStorageGB']
-
-            print(f"Processing {accession} (requires {storage_needed:.2f} GB)...")
-
-            # Check if dataset would exceed storage limit
-            if storage_needed > params['max_storage_gb']:
-                print(f"  ⚠️  Skipping {accession}: exceeds storage limit ({storage_needed:.2f} > {params['max_storage_gb']:.2f} GB)")
-                continue
-
-            # Wait for available resources if needed
-            self._wait_for_resources(output_dir, storage_needed, params['max_parallel'], params['max_storage_gb'], params['check_interval'])
-
-            # Submit the job
-            job_id = self._submit_single_dataset(
-                accession=accession,
-                output_dir=output_dir,
-                logs_dir=logs_dir,
-                status_dir=status_dir,
-                storage_gb=storage_needed,
-                **params
-            )
-
-            if job_id:
-                print(f"  ✅ Submitted {accession} as job {job_id}")
-                jobs_submitted += 1
+            if row['SafeStorageGB'] > params['max_storage_gb']:
+                oversized_datasets.append(row)
             else:
-                print(f"  ❌ Failed to submit {accession}")
+                processable_datasets.append(row)
+
+        # Report oversized datasets
+        if oversized_datasets:
+            print(f"\n⚠️  Skipping {len(oversized_datasets)} dataset(s) that exceed storage limit ({params['max_storage_gb']:.2f} GB):")
+            for row in oversized_datasets:
+                print(f"    {row['Accession']:12s} - {row['SafeStorageGB']:6.2f} GB")
+
+        # Process datasets with intelligent scheduling
+        remaining_datasets = processable_datasets.copy()
+
+        while remaining_datasets:
+            # Find the largest dataset that can fit current resource constraints
+            submitted_this_round = False
+
+            for i, row in enumerate(remaining_datasets):
+                accession = row['Accession']
+                storage_needed = row['SafeStorageGB']
+
+                print(f"Processing {accession} (requires {storage_needed:.2f} GB)...")
+
+                # Wait for available resources if needed
+                self._wait_for_resources(output_dir, storage_needed, params['max_parallel'], params['max_storage_gb'], params['check_interval'])
+
+                # Submit the job
+                job_id = self._submit_single_dataset(
+                    accession=accession,
+                    output_dir=output_dir,
+                    logs_dir=logs_dir,
+                    status_dir=status_dir,
+                    storage_gb=storage_needed,
+                    **params
+                )
+
+                if job_id:
+                    print(f"  ✅ Submitted {accession} as job {job_id}")
+                    jobs_submitted += 1
+                    remaining_datasets.pop(i)
+                    submitted_this_round = True
+                    break
+                else:
+                    print(f"  ❌ Failed to submit {accession}")
+                    remaining_datasets.pop(i)
+                    break
+
+            # If no dataset could be submitted this round, break to avoid infinite loop
+            if not submitted_this_round and remaining_datasets:
+                print(f"  ⚠️  No remaining datasets can be submitted with current constraints")
+                break
 
             # Brief pause between submissions
-            time.sleep(1)
+            if submitted_this_round:
+                time.sleep(1)
 
         print(f"\n🎉 Successfully submitted {jobs_submitted} jobs to SLURM")
         print(f"📁 Job logs will be written to: {logs_dir}")
