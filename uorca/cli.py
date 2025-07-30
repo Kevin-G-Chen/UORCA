@@ -23,8 +23,8 @@ def main():
         epilog="""
 Examples:
   uorca identify -q "cancer stem cell differentiation" -o results.csv
-  uorca run slurm --csv datasets.csv --output_dir ../UORCA_results
-  uorca run local --csv datasets.csv --output_dir ../UORCA_results
+  uorca run slurm --input datasets.csv --output_dir ../UORCA_results
+  uorca run local --input identification_results/ --output_dir ../UORCA_results
   uorca explore ../UORCA_results --port 8501
 
 For more help on a specific command, use:
@@ -125,8 +125,8 @@ Example slurm_config.yaml:
         """
     )
 
-    slurm_parser.add_argument("--csv", required=True,
-                             help="CSV file with dataset information (must have 'Accession' column)")
+    slurm_parser.add_argument("--input", required=True,
+                             help="Either a CSV file with dataset information (must have 'Accession' column) or a directory containing both CSV and identification metadata")
     slurm_parser.add_argument("--config",
                              help="YAML configuration file for SLURM settings (default: slurm_config.yaml if exists)")
     slurm_parser.add_argument("--output_dir", default="../UORCA_results",
@@ -150,8 +150,8 @@ Example slurm_config.yaml:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    local_parser.add_argument("--csv", required=True,
-                             help="CSV file with dataset information (must have 'Accession' column)")
+    local_parser.add_argument("--input", required=True,
+                             help="Either a CSV file with dataset information (must have 'Accession' column) or a directory containing both CSV and identification metadata")
     local_parser.add_argument("--output_dir", default="../UORCA_results",
                              help="Output directory for results")
     local_parser.add_argument("--resource_dir", default="./data/kallisto_indices/",
@@ -327,7 +327,7 @@ def run_batch_slurm(args):
         }
 
         # Submit jobs
-        jobs_submitted = processor.submit_datasets(args.csv, args.output_dir, **params)
+        jobs_submitted = processor.submit_datasets(args.input, args.output_dir, **params)
 
         if jobs_submitted > 0:
             print(f"\nSuccessfully submitted {jobs_submitted} jobs to SLURM")
@@ -366,7 +366,7 @@ def run_batch_local(args):
             params['max_storage_gb'] = args.max_storage_gb
 
         # Submit jobs
-        jobs_submitted = processor.submit_datasets(args.csv, args.output_dir, **params)
+        jobs_submitted = processor.submit_datasets(args.input, args.output_dir, **params)
 
         if jobs_submitted > 0:
             print(f"\nSuccessfully processed {jobs_submitted} datasets")

@@ -97,12 +97,12 @@ class SlurmBatchProcessor(BatchProcessor):
 
         return defaults
 
-    def submit_datasets(self, csv_file: str, output_dir: str, **kwargs) -> int:
+    def submit_datasets(self, input_path: str, output_dir: str, **kwargs) -> int:
         """
         Submit SLURM batch jobs for processing datasets.
 
         Args:
-            csv_file: Path to CSV file containing dataset information
+            input_path: Either CSV file with dataset information or directory containing CSV and metadata
             output_dir: Output directory for results
             **kwargs: Additional SLURM-specific parameters
 
@@ -112,10 +112,13 @@ class SlurmBatchProcessor(BatchProcessor):
         # Merge default parameters with provided kwargs
         params = {**self.default_parameters, **kwargs}
 
-        # Validate inputs
-        df = self.validate_csv_file(csv_file)
+        # Validate inputs and extract research question
+        df, research_question = self.validate_csv_file(input_path)
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
+
+        # Save research question if available
+        self.save_research_question(output_dir, research_question)
 
         # Environment requirements are now checked at CLI level
 

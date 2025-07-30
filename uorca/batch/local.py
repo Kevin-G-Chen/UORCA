@@ -6,7 +6,7 @@ using Docker containers. It implements storage-aware queueing and proper job
 cancellation while respecting resource constraints.
 """
 
-import json
+
 import os
 import psutil
 import signal
@@ -14,10 +14,10 @@ import subprocess
 import time
 import threading
 import pandas as pd
-from concurrent.futures import ProcessPoolExecutor, Future, as_completed
-from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor
+
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Any
 import multiprocessing as mp
 from dotenv import load_dotenv, find_dotenv
 
@@ -227,48 +227,33 @@ class LocalBatchProcessor(BatchProcessor):
         self.monitor_thread = None
         self.lock = threading.Lock()
 
-    def validate_csv_file(self, csv_file: str) -> pd.DataFrame:
+    def validate_csv_file(self, input_path: str) -> tuple[pd.DataFrame, str]:
         """
-        Validate and load the CSV file containing dataset information.
-        Override base class to handle DatasetSizeGB column.
+        Validate input and prepare dataset information.
+        Override base class to handle local-specific storage defaults.
 
         Args:
-            csv_file: Path to CSV file
+            input_path: Either CSV file path or directory containing CSV and metadata
 
         Returns:
-            Validated DataFrame
+            Tuple of (validated DataFrame, research_question)
 
         Raises:
-            FileNotFoundError: If CSV file doesn't exist
+            FileNotFoundError: If input doesn't exist or CSV not found
             ValueError: If required columns are missing
         """
-        csv_path = Path(csv_file)
-        if not csv_path.exists():
-            raise FileNotFoundError(f"CSV file not found: {csv_file}")
+        # Call parent method for basic validation and research question extraction
+        df, research_question = super().validate_csv_file(input_path)
 
-        try:
-            df = pd.read_csv(csv_path)
-        except Exception as e:
-            raise ValueError(f"Failed to read CSV file: {e}")
+        # Apply local-specific storage handling
+        if 'SafeStorageGB' in df.columns and (df['SafeStorageGB'] == 0).any():
+            # Override zero storage values with local default for datasets without size info
+            zero_storage_mask = df['SafeStorageGB'] == 0
+            if zero_storage_mask.any():
+                df.loc[zero_storage_mask, 'SafeStorageGB'] = 30.0
+                print("Warning: Using default value of 30GB per dataset for entries without size information")
 
-        # Check required columns
-        required_columns = ['Accession']
-        missing_columns = [col for col in required_columns if col not in df.columns]
-        if missing_columns:
-            raise ValueError(f"Missing required columns: {missing_columns}")
-
-        # Handle storage size column - prefer DatasetSizeGB, fallback to DatasetSizeBytes
-        if 'DatasetSizeGB' in df.columns:
-            df['SafeStorageGB'] = df['DatasetSizeGB'] * 2.0  # Apply 2x safety factor
-            print("Using recorded dataset size × 2 as approximation for required storage space")
-        elif 'DatasetSizeBytes' in df.columns:
-            df['SafeStorageGB'] = (df['DatasetSizeBytes'] / (1024**3)) * 2.0
-            print("Using recorded dataset size × 2 as approximation for required storage space")
-        else:
-            df['SafeStorageGB'] = 30.0  # Default safety value of 30GB per dataset
-            print("Warning: Neither DatasetSizeGB nor DatasetSizeBytes column found, using default value of 30GB per dataset")
-
-        return df
+        return df, research_question
 
     @property
     def default_parameters(self) -> Dict[str, Any]:
@@ -414,7 +399,11 @@ class LocalBatchProcessor(BatchProcessor):
                         docker_image=params['docker_image']
                     )
 
-                    # Submit job
+                    # Submit job (check executor is available)
+                    if not self.executor:
+                        print(f"  ❌ Cannot submit {accession}: executor not available")
+                        return
+
                     future = self.executor.submit(
                         run_single_dataset_local,
                         accession=accession,
@@ -488,14 +477,14 @@ class LocalBatchProcessor(BatchProcessor):
                 if running_count > 0 or queue_count > 0:
                     print(f"  Running: {running_count}, Queued: {queue_count}, Storage: {self.current_storage_used:.1f}/{params['max_storage_gb']:.1f} GB")
 
-    def submit_datasets(self, csv_file: str, output_dir: str, **kwargs) -> int:
+    def submit_datasets(self, input_path: str, output_dir: str, **kwargs) -> int:
         """
-        Submit datasets for local parallel processing with storage-aware queueing.
+        Submit datasets for local batch processing.
 
         Args:
-            csv_file: Path to CSV file containing dataset information
+            input_path: Either CSV file with dataset information or directory containing CSV and metadata
             output_dir: Output directory for results
-            **kwargs: Additional local processing parameters
+            **kwargs: Additional parameters
 
         Returns:
             Number of jobs submitted
@@ -506,10 +495,13 @@ class LocalBatchProcessor(BatchProcessor):
         # Merge default parameters with provided kwargs
         params = {**self.default_parameters, **kwargs}
 
-        # Validate inputs
-        df = self.validate_csv_file(csv_file)
+        # Validate inputs and extract research question
+        df, research_question = self.validate_csv_file(input_path)
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
+
+        # Save research question if available
+        self.save_research_question(output_dir, research_question)
 
         # Check tool requirements (environment variables checked at CLI level)
         missing_reqs = self.check_environment_requirements()
@@ -587,9 +579,11 @@ class LocalBatchProcessor(BatchProcessor):
         # Initialize process pool executor
         self.executor = ProcessPoolExecutor(max_workers=params['max_workers'])
 
+        # Initialize counters
+        initial_submitted = 0
+
         try:
             # Submit initial jobs up to storage limit
-            initial_submitted = 0
             while self.job_queue and not self.cancelled:
                 self.submit_next_job_if_possible(params, status_dir)
                 current_submitted = len(self.running_jobs)

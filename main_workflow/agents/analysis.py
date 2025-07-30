@@ -940,8 +940,25 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         # Create a MetadataContext instance specifically for the metadata agent
         metadata_deps = metadata.MetadataContext(metadata_path=metadata_path)
 
+        # Check for research question from dataset identification
+        research_question = ""
+        output_dir = getattr(ctx.deps, 'output_dir', None)
+        if output_dir:
+            research_question_file = os.path.join(output_dir, "research_question.json")
+            if os.path.exists(research_question_file):
+                try:
+                    with open(research_question_file, 'r') as f:
+                        question_data = json.load(f)
+                        research_question = question_data.get("research_question", "")
+                        if research_question:
+                            logger.info("📋 Found research question for metadata processing: %s", research_question)
+                except (json.JSONDecodeError, KeyError) as e:
+                    logger.warning("⚠️ Could not read research question from file: %s", e)
+
         # Generate the metadata prompt, incorporating analysis history if available
-        base_prompt = """
+        # Construct base prompt with research question context if available
+        if research_question.strip():
+            base_prompt = f"""
         Please analyze the RNAseq metadata file and perform the following tasks:
         1. Process and clean the metadata
         2. Identify biologically relevant columns for analysis
@@ -949,8 +966,25 @@ async def process_metadata_with_agent(ctx: RunContext[AnalysisContext]) -> str:
         4. Extract the unique values found in the analysis column
         5. Design appropriate contrasts for differential expression analysis
 
-        You should handle any errors or special cases in the data, and make appropriate decisions
-        about which steps to take based on the data characteristics.
+        IMPORTANT RESEARCH CONTEXT: This analysis is designed to address the following research question:
+        "{research_question}"
+
+        When designing contrasts, please prioritize comparisons that are most relevant to answering this research question. Consider which experimental conditions, treatments, or biological states would provide the most informative comparisons for addressing this specific research objective.
+
+        You should handle any errors or special cases in the data, and make appropriate decisions about which steps to take based on the data characteristics and the research question context.
+        """
+        else:
+            base_prompt = """
+        Please analyze the RNAseq metadata file and perform the following tasks:
+        1. Process and clean the metadata
+        2. Identify biologically relevant columns for analysis
+        3. Create a final grouping variable (merging columns if needed)
+        4. Extract the unique values found in the analysis column
+        5. Design appropriate contrasts for differential expression analysis
+
+        Since no specific research question was provided, please design contrasts that would be most appropriate and informative for this dataset based on the available experimental conditions and biological context.
+
+        You should handle any errors or special cases in the data, and make appropriate decisions about which steps to take based on the data characteristics.
         """
 
         # Include dataset information context if available

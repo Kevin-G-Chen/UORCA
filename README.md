@@ -143,13 +143,21 @@ uv run uorca identify -q "neuroblastoma research" \
 
 **Dataset Analysis:**
 ```bash
-# SLURM batch processing
-uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results --cleanup
+# SLURM batch processing with CSV file
+uv run uorca run slurm --input datasets.csv --output_dir ../UORCA_results --cleanup
 
-# Local parallel processing
-uv run uorca run local --csv datasets.csv \
+# SLURM batch processing with identification results directory (recommended)
+uv run uorca run slurm --input identification_results/ --output_dir ../UORCA_results --cleanup
+
+# Local parallel processing with CSV file
+uv run uorca run local --input datasets.csv \
     --output_dir /path/to/results \
     --resource_dir ./data/kallisto_indices \
+    --max_workers 4 --cleanup
+
+# Local parallel processing with identification results directory (recommended)
+uv run uorca run local --input identification_results/ \
+    --output_dir /path/to/results \
     --max_workers 4 --cleanup
 ```
 
@@ -179,14 +187,25 @@ sbatch --output=logs/my_analysis.out \
 
 #### Multiple dataset analysis
 
-UORCA provides efficient batch processing for multiple datasets:
-```bash
-# SLURM batch processing
-uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results --cleanup
+UORCA provides efficient batch processing for multiple datasets. You can use either:
+- A CSV file directly with dataset information
+- A directory from `uorca identify` (recommended - carries research question through workflow)
 
-# Local parallel processing
-uv run uorca run local --csv datasets.csv --output_dir ../UORCA_results --max_workers 4 --cleanup
+```bash
+# SLURM batch processing with identification results directory (recommended)
+uv run uorca run slurm --input identification_results/ --output_dir ../UORCA_results --cleanup
+
+# SLURM batch processing with CSV file
+uv run uorca run slurm --input datasets.csv --output_dir ../UORCA_results --cleanup
+
+# Local parallel processing with identification results directory (recommended)  
+uv run uorca run local --input identification_results/ --output_dir ../UORCA_results --max_workers 4 --cleanup
+
+# Local parallel processing with CSV file
+uv run uorca run local --input datasets.csv --output_dir ../UORCA_results --max_workers 4 --cleanup
 ```
+
+**Note:** Using the identification results directory automatically integrates your research question into the analysis workflow, allowing the metadata agent to design more targeted experimental contrasts.
 
 For legacy batch processing with advanced resource management:
 ```bash
@@ -238,13 +257,13 @@ Automatically discover relevant GEO datasets for your research question:
 
 ```bash
 # Using unified CLI (recommended)
-uv run uorca identify -q "cancer stem cell differentiation" -o relevant_datasets.csv
+uv run uorca identify -q "cancer stem cell differentiation" -o identification_results/
 
 # Or using direct script execution
 uv run main_workflow/dataset_identification/DatasetIdentification.py \
     -q "cancer stem cell differentiation" \
     -t 7.0 \
-    -o relevant_datasets.csv
+    -o identification_results/
 ```
 
 **Features:**
@@ -252,6 +271,8 @@ uv run main_workflow/dataset_identification/DatasetIdentification.py \
 - Automated relevance scoring of GEO datasets
 - SRA metadata validation for RNA-seq experiments
 - Direct output formatting for batch processing
+- **JSON metadata output** with timing, relevance statistics, and research question
+- Research question integration throughout the analysis workflow
 
 ### Multi-dataset processing
 #### Multiple dataset analysis
@@ -259,11 +280,17 @@ uv run main_workflow/dataset_identification/DatasetIdentification.py \
 Process datasets using the batch-oriented CLI:
 
 ```bash
-# SLURM batch processing (for HPC clusters)
-uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results --cleanup
+# SLURM batch processing with identification results (recommended)
+uv run uorca run slurm --input identification_results/ --output_dir ../UORCA_results --cleanup
 
-# Local parallel processing (for workstations)
-uv run uorca run local --csv datasets.csv --output_dir ../UORCA_results --max_workers 4 --cleanup
+# SLURM batch processing with CSV file
+uv run uorca run slurm --input datasets.csv --output_dir ../UORCA_results --cleanup
+
+# Local parallel processing with identification results (recommended)
+uv run uorca run local --input identification_results/ --output_dir ../UORCA_results --max_workers 4 --cleanup
+
+# Local parallel processing with CSV file
+uv run uorca run local --input datasets.csv --output_dir ../UORCA_results --max_workers 4 --cleanup
 
 # Legacy batch processing with storage-aware scheduling
 uv run main_workflow/run_helpers/submit_datasets.py \
@@ -281,6 +308,16 @@ uv run main_workflow/run_helpers/submit_datasets.py \
 - Automatic cleanup of intermediate files
 - Comprehensive progress tracking and error reporting
 - Results ready for immediate exploration in UORCA Explorer
+
+**Integrated Research Question Workflow:**
+When using identification results directories (recommended), the original research question automatically flows through the entire analysis pipeline:
+
+1. **Dataset Identification** → Saves research question in `identification_metadata.json`
+2. **Batch Processing** → Extracts research question and saves to `research_question.json`
+3. **Metadata Analysis** → Tailors experimental contrasts to address the specific research question
+4. **Results Exploration** → Pre-loads research question in AI assistant for targeted analysis
+
+This integration ensures that experimental contrasts and AI analysis remain focused on your original research objectives.
 
 **CSV file format:**
 ```csv

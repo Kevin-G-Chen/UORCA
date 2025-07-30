@@ -127,8 +127,23 @@ def _run_filtered_contrast_relevance(ri, filtered_contrast_data, query: str, rep
         return pd.DataFrame()
 
 
-def load_query_config() -> Optional[str]:
-    """Load the dataset identification query from config file."""
+def load_query_config(results_dir: Optional[str] = None) -> Optional[str]:
+    """Load the dataset identification query from results directory or config file."""
+
+    # First, try to load from results directory if provided
+    if results_dir:
+        research_question_file = os.path.join(results_dir, "research_question.json")
+        if os.path.exists(research_question_file):
+            try:
+                with open(research_question_file, 'r') as f:
+                    question_data = json.load(f)
+                    research_question = question_data.get("research_question")
+                    if research_question:
+                        return research_question
+            except (json.JSONDecodeError, KeyError, FileNotFoundError):
+                pass
+
+    # Fallback to original config file approach
     config_file_path = "main_workflow/reporting/.config/dataset_query.json"
 
     try:
@@ -238,8 +253,8 @@ def _render_streamlined_ai_workflow(ri: ResultsIntegrator, results_dir: str, sel
         st.session_state['show_cached_results'] = False
         st.session_state['previous_selected_datasets'] = current_datasets
 
-    # Load saved query from dataset identification
-    saved_query = load_query_config()
+    # Load saved query from dataset identification (check results directory first)
+    saved_query = load_query_config(results_dir)
     default_placeholder = "e.g., What contrasts are most relevant to T cell activation and differentiation?"
 
     # Use saved query as placeholder if available

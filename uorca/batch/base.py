@@ -6,12 +6,11 @@ All concrete batch processors (SLURM, local, etc.) must inherit from this class.
 """
 
 import json
-import os
 import pandas as pd
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Any
 
 
 class BatchProcessor(ABC):
@@ -26,12 +25,12 @@ class BatchProcessor(ABC):
         self.name = self.__class__.__name__.replace('BatchProcessor', '').lower()
 
     @abstractmethod
-    def submit_datasets(self, csv_file: str, output_dir: str, **kwargs) -> int:
+    def submit_datasets(self, input_path: str, output_dir: str, **kwargs) -> int:
         """
         Submit batch jobs for processing datasets.
 
         Args:
-            csv_file: Path to CSV file containing dataset information
+            input_path: Either CSV file with dataset information or directory containing CSV and metadata
             output_dir: Output directory for results
             **kwargs: Additional system-specific parameters
 
@@ -39,8 +38,8 @@ class BatchProcessor(ABC):
             Number of jobs submitted
 
         Raises:
-            FileNotFoundError: If CSV file doesn't exist
-            ValueError: If CSV format is invalid
+            FileNotFoundError: If input doesn't exist or CSV not found
+            ValueError: If invalid input format
         """
         pass
 
@@ -80,24 +79,84 @@ class BatchProcessor(ABC):
         """
         pass
 
-    def validate_csv_file(self, csv_file: str) -> pd.DataFrame:
+    def resolve_input_and_extract_metadata(self, input_path: str) -> tuple[str, str]:
         """
-        Validate and load the CSV file containing dataset information.
+        Resolve input path to CSV file and extract research question if available.
 
         Args:
-            csv_file: Path to CSV file
+            input_path: Either a CSV file path or directory containing CSV and metadata
 
         Returns:
-            Validated DataFrame
+            Tuple of (csv_file_path, research_question)
 
         Raises:
-            FileNotFoundError: If CSV file doesn't exist
+            FileNotFoundError: If input doesn't exist or CSV not found
+            ValueError: If invalid input format
+        """
+        input_path_obj = Path(input_path)
+
+        if not input_path_obj.exists():
+            raise FileNotFoundError(f"Input path not found: {input_path}")
+
+        research_question = ""
+
+        if input_path_obj.is_file():
+            # Direct CSV file
+            if not input_path_obj.suffix.lower() == '.csv':
+                raise ValueError(f"File must be a CSV: {input_path}")
+            csv_file = str(input_path_obj)
+        elif input_path_obj.is_dir():
+            # Directory containing CSV and metadata
+
+            # Look for identification metadata JSON
+            metadata_file = input_path_obj / "identification_metadata.json"
+            if metadata_file.exists():
+                try:
+                    with open(metadata_file, 'r') as f:
+                        metadata = json.load(f)
+                        research_question = metadata.get("input_query", "")
+                        print(f"Found research question from metadata: {research_question}")
+                except (json.JSONDecodeError, KeyError) as e:
+                    print(f"Warning: Could not read research question from metadata: {e}")
+
+            # Look for CSV file in directory
+            csv_files = list(input_path_obj.glob("*.csv"))
+            if not csv_files:
+                raise FileNotFoundError(f"No CSV files found in directory: {input_path}")
+            elif len(csv_files) == 1:
+                csv_file = str(csv_files[0])
+                print(f"Found CSV file: {csv_files[0].name}")
+            else:
+                # Look for the expected CSV file from dataset identification
+                expected_csv = input_path_obj / "selected_datasets.csv"
+                if expected_csv.exists():
+                    csv_file = str(expected_csv)
+                    print(f"Found expected CSV file: selected_datasets.csv")
+                else:
+                    csv_names = [f.name for f in csv_files]
+                    raise ValueError(f"Expected 'selected_datasets.csv' not found in directory. Found CSV files: {csv_names}. Please ensure you're using the output from 'uorca identify' or specify the CSV file directly.")
+        else:
+            raise ValueError(f"Input must be a CSV file or directory: {input_path}")
+
+        return csv_file, research_question
+
+    def validate_csv_file(self, input_path: str) -> tuple[pd.DataFrame, str]:
+        """
+        Validate input and prepare dataset information.
+
+        Args:
+            input_path: Either CSV file path or directory containing CSV and metadata
+
+        Returns:
+            Tuple of (validated DataFrame, research_question)
+
+        Raises:
+            FileNotFoundError: If input doesn't exist or CSV not found
             ValueError: If required columns are missing
         """
-        csv_path = Path(csv_file)
-        if not csv_path.exists():
-            raise FileNotFoundError(f"CSV file not found: {csv_file}")
+        csv_file, research_question = self.resolve_input_and_extract_metadata(input_path)
 
+        csv_path = Path(csv_file)
         try:
             df = pd.read_csv(csv_path)
         except Exception as e:
@@ -123,7 +182,32 @@ class BatchProcessor(ABC):
             df['SafeStorageGB'] = 0
             print("Warning: Neither DatasetSizeGB nor DatasetSizeBytes column found, using default value of 0")
 
-        return df
+        return df, research_question
+
+    def save_research_question(self, output_dir: str, research_question: str) -> None:
+        """
+        Save research question to output directory for later use.
+
+        Args:
+            output_dir: Output directory path
+            research_question: Research question to save
+        """
+        if research_question.strip():
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+
+            question_file = output_path / "research_question.json"
+            question_data = {
+                "research_question": research_question.strip(),
+                "source": "dataset_identification_metadata"
+            }
+
+            try:
+                with open(question_file, 'w') as f:
+                    json.dump(question_data, f, indent=2)
+                print(f"Saved research question to: {question_file}")
+            except Exception as e:
+                print(f"Warning: Could not save research question: {e}")
 
     def setup_job_tracking(self, output_dir: str) -> Path:
         """
@@ -239,8 +323,8 @@ class BatchProcessor(ABC):
 
         # Show largest 10 datasets
         print(f"\nLargest 10 datasets (will be prioritized first):")
-        for i, row in df_sorted.head(10).iterrows():
-            print(f"  {i+1:2d}. {row['Accession']:12s} - {row['SafeStorageGB']:6.2f} GB")
+        for i, (_, row) in enumerate(df_sorted.head(10).iterrows(), 1):
+            print(f"  {i:2d}. {row['Accession']:12s} - {row['SafeStorageGB']:6.2f} GB")
 
         if len(df_sorted) > 10:
             print(f"  ... and {len(df_sorted)-10} more datasets")
@@ -248,8 +332,8 @@ class BatchProcessor(ABC):
         # Show smallest 5 datasets
         if len(df_sorted) > 5:
             print(f"\nSmallest 5 datasets (will be processed last):")
-            for i, row in df_sorted.tail(5).iterrows():
-                pos = len(df_sorted) - (len(df_sorted.tail(5)) - list(df_sorted.tail(5).index).index(i))
+            for i, (_, row) in enumerate(df_sorted.tail(5).iterrows()):
+                pos = len(df_sorted) - 4 + i
                 print(f"  {pos:2d}. {row['Accession']:12s} - {row['SafeStorageGB']:6.2f} GB")
 
         # Storage analysis
