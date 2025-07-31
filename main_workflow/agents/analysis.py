@@ -289,7 +289,7 @@ async def run_kallisto_quantification(ctx: RunContext[AnalysisContext],
 
         if not index_path or not os.path.exists(index_path):
             msg = (
-                f"No Kallisto index provided. Please use list_files to find a suitable index file in {ctx.deps.resource_dir}. Note that the index file will end with the .idx suffix. Also note that you should use the index file that is appropriate for {ctx.deps.organism}."
+                f"No Kallisto index provided. Please use list_files to find a suitable index file in {ctx.deps.resource_dir}. Note that the index file will end with the .idx suffix, and you will need to search recursively. Also note that you should use the index file that is appropriate for {ctx.deps.organism}."
             )
             logger.error("❌ %s", msg.replace('\n', ' | '))
 
