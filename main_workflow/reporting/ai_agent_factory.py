@@ -62,7 +62,7 @@ def create_uorca_agent(selected_contrasts_key: str = "") -> Optional[Agent]:
             command="uv",
             args=["run", str(server_script), "server"],
             env=server_env,
-            timeout = mcp_config.timeout
+            timeout = mcp_config.startup_timeout
         )
 
         agent = Agent(

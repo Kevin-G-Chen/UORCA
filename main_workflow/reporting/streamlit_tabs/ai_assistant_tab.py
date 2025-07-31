@@ -14,6 +14,7 @@ import streamlit as st
 import pandas as pd
 import pydantic
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai.exceptions import UsageLimitExceeded
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from config_loader import get_contrast_relevance_with_selection_config, get_ai_agent_config
@@ -187,6 +188,20 @@ def render_ai_assistant_tab(ri: ResultsIntegrator, results_dir: str, selected_da
     """
     st.header("AI Assistant")
     st.markdown("Enter your research question and let the AI agent perform an automated analysis of the data.")
+
+    # Display current configuration
+    with st.expander("Current Configuration", expanded=False):
+        try:
+            ai_config = get_ai_agent_config()
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"**Request Limit:** {ai_config.request_limit}")
+                st.markdown(f"**Analysis Timeout:** {ai_config.analysis_timeout}s")
+            with col2:
+                st.markdown(f"**Model:** {ai_config.model}")
+                st.markdown(f"**Temperature:** {ai_config.temperature}")
+        except Exception as e:
+            st.warning(f"Could not load configuration: {e}")
 
     # Check for OpenAI API key
     if not os.getenv("OPENAI_API_KEY"):
@@ -829,10 +844,19 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
 
             # Run main analysis with timeout
             ai_config = get_ai_agent_config()
-            result = await asyncio.wait_for(
-                agent.run(prompt, usage_limits=UsageLimits(request_limit=ai_config.request_limit)),
-                timeout=1500.0  # 5 minute timeout
-            )
+            logger.info(f"Starting analysis with request_limit={ai_config.request_limit}, timeout={ai_config.analysis_timeout}s")
+
+            try:
+                result = await asyncio.wait_for(
+                    agent.run(prompt, usage_limits=UsageLimits(request_limit=ai_config.request_limit)),
+                    timeout=ai_config.analysis_timeout
+                )
+            except UsageLimitExceeded as e:
+                logger.error(f"Usage limit exceeded: {e}")
+                raise Exception(f"Analysis stopped: Request limit of {ai_config.request_limit} exceeded. {e}")
+            except asyncio.TimeoutError:
+                logger.error(f"Analysis timeout after {ai_config.analysis_timeout}s")
+                raise Exception(f"Analysis timed out after {ai_config.analysis_timeout} seconds")
 
             # Get tool calls from new logging system
             tool_calls = get_ai_tool_logs_for_display()

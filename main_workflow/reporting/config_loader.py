@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 class AIAgentConfig:
     """Configuration for the main AI agent."""
     model: str = "openai:gpt-4.1-mini"
-    temperature: float = 0.1
-    request_limit: int = 100
-    timeout: int = 180
+    temperature: float = 0.7
+    request_limit: int = 10  # Low default for testing
+    analysis_timeout: int = 60  # Short analysis timeout for testing
 
 
 @dataclass
@@ -49,7 +49,7 @@ class UISettings:
 @dataclass
 class MCPServerConfig:
     """MCP server configuration."""
-    timeout: int = 180
+    startup_timeout: int = 180  # Keep MCP startup at 3 minutes
     max_retries: int = 3
 
 
@@ -96,7 +96,7 @@ class AIAssistantConfigLoader:
                     "model": self.ai_agent.model,
                     "temperature": self.ai_agent.temperature,
                     "request_limit": self.ai_agent.request_limit,
-                    "timeout": self.ai_agent.timeout
+                    "analysis_timeout": self.ai_agent.analysis_timeout
                 },
 
                 "contrast_relevance_with_selection": {
@@ -112,7 +112,7 @@ class AIAssistantConfigLoader:
                     "max_genes_display": self.ui_settings.max_genes_display
                 },
                 "mcp_server": {
-                    "timeout": self.mcp_server.timeout,
+                    "startup_timeout": self.mcp_server.startup_timeout,
                     "max_retries": self.mcp_server.max_retries
                 }
             }
@@ -130,9 +130,9 @@ class AIAssistantConfigLoader:
         config_data = self._config_data.get("ai_agent", {})
         return AIAgentConfig(
             model=config_data.get("model", "openai:gpt-4.1-mini"),
-            temperature=config_data.get("temperature", 0.1),
-            request_limit=config_data.get("request_limit", 100),
-#            timeout=config_data.get("timeout", 180)
+            temperature=config_data.get("temperature", 0.7),
+            request_limit=config_data.get("request_limit", 10),
+            analysis_timeout=config_data.get("analysis_timeout", 60)
         )
 
     @property
@@ -162,7 +162,7 @@ class AIAssistantConfigLoader:
         """Get MCP server configuration."""
         config_data = self._config_data.get("mcp_server", {})
         return MCPServerConfig(
-            timeout=config_data.get("timeout", 180),
+            startup_timeout=config_data.get("startup_timeout", 180),
             max_retries=config_data.get("max_retries", 3)
         )
 
@@ -188,6 +188,7 @@ class AIAssistantConfigLoader:
         summary.append(f"AI Agent Model: {self.ai_agent.model}")
         summary.append(f"AI Agent Temperature: {self.ai_agent.temperature}")
         summary.append(f"AI Agent Request Limit: {self.ai_agent.request_limit}")
+        summary.append(f"AI Agent Analysis Timeout: {self.ai_agent.analysis_timeout}s")
         summary.append("")
 
         summary.append(f"Default LFC Threshold: {self.ui_settings.default_lfc_threshold}")
