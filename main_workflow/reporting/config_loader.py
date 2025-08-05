@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AIAgentConfig:
     """Configuration for the main AI agent."""
-    model: str = "openai:gpt-4.1-mini"
-    temperature: float = 0.7
-    request_limit: int = 10  # Low default for testing
-    analysis_timeout: int = 60  # Short analysis timeout for testing
+    model: str = "openai:gpt-4o-mini"  # Use more reliable model
+    temperature: float = 0.3  # Lower temperature for more consistent analysis
+    request_limit: int = 50  # Allow sufficient tool calls for complex analyses
+    analysis_timeout: int = 300  # 5 minutes timeout to prevent indefinite hanging
 
 
 @dataclass
@@ -129,10 +129,10 @@ class AIAssistantConfigLoader:
         """Get AI agent configuration."""
         config_data = self._config_data.get("ai_agent", {})
         return AIAgentConfig(
-            model=config_data.get("model", "openai:gpt-4.1-mini"),
-            temperature=config_data.get("temperature", 0.7),
-            request_limit=config_data.get("request_limit", 10),
-            analysis_timeout=config_data.get("analysis_timeout", 60)
+            model=config_data.get("model", "openai:gpt-4o-mini"),
+            temperature=config_data.get("temperature", 0.3),
+            request_limit=config_data.get("request_limit", 50),
+            analysis_timeout=config_data.get("analysis_timeout", 300)
         )
 
     @property

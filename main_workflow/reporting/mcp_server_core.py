@@ -1,10 +1,55 @@
 import os
 import json
 import pandas as pd
+import time
+import signal
+import logging
 from datetime import datetime
+from functools import wraps
 from mcp.server.fastmcp import FastMCP
 from ResultsIntegration import ResultsIntegrator
 from streamlit_tabs.helpers.ai_agent_tool_logger import log_ai_agent_tool
+
+# Setup logging for MCP server
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Timeout decorator for tool functions
+def with_timeout(timeout_seconds=30):
+    """Decorator to add timeout protection to tool functions."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            logger.info(f"MCP TOOL: Starting {func.__name__} with {timeout_seconds}s timeout")
+
+            def timeout_handler(signum, frame):
+                elapsed = time.time() - start_time
+                logger.error(f"MCP TOOL: {func.__name__} timed out after {elapsed:.2f}s")
+                raise TimeoutError(f"Tool {func.__name__} timed out after {timeout_seconds} seconds")
+
+            # Set timeout alarm (Unix only)
+            try:
+                old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+                signal.alarm(timeout_seconds)
+
+                result = func(*args, **kwargs)
+
+                elapsed = time.time() - start_time
+                logger.info(f"MCP TOOL: {func.__name__} completed in {elapsed:.2f}s")
+                return result
+            except Exception as e:
+                elapsed = time.time() - start_time
+                logger.error(f"MCP TOOL: {func.__name__} failed after {elapsed:.2f}s: {str(e)}")
+                raise
+            finally:
+                signal.alarm(0)  # Clear the alarm
+                try:
+                    signal.signal(signal.SIGALRM, old_handler)
+                except:
+                    pass
+        return wrapper
+    return decorator
 
 
 server = FastMCP("UORCA-Tools")
@@ -61,6 +106,7 @@ def load_long_table(results_dir: str) -> pd.DataFrame:
 CURRENT_RESULTS_DIR = None
 FULL_DF = pd.DataFrame(columns=['analysis_id','contrast_id','Gene','logFC','pvalue','AveExpr'])
 
+@with_timeout(60)  # Data loading can be slow, allow 60 seconds
 def _ensure_data_loaded():
     """Ensure data is loaded with current RESULTS_DIR, reload if directory changed."""
     global CURRENT_RESULTS_DIR, FULL_DF
@@ -70,18 +116,31 @@ def _ensure_data_loaded():
     # Check if we need to reload data
     if CURRENT_RESULTS_DIR != results_dir or FULL_DF.empty:
         try:
-            print(f"Loading data from {results_dir}")
+            logger.info(f"MCP DATA: Loading data from {results_dir}")
+            start_time = time.time()
             FULL_DF = load_long_table(results_dir)
             CURRENT_RESULTS_DIR = results_dir
-            print(f"Loaded full dataframe: {len(FULL_DF)} rows")
+            elapsed = time.time() - start_time
+            logger.info(f"MCP DATA: Loaded full dataframe: {len(FULL_DF)} rows in {elapsed:.2f}s")
+
+            # Validate data structure
+            if FULL_DF.empty:
+                logger.warning("MCP DATA: Loaded dataframe is empty")
+            else:
+                unique_analyses = FULL_DF['analysis_id'].nunique()
+                unique_contrasts = FULL_DF['contrast_id'].nunique()
+                unique_genes = FULL_DF['Gene'].nunique()
+                logger.info(f"MCP DATA: Data contains {unique_analyses} analyses, {unique_contrasts} contrasts, {unique_genes} genes")
+
         except Exception as e:
-            print(f"Warning: Could not load long table from {results_dir}: {e}")
+            logger.error(f"MCP DATA: Could not load long table from {results_dir}: {e}", exc_info=True)
             # Create empty DataFrame with correct structure as fallback
             FULL_DF = pd.DataFrame(columns=['analysis_id','contrast_id','Gene','logFC','pvalue','AveExpr'])
             CURRENT_RESULTS_DIR = results_dir
 
 
 
+@with_timeout(30)
 def get_filtered_dataframe() -> pd.DataFrame:
     """
     Get the dataframe filtered to selected contrasts, checking environment variable dynamically.
@@ -96,20 +155,23 @@ def get_filtered_dataframe() -> pd.DataFrame:
     if selected_contrasts_json:
         try:
             selected_contrasts = json.loads(selected_contrasts_json)
-            print(f"Filtering to {len(selected_contrasts)} selected contrasts")
+            logger.info(f"MCP FILTER: Filtering to {len(selected_contrasts)} selected contrasts")
 
             # Create filter condition
             contrast_tuples = [(sc['analysis_id'], sc['contrast_id']) for sc in selected_contrasts]
             mask = FULL_DF.apply(lambda row: (row['analysis_id'], row['contrast_id']) in contrast_tuples, axis=1)
             filtered_df = FULL_DF[mask].copy()
 
-            print(f"Filtered dataframe: {len(filtered_df)} rows from {len(FULL_DF)} total rows")
+            logger.info(f"MCP FILTER: Filtered dataframe: {len(filtered_df)} rows from {len(FULL_DF)} total rows")
             return filtered_df
         except json.JSONDecodeError:
-            print("Warning: Could not parse SELECTED_CONTRASTS_FOR_AI, using full dataframe")
+            logger.warning("MCP FILTER: Could not parse SELECTED_CONTRASTS_FOR_AI, using full dataframe")
+            return FULL_DF
+        except Exception as e:
+            logger.error(f"MCP FILTER: Error filtering contrasts: {e}")
             return FULL_DF
     else:
-        print("No selected contrasts specified, using full dataframe")
+        logger.info("MCP FILTER: No selected contrasts specified, using full dataframe")
         return FULL_DF
 
 
@@ -117,6 +179,7 @@ def get_filtered_dataframe() -> pd.DataFrame:
 # 1) Top recurring DEGs
 @server.tool()
 @log_ai_agent_tool
+@with_timeout(30)
 async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) -> str:
     """
     Find the most commonly differentially expressed genes across contrasts to identify robust, recurring differential expression patterns. This tool filters all available contrast data using your specified thresholds and ranks genes by how frequently they appear as significantly differentially expressed. Use this as your first step to get a broad overview of the most consistent differential expression signals in your dataset. Genes with higher occurrence counts represent more robust findings that are less likely to be experimental artifacts and more likely to represent core biological processes. The results help you prioritize which genes deserve deeper investigation and can reveal pathway components that are consistently activated across multiple experimental conditions. Consider using moderate thresholds initially (lfc_thresh=1.0, p_thresh=0.05) to capture a good range of candidates, then potentially rerun with stricter thresholds to focus on the strongest signals.
@@ -129,11 +192,20 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
     Returns:
         JSON string with list of genes and their occurrence counts
     """
+    start_time = time.time()
+    logger.info(f"MCP TOOL: get_most_common_genes called with lfc_thresh={lfc_thresh}, p_thresh={p_thresh}, top_n={top_n}")
+
     df = get_filtered_dataframe()
+    logger.info(f"MCP TOOL: Working with {len(df)} total rows")
+
     df = df[(df.logFC.abs() >= lfc_thresh) & (df.pvalue < p_thresh)]
+    logger.info(f"MCP TOOL: After filtering: {len(df)} rows meet criteria")
+
     counts = df.groupby("Gene").size().nlargest(top_n)
     result = json.dumps([{"gene": g, "count": int(c)} for g, c in counts.items()])
 
+    elapsed = time.time() - start_time
+    logger.info(f"MCP TOOL: get_most_common_genes completed in {elapsed:.2f}s, returning {len(counts)} genes")
     return result
 
 
@@ -141,6 +213,7 @@ async def get_most_common_genes(lfc_thresh: float, p_thresh: float, top_n: int) 
 # 2) Per-gene + contrast stats
 @server.tool()
 @log_ai_agent_tool
+@with_timeout(45)  # Allow extra time for multiple gene lookups
 async def get_gene_contrast_stats(genes: list, contrast_ids: list = None) -> str:
     """
     Get detailed differential expression statistics for multiple genes across experimental contrasts to understand their context-dependent regulation patterns. This tool allows you to drill down into multiple genes that you've identified as interesting from other analyses. When contrast_ids is not specified, you'll get comprehensive data showing how the genes behave across all available experimental conditions, which is invaluable for understanding whether genes show consistent directional changes or context-specific responses. When contrast_ids is specified, you get focused results for those particular experimental conditions. Use this tool to validate findings from broader analyses, investigate literature-supported candidate genes, or understand the experimental contexts where specific genes show the strongest differential expression. The logFC values tell you the magnitude and direction of change, while p-values indicate statistical confidence.
@@ -156,6 +229,7 @@ async def get_gene_contrast_stats(genes: list, contrast_ids: list = None) -> str
     df = df[df.Gene.isin(genes)]
     if contrast_ids:
         df = df[df.contrast_id.isin(contrast_ids)]
+        logger.info(f"MCP TOOL: After contrast filtering: {len(df)} rows for {len(contrast_ids)} specified contrasts")
     result = json.dumps(df[["Gene", "contrast_id", "logFC", "pvalue"]].to_dict("records"))
 
     return result
@@ -163,6 +237,7 @@ async def get_gene_contrast_stats(genes: list, contrast_ids: list = None) -> str
 # 3) Filter by set A vs set B
 @server.tool()
 @log_ai_agent_tool
+@with_timeout(60)  # Allow extra time for complex filtering operations
 async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: float, p_thresh: float) -> str:
     """
     Identify genes that show significant differential expression in ALL contrasts of set A but not in any contrasts of set B, enabling discovery of highly robust condition-specific gene signatures. This powerful comparative tool helps you understand which genes respond consistently and selectively to particular experimental conditions. For example, you could compare treatment vs control contrasts to find genes that are consistently treatment-responsive across multiple experiments, or compare different cell types to identify genes that are robustly cell-type-specific. The tool requires genes to be significant in ALL contrasts of set A (ensuring consistency) while being non-significant in set B (ensuring specificity). This stringent approach is particularly valuable for identifying the most reliable biomarkers, understanding core mechanisms that are consistently activated, or finding genes that represent fundamental biological differences between conditions. The results include both the gene list and summary statistics showing the scope of differential expression in each set.
@@ -176,7 +251,11 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
     Returns:
         JSON string with genes unique to set A and summary counts
     """
+    start_time = time.time()
+    logger.info(f"MCP TOOL: filter_genes_by_contrast_sets called with set_a={len(set_a)}, set_b={len(set_b)}, lfc_thresh={lfc_thresh}, p_thresh={p_thresh}")
+
     df = get_filtered_dataframe()
+    logger.info(f"MCP TOOL: Working with {len(df)} total rows")
 
     # --- SET A: genes that are significant in *every* contrast in set A ------------
     n_a = len(set_a)
@@ -226,6 +305,7 @@ async def filter_genes_by_contrast_sets(set_a: list, set_b: list, lfc_thresh: fl
 # 4) Contrast mini-summary
 @server.tool()
 @log_ai_agent_tool
+@with_timeout(30)
 async def summarise_contrast(contrast_id: str, lfc_thresh: float, p_thresh: float, max_genes: int = 10) -> str:
     """
     Generate a comprehensive summary of differential expression within a specific experimental contrast, providing both quantitative overview and identification of the most significantly changed genes. This tool gives you a rapid assessment of the scope and magnitude of differential expression in any single experimental condition. The summary includes the total count of significantly differentially expressed genes (which indicates the overall transcriptional response magnitude), the top most significantly changed genes ranked by absolute log fold change (which identifies the strongest individual responses), and summary statistics like mean and median log fold changes (which characterize the overall direction and magnitude of expression changes). Use this tool when you want to quickly assess whether a particular contrast shows strong differential expression signals worth investigating further, or to get context about the biological magnitude of responses in specific experimental conditions.
@@ -239,7 +319,11 @@ async def summarise_contrast(contrast_id: str, lfc_thresh: float, p_thresh: floa
     Returns:
         JSON string with contrast summary and top genes
     """
+    start_time = time.time()
+    logger.info(f"MCP TOOL: summarise_contrast called for contrast_id='{contrast_id}', lfc_thresh={lfc_thresh}, p_thresh={p_thresh}, max_genes={max_genes}")
+
     df = get_filtered_dataframe()
+    logger.info(f"MCP TOOL: Working with {len(df)} total rows")
     df = df[df.contrast_id == contrast_id]
     df = df[(df.logFC.abs() >= lfc_thresh) & (df.pvalue < p_thresh)]
 
@@ -266,6 +350,7 @@ async def summarise_contrast(contrast_id: str, lfc_thresh: float, p_thresh: floa
 # 5) Gene correlation analysis
 @server.tool()
 @log_ai_agent_tool
+@with_timeout(45)  # Correlation calculations can be expensive
 async def calculate_gene_correlation(genes: list) -> str:
     """
     Calculate Spearman's rank correlation coefficients between genes based on their average expression levels (AveExpr) to identify co-expression relationships and potential functional modules. This tool uses the AveExpr values from differential expression analyses to compute pairwise correlations between your genes of interest, which reveals genes that tend to be expressed at similar levels across experimental conditions. Strong positive correlations (close to +1) suggest genes that are co-activated and may participate in the same biological pathways or regulatory networks, while strong negative correlations (close to -1) may indicate opposing regulatory relationships or mutually exclusive expression patterns. Moderate correlations (0.3-0.7) can still indicate meaningful biological relationships. Use this tool after identifying candidate genes from other analyses to understand their functional relationships and to group genes into potential co-regulated modules. This is particularly valuable for pathway analysis and understanding regulatory networks.
@@ -276,7 +361,11 @@ async def calculate_gene_correlation(genes: list) -> str:
     Returns:
         JSON string with pairwise correlation matrix and statistics
     """
+    start_time = time.time()
+    logger.info(f"MCP TOOL: calculate_gene_correlation called with {len(genes)} genes: {genes}")
+
     df = get_filtered_dataframe()
+    logger.info(f"MCP TOOL: Working with {len(df)} total rows")
 
     # Filter to specified genes and remove duplicates
     gene_data = df[df['Gene'].isin(genes)].copy()
@@ -343,6 +432,7 @@ async def calculate_gene_correlation(genes: list) -> str:
 # 6) Expression variability analysis
 @server.tool()
 @log_ai_agent_tool
+@with_timeout(45)
 async def calculate_expression_variability(genes: list, contrasts: list = None) -> str:
     """
     Calculate the standard deviation of log fold changes for specified genes across experimental contrasts to assess expression consistency and identify reliably regulated genes. This tool measures how consistently genes show differential expression across different experimental conditions by computing the standard deviation of their logFC values. Genes with low standard deviation represent consistent, reliable differential expression patterns that may be core biological responses or better biomarker candidates. Genes with high standard deviation show variable responses that may be context-dependent or condition-specific. If contrasts parameter is specified, analysis is restricted to those experimental conditions; if omitted, all available contrasts are used. Use this tool to prioritize genes based on reliability - consistent genes (low SD) may represent more fundamental biological processes, while variable genes (high SD) may indicate context-specific regulation that could be important for understanding condition-specific mechanisms.
@@ -354,7 +444,11 @@ async def calculate_expression_variability(genes: list, contrasts: list = None) 
     Returns:
         JSON string with variability statistics for each gene
     """
+    start_time = time.time()
+    logger.info(f"MCP TOOL: calculate_expression_variability called with {len(genes)} genes, contrasts filter: {'Yes' if contrasts else 'No'}")
+
     df = get_filtered_dataframe()
+    logger.info(f"MCP TOOL: Working with {len(df)} total rows")
 
     # Filter to specified genes
     gene_data = df[df['Gene'].isin(genes)].copy()

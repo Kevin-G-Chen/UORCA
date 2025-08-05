@@ -428,27 +428,56 @@ def _run_complete_ai_analysis(ri: ResultsIntegrator, results_dir: str, research_
                         return
 
         # Step 2: AI Gene Analysis (using selected contrasts)
+        logger.info("WORKFLOW: Starting AI Gene Analysis phase")
         with progress_placeholder:
             with st.spinner(f"Analysing expression patterns..."):
                 # Set the RESULTS_DIR environment variable for the MCP server
                 os.environ['RESULTS_DIR'] = results_dir
+                logger.info(f"WORKFLOW: Set RESULTS_DIR environment variable to: {results_dir}")
+
+                # Retrieve selected contrasts from session state with debugging
+                if 'selected_contrasts_for_ai' not in st.session_state:
+                    logger.error("WORKFLOW: Missing 'selected_contrasts_for_ai' in session state")
+                    st.error("Internal error: Selected contrasts not found in session state.")
+                    return
 
                 selected_contrast_dicts = st.session_state['selected_contrasts_for_ai']
+                logger.info(f"WORKFLOW: Retrieved {len(selected_contrast_dicts)} selected contrasts from session state")
+                logger.debug(f"WORKFLOW: Selected contrasts: {selected_contrast_dicts}")
+
+                # Validate selected contrasts
+                if not selected_contrast_dicts:
+                    logger.warning("WORKFLOW: No contrasts selected for AI analysis")
+                    st.warning("No contrasts were selected for analysis. Please try running the analysis again.")
+                    return
 
                 # Pass selected contrasts to MCP server for filtering
                 import json
                 os.environ['SELECTED_CONTRASTS_FOR_AI'] = json.dumps(selected_contrast_dicts)
+                logger.info("WORKFLOW: Set SELECTED_CONTRASTS_FOR_AI environment variable")
 
                 # Create cache key based on selected contrasts to invalidate agent cache when contrasts change
                 import hashlib
                 contrasts_key = hashlib.md5(json.dumps(selected_contrast_dicts, sort_keys=True).encode()).hexdigest()
+                logger.info(f"WORKFLOW: Generated contrasts cache key: {contrasts_key[:16]}...")
 
-                agent = create_uorca_agent(selected_contrasts_key=contrasts_key)
+                # Create AI agent with debugging
+                logger.info("WORKFLOW: Creating UORCA AI agent...")
+                try:
+                    agent = create_uorca_agent(selected_contrasts_key=contrasts_key)
+                    logger.info("WORKFLOW: AI agent creation attempt completed")
+                except Exception as e:
+                    logger.error(f"WORKFLOW: AI agent creation failed with exception: {str(e)}", exc_info=True)
+                    st.error(f"Failed to create AI agent: {str(e)}")
+                    return
 
                 # Check if agent creation failed due to missing API key
                 if agent is None:
+                    logger.error("WORKFLOW: AI agent creation returned None")
                     st.error("Failed to create AI agent. Please check that your OpenAI API key is properly configured.")
                     return
+
+                logger.info("WORKFLOW: AI agent created successfully")
 
                 # Enhanced prompt that leverages the selection
                 if CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE and len(selected_contrast_dicts) <= 20:
@@ -494,8 +523,18 @@ Please perform the analysis using your four tools, choose all thresholds reasona
                     logger.info(f"AI ANALYSIS PROMPT (Fallback): Research question: '{research_query}' | Available contrasts: {len(selected_contrast_dicts)} | Prompt length: {len(prompt)} chars")
                     logger.debug(f"Full AI analysis prompt:\n{prompt}")
 
-                # Run the agent analysis
-                result_output, tool_calls = _execute_ai_analysis(agent, prompt)
+                # Run the agent analysis with enhanced monitoring
+                logger.info("WORKFLOW: Starting AI agent analysis execution")
+                logger.info(f"WORKFLOW: Analysis prompt prepared (length: {len(prompt)} chars)")
+
+                try:
+                    result_output, tool_calls = _execute_ai_analysis(agent, prompt)
+                    logger.info("WORKFLOW: AI agent analysis completed successfully")
+                    logger.info(f"WORKFLOW: Analysis returned {len(tool_calls) if tool_calls else 0} tool calls")
+                except Exception as e:
+                    logger.error(f"WORKFLOW: AI agent analysis failed: {str(e)}", exc_info=True)
+                    st.error(f"AI analysis failed: {str(e)}")
+                    return
 
                 # Get tool calls for display
                 log_file = get_current_log_file()
@@ -526,14 +565,23 @@ Please perform the analysis using your four tools, choose all thresholds reasona
 
         # Display unified results
         progress_placeholder.empty()
+        logger.info("WORKFLOW: Displaying unified AI results")
         _display_unified_ai_results(
             ri, result_output, research_query, selected_contrast_dicts,
             results_df, selected_datasets, selected_contrasts, display_tool_calls, relevant_tool_calls
         )
+        logger.info("WORKFLOW: AI analysis workflow completed successfully")
 
     except Exception as e:
-        logger.error(f"Error in AI analysis workflow: {str(e)}", exc_info=True)
+        logger.error(f"WORKFLOW: Critical error in AI analysis workflow: {str(e)}", exc_info=True)
         st.error(f"Analysis failed: {str(e)}")
+
+        # Log the state for debugging
+        logger.error(f"WORKFLOW: Failure context - research_query: '{research_query}', selected_datasets: {len(selected_datasets)}")
+        if 'selected_contrasts_for_ai' in st.session_state:
+            logger.error(f"WORKFLOW: Session state had {len(st.session_state['selected_contrasts_for_ai'])} selected contrasts")
+        else:
+            logger.error("WORKFLOW: No 'selected_contrasts_for_ai' in session state")
 
         with st.expander("Error Details", expanded=False):
             import traceback
@@ -837,61 +885,94 @@ def _execute_ai_analysis(agent, prompt: str) -> Tuple[GeneAnalysisOutput, List[D
     """Execute the AI analysis asynchronously with proper loop hygiene, timeout, and capture tool calls."""
 
     async def run_analysis():
+        logger.info("AI EXECUTION: Starting MCP server connection")
         async with agent.run_mcp_servers():
+            logger.info("AI EXECUTION: MCP servers connected successfully")
+
             # Start new analysis session and clear previous tool calls
             start_ai_analysis_session()
             clear_relevant_tool_log()
+            logger.info("AI EXECUTION: Analysis session initialized")
 
             # Run main analysis with timeout
             ai_config = get_ai_agent_config()
-            logger.info(f"Starting analysis with request_limit={ai_config.request_limit}, timeout={ai_config.analysis_timeout}s")
+            logger.info(f"AI EXECUTION: Starting analysis with request_limit={ai_config.request_limit}, timeout={ai_config.analysis_timeout}s")
 
             try:
+                # Add progress tracking for long-running operations
+                import time
+                start_time = time.time()
+
                 result = await asyncio.wait_for(
                     agent.run(prompt, usage_limits=UsageLimits(request_limit=ai_config.request_limit)),
                     timeout=ai_config.analysis_timeout
                 )
+
+                elapsed_time = time.time() - start_time
+                logger.info(f"AI EXECUTION: Analysis completed in {elapsed_time:.2f} seconds")
+
             except UsageLimitExceeded as e:
-                logger.error(f"Usage limit exceeded: {e}")
+                logger.error(f"AI EXECUTION: Usage limit exceeded: {e}")
                 raise Exception(f"Analysis stopped: Request limit of {ai_config.request_limit} exceeded. {e}")
             except asyncio.TimeoutError:
-                logger.error(f"Analysis timeout after {ai_config.analysis_timeout}s")
-                raise Exception(f"Analysis timed out after {ai_config.analysis_timeout} seconds")
+                logger.error(f"AI EXECUTION: Analysis timeout after {ai_config.analysis_timeout}s")
+                # Try to get partial tool calls before timing out
+                try:
+                    partial_tool_calls = get_ai_tool_logs_for_display()
+                    logger.warning(f"AI EXECUTION: Partial analysis had {len(partial_tool_calls) if partial_tool_calls else 0} tool calls before timeout")
+                except:
+                    logger.warning("AI EXECUTION: Could not retrieve partial tool calls after timeout")
+                raise Exception(f"Analysis timed out after {ai_config.analysis_timeout} seconds. The AI may have gotten stuck in a loop or encountered a complex analysis.")
 
             # Get tool calls from new logging system
             tool_calls = get_ai_tool_logs_for_display()
+            logger.info(f"AI EXECUTION: Retrieved {len(tool_calls) if tool_calls else 0} tool calls from analysis")
 
             # Return the structured output directly (GeneAnalysisOutput object)
             return result.output if hasattr(result, 'output') else result, tool_calls
 
     try:
+        logger.info("AI EXECUTION: Checking event loop status")
         # Check if there's already a running event loop
         try:
             loop = asyncio.get_running_loop()
+            logger.info("AI EXECUTION: Running in existing event loop, using thread executor")
             # If we're in an existing loop, we need to run in a thread
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, run_analysis())
-                result_output, tool_calls = future.result(timeout=1520)  # Slightly longer than async timeout
+                # Add progress monitoring for thread execution
+                import time
+                start_time = time.time()
+                try:
+                    result_output, tool_calls = future.result(timeout=1520)  # Slightly longer than async timeout
+                    elapsed_time = time.time() - start_time
+                    logger.info(f"AI EXECUTION: Thread execution completed in {elapsed_time:.2f} seconds")
+                except concurrent.futures.TimeoutError:
+                    logger.error("AI EXECUTION: Thread executor timeout - analysis likely hung")
+                    raise
         except RuntimeError:
+            logger.info("AI EXECUTION: No running event loop, using asyncio.run")
             # No running loop, safe to use asyncio.run
             result_output, tool_calls = asyncio.run(run_analysis())
 
+        logger.info("AI EXECUTION: Analysis execution completed successfully")
         return result_output, tool_calls
+
     except asyncio.TimeoutError:
-        logger.warning("AI analysis timed out after 5 minutes")
-        st.error("AI analysis timed out. Please try again with a simpler query or fewer contrasts.")
+        logger.warning("AI EXECUTION: Analysis timed out (asyncio.TimeoutError)")
+        st.error("AI analysis timed out. The analysis may have encountered a complex query or gotten stuck. Please try again with a simpler query or fewer contrasts.")
         st.stop()
     except KeyboardInterrupt:
-        logger.info("AI analysis interrupted by user")
+        logger.info("AI EXECUTION: Analysis interrupted by user")
         st.warning("Analysis stopped by user.")
         st.stop()
     except concurrent.futures.TimeoutError:
-        logger.warning("AI analysis timed out in thread executor")
-        st.error("AI analysis timed out. Please try again with a simpler query or fewer contrasts.")
+        logger.warning("AI EXECUTION: Analysis timed out in thread executor - likely hung during execution")
+        st.error("AI analysis timed out during execution. This often happens when the AI gets stuck in complex analysis loops. Please try again with a simpler query or fewer contrasts.")
         st.stop()
     except Exception as e:
-        logger.error(f"Error in AI analysis execution: {str(e)}", exc_info=True)
+        logger.error(f"AI EXECUTION: Unexpected error in analysis execution: {str(e)}", exc_info=True)
         st.error(f"❌ AI analysis failed: {str(e)}")
         st.stop()
 
