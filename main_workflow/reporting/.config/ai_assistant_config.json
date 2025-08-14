@@ -1,13 +1,13 @@
 {
   "ai_agent": {
-    "model": "gpt-4.1-mini",
-    "temperature": 0.7,
+    "model": "gpt-5-mini",
+    "temperature": 1,
     "request_limit": 150,
     "analysis_timeout": 1200
   },
   "contrast_relevance_with_selection": {
-    "model": "gpt-4.1-mini",
-    "temperature": 0.7,
+    "model": "gpt-5-mini",
+    "temperature": 1,
     "repeats": 3,
     "batch_size": 100,
     "parallel_jobs": 4
