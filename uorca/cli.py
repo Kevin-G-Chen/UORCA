@@ -76,7 +76,7 @@ For more help on a specific command, use:
                                   help='Number of independent relevance scoring rounds for reliability')
     identify_advanced.add_argument('-b', '--batch-size', type=int, default=20,
                                   help='Datasets per AI evaluation batch (affects memory usage)')
-    identify_advanced.add_argument('--model', type=str, default='gpt-4o-mini',
+    identify_advanced.add_argument('--model', type=str, default='gpt-5-mini',
                                   help='OpenAI model to use for relevance assessment')
     identify_advanced.add_argument('-v', '--verbose', action='store_true',
                                    help='Enable verbose logging (DEBUG level)')

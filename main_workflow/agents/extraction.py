@@ -27,13 +27,14 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 extract_agent = Agent(
-    "openai:o4-mini",
+    "openai:gpt-5-mini",
     deps_type=RNAseqCoreContext,
     system_prompt=(
         pathlib.Path("./main_workflow/prompts/extraction.txt").read_text()
         if pathlib.Path("prompts/extraction_system.txt").exists()
         else "You handle data extraction tasks."
-    )
+    ),
+    model_settings={"temperature": 1}
 )
 
 # ──────────────────────────────────────────────────────────────────────────

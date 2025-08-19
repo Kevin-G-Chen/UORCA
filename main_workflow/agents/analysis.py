@@ -68,9 +68,11 @@ except Exception as e:
     """
 
 rnaseq_agent = Agent(
-    "openai:o4-mini",
+    "openai:gpt-5-mini",
     deps_type=AnalysisContext,
-    system_prompt=system_prompt)
+    system_prompt=system_prompt,
+    model_settings={"temperature": 1}
+)
 
 # ----------------------------
 # Define output schema for contrasts
@@ -129,9 +131,10 @@ except Exception as e:
     print("Using fallback system prompt instead.")
 
 rnaseq_agent = Agent(
-    'openai:gpt-4o',  # Change to more powerful model
+    'openai:gpt-5-mini',  # Use GPT-5 mini (updated default)
     deps_type=AnalysisContext,
-    system_prompt=system_prompt
+    system_prompt=system_prompt,
+    model_settings={"temperature": 1}
 )
 
 # ----------------------------

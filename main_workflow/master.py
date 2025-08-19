@@ -33,11 +33,7 @@ except Exception as e:
     """
 
 # ── agent definitions ───────────────────────────────────────────────────────
-master = Agent(
-    "openai:o4-mini",
-    deps_type=RNAseqCoreContext,
-    system_prompt=master_prompt
-)
+
 
 def save_analysis_info(ctx):
     """Save analysis information to a JSON file for integration with reporting tools."""
@@ -256,7 +252,7 @@ async def generate_reflection(ctx: RunContext[RNAseqCoreContext]) -> str:
 
     # Create reflection agent
     reflection_agent = Agent(
-        "openai:o4-mini",
+        "openai:gpt-5-mini",
         system_prompt="""You are an expert bioinformatics troubleshooter. Your job is to analyze failed RNA-seq analysis attempts and provide specific, actionable recommendations for the next attempt.
 
 Focus on:
@@ -266,6 +262,7 @@ Focus on:
 4. Providing clear, actionable advice for the analysis agent
 
 Be concise and specific. Avoid generic advice."""
+        , model_settings={"temperature": 1}
     )
 
     reflection_prompt = f"""

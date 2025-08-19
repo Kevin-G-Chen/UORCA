@@ -200,7 +200,7 @@ class Assessment(BaseModel):
 class Assessments(BaseModel):
     assessments: List[Assessment]
 
-def call_openai_json(prompt: str, user_input: str, response_format: BaseModel, model: str = "gpt-4o-mini") -> Any:
+def call_openai_json(prompt: str, user_input: str, response_format: BaseModel, model: str = "gpt-5-mini") -> Any:
     """Make OpenAI API call with JSON response format."""
     response = client.beta.chat.completions.parse(
         model=model,
@@ -212,7 +212,7 @@ def call_openai_json(prompt: str, user_input: str, response_format: BaseModel, m
     )
     return response.choices[0].message.parsed
 
-def extract_terms(research_query: str, model: str = "gpt-4o-mini") -> ExtractedTerms:
+def extract_terms(research_query: str, model: str = "gpt-5-mini") -> ExtractedTerms:
     """Extract search terms from research query."""
     prompt = load_prompt("./main_workflow/prompts/dataset_identification/extract_terms.txt")
     return call_openai_json(prompt, research_query, ExtractedTerms, model)
@@ -496,7 +496,7 @@ async def assess_subbatch(df: pd.DataFrame, query: str, schema, key: str, rep: i
             # Return default assessments
             return [Assessment(ID=row['ID'], RelevanceScore=5, Justification="Assessment failed") for _, row in df.iterrows()]
 
-async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, batch_size: int = 10, openai_api_jobs: int = 3, model: str = "gpt-4o-mini") -> pd.DataFrame:
+async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, batch_size: int = 10, openai_api_jobs: int = 3, model: str = "gpt-5-mini") -> pd.DataFrame:
     """Perform repeated relevance assessment with averaging."""
     logging.info(f"Starting relevance scoring: {repeats} repetitions, batch size {batch_size}, parallel API jobs: {openai_api_jobs}")
     sem = asyncio.Semaphore(openai_api_jobs)
@@ -586,8 +586,8 @@ def main():
                                help='Number of independent relevance scoring rounds for reliability')
     advanced_group.add_argument('-b', '--batch-size', type=int, default=20,
                                help='Datasets per AI evaluation batch (affects memory usage)')
-    advanced_group.add_argument('--model', type=str, default='gpt-4o-mini',
-                               help='OpenAI model to use for relevance assessment')
+    advanced_group.add_argument('--model', type=str, default='gpt-5-mini',
+                                   help='OpenAI model to use for relevance assessment')
     advanced_group.add_argument('-v', '--verbose', action='store_true',
                                help='Enable verbose logging (DEBUG level)')
 

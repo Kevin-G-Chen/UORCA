@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class AIAgentConfig:
     """Configuration for the main AI agent."""
-    model: str = "openai:gpt-4o-mini"  # Use more reliable model
-    temperature: float = 0.3  # Lower temperature for more consistent analysis
+    model: str = "openai:gpt-5-mini"  # Use GPT-5 mini (default)
+    temperature: float = 1.0  # Temperature set to 1 for deterministic responses
     request_limit: int = 50  # Allow sufficient tool calls for complex analyses
     analysis_timeout: int = 300  # 5 minutes timeout to prevent indefinite hanging
 
@@ -31,7 +31,7 @@ class AIAgentConfig:
 @dataclass
 class ContrastRelevanceWithSelectionConfig:
     """Configuration for contrast relevance with intelligent selection."""
-    model: str = "openai:gpt-4o-mini"
+    model: str = "openai:gpt-5-mini"
     temperature: float = 0.1
     repeats: int = 3
     batch_size: int = 100
@@ -129,8 +129,8 @@ class AIAssistantConfigLoader:
         """Get AI agent configuration."""
         config_data = self._config_data.get("ai_agent", {})
         return AIAgentConfig(
-            model=config_data.get("model", "openai:gpt-4o-mini"),
-            temperature=config_data.get("temperature", 0.3),
+            model=config_data.get("model", "openai:gpt-5-mini"),
+            temperature=config_data.get("temperature", 1.0),
             request_limit=config_data.get("request_limit", 50),
             analysis_timeout=config_data.get("analysis_timeout", 300)
         )
@@ -140,7 +140,7 @@ class AIAssistantConfigLoader:
         """Get contrast relevance with selection configuration."""
         config_data = self._config_data.get("contrast_relevance_with_selection", {})
         return ContrastRelevanceWithSelectionConfig(
-            model=config_data.get("model", "openai:gpt-4o-mini"),
+            model=config_data.get("model", "openai:gpt-5-mini"),
             temperature=config_data.get("temperature", 0.1),
             repeats=config_data.get("repeats", 3),
             batch_size=config_data.get("batch_size", 100),

@@ -70,9 +70,10 @@ except Exception as e:
 load_dotenv()
 
 metadata_agent = Agent(
-    'openai:o4-mini',         # Use a powerful model
+    "openai:gpt-5-mini",         # Use GPT-5 mini
     deps_type=MetadataContext,
-    system_prompt=system_prompt
+    system_prompt=system_prompt,
+    model_settings={"temperature": 1}
 )
 
 # ----------------------------
@@ -103,12 +104,12 @@ def clean_string(s: str) -> str:
     # a syntactically valid name when used in R
     if re.match(r"^[0-9]", s):
         s = f"X{s}"
-    
+
     # Handle case where cleaning results in an empty string
     if not s:
         logger.debug("🧹 Cleaning resulted in empty string, returning 'None'")
         return "None"
-        
+
     return s
 
 # ----------------------------
