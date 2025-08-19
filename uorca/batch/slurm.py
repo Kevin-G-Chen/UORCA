@@ -155,56 +155,69 @@ class SlurmBatchProcessor(BatchProcessor):
             for row in oversized_datasets:
                 print(f"    {row['Accession']:12s} - {row['SafeStorageGB']:6.2f} GB")
 
-        # Process datasets with intelligent scheduling
+        # Process datasets with intelligent scheduling: always try to submit the largest
+        # dataset that fits the CURRENT available resources. If none fit now, wait
+        # for resources and retry. This avoids blocking on a large dataset while a
+        # smaller one could be submitted.
         remaining_datasets = processable_datasets.copy()
 
         while remaining_datasets:
-            # Find the largest dataset that can fit current resource constraints
-            submitted_this_round = False
+            # Refresh current resource usage
+            running_jobs = self._count_running_jobs()
+            running_storage = self.get_running_jobs_storage(output_dir)
 
+            # Find first (largest-first order preserved) dataset that fits now
+            candidate_index = None
             for i, row in enumerate(remaining_datasets):
-                accession = row['Accession']
                 storage_needed = row['SafeStorageGB']
-
-                print(f"Processing {accession} (requires {storage_needed:.2f} GB)...")
-
-                # Wait for available resources if needed
-                self._wait_for_resources(output_dir, storage_needed, params['max_parallel'], params['max_storage_gb'], params['check_interval'])
-
-                # Submit the job
-                job_id = self._submit_single_dataset(
-                    accession=accession,
-                    output_dir=output_dir,
-                    logs_dir=logs_dir,
-                    status_dir=status_dir,
-                    storage_gb=storage_needed,
-                    **params
-                )
-
-                if job_id:
-                    print(f"  ✅ Submitted {accession} as job {job_id}")
-                    jobs_submitted += 1
-                    remaining_datasets.pop(i)
-                    submitted_this_round = True
-                    break
-                else:
-                    print(f"  ❌ Failed to submit {accession}")
-                    remaining_datasets.pop(i)
+                if (running_storage + storage_needed) <= params['max_storage_gb'] and running_jobs < params['max_parallel']:
+                    candidate_index = i
                     break
 
-            # If no dataset could be submitted this round, break to avoid infinite loop
-            if not submitted_this_round and remaining_datasets:
-                print(f"  ⚠️  No remaining datasets can be submitted with current constraints")
-                break
+            if candidate_index is None:
+                # No dataset fits right now. If none of the remaining datasets can
+                # ever fit individually (shouldn't happen due to earlier filtering),
+                # break. Otherwise wait for resources and retry.
+                any_fit_ever = any(row['SafeStorageGB'] <= params['max_storage_gb'] for row in remaining_datasets)
+                if not any_fit_ever:
+                    break
 
-            # Brief pause between submissions
-            if submitted_this_round:
+                # Wait until some resources free up (this prints a waiting message)
+                self._wait_for_resources(output_dir, 0.0, params['max_parallel'], params['max_storage_gb'], params['check_interval'])
+                continue
+
+            # Submit the chosen candidate
+            row = remaining_datasets[candidate_index]
+            accession = row['Accession']
+            storage_needed = row['SafeStorageGB']
+
+            job_id = self._submit_single_dataset(
+                accession=accession,
+                output_dir=output_dir,
+                logs_dir=logs_dir,
+                status_dir=status_dir,
+                storage_gb=storage_needed,
+                **params
+            )
+
+            if job_id:
+                print(f"  ✅ Submitted {accession} as job {job_id}")
+                jobs_submitted += 1
+                remaining_datasets.pop(candidate_index)
                 time.sleep(1)
+                # continue to next submission
+                continue
+            else:
+                # Failed submission: drop this dataset and continue
+                remaining_datasets.pop(candidate_index)
+                continue
 
-        print(f"\n🎉 Successfully submitted {jobs_submitted} jobs to SLURM")
-        print(f"📁 Job logs will be written to: {logs_dir}")
-        print(f"📊 Job status tracking: {status_dir}")
-        print(f"\nMonitor progress with: squeue -u $(whoami)")
+        # Only show summary messages if at least one job was submitted
+        if jobs_submitted > 0:
+            print(f"\n🎉 Successfully submitted {jobs_submitted} jobs to SLURM")
+            print(f"📁 Job logs will be written to: {logs_dir}")
+            print(f"📊 Job status tracking: {status_dir}")
+            print(f"\nMonitor progress with: squeue -u $(whoami)")
 
         return jobs_submitted
 
