@@ -26,6 +26,11 @@ from .helpers import (
     get_valid_contrasts_with_data
 )
 from ResultsIntegration import ResultsIntegrator
+import io
+import zipfile
+import json
+from datetime import datetime
+import textwrap
 
 # Set up fragment decorator
 setup_fragment_decorator()
@@ -595,6 +600,74 @@ def _draw_heatmap(
                 log_streamlit_event("Heatmap generated successfully")
                 st.plotly_chart(fig, use_container_width=True)
 
+                # Prepare reproducible download package immediately if heatmap data available
+                try:
+                    last_df = getattr(ri, 'last_heatmap_df', None)
+                    last_ctx = getattr(ri, 'last_heatmap_context', None)
+                    if last_df is not None and last_ctx is not None:
+                        # Build in-memory ZIP immediately so users can download right away
+                        zip_buffer = io.BytesIO()
+                        with zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+                            # heatmap data CSV
+                            csv_bytes = last_df.reset_index().to_csv(index=False).encode('utf-8')
+                            zf.writestr('heatmap_data.csv', csv_bytes)
+
+                            # metadata JSON - include x-axis default labels mapping
+                            try:
+                                clustered = last_ctx.get('clustered_contrasts') or []
+                                contrast_labels = last_ctx.get('contrast_labels') or []
+                                simplified = last_ctx.get('simplified_labels') or []
+                                # Build x-axis label mapping: contrast_label -> simplified_label (if available)
+                                x_axis_labels = {c: s for c, s in zip(contrast_labels, simplified) if c in clustered}
+                            except Exception:
+                                x_axis_labels = {}
+
+                            meta = {
+                                'generated_at': datetime.utcnow().isoformat() + 'Z',
+                                'p_value_threshold': last_ctx.get('p_value_threshold'),
+                                'lfc_threshold': last_ctx.get('lfc_threshold'),
+                                'genes': last_ctx.get('genes'),
+                                'contrast_labels': last_ctx.get('contrast_labels'),
+                                'clustered_genes': last_ctx.get('clustered_genes'),
+                                'clustered_contrasts': last_ctx.get('clustered_contrasts'),
+                                'x_axis_labels': x_axis_labels,
+                                # Default plotting parameters for reproduce script
+                                'output_format': 'png',
+                                'dpi': 300,
+                                'width': 12.0,
+                                'height_per_gene': 0.15,
+                                'font_size': 10.0,
+                                'left_margin': 2.5,
+                                'bottom_margin': 1.5
+                            }
+                            zf.writestr('metadata.json', json.dumps(meta, indent=2))
+
+                            # reproducible script (static output: PNG/PDF/SVG, supports label mapping and layout params)
+                            repro_script = _build_repro_script_static()
+                            zf.writestr('reproduce_heatmap.py', repro_script)
+
+                            # README describing files and usage
+                            readme_text = _build_readme_text()
+                            zf.writestr('README.txt', readme_text)
+
+                        zip_buffer.seek(0)
+
+                        file_name = f"uorca_heatmap_repro_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.zip"
+                        # Rename button and add descriptive text
+                        st.download_button(
+                            label="Reproduce and edit heatmap",
+                            data=zip_buffer.getvalue(),
+                            file_name=file_name,
+                            mime='application/zip'
+                        )
+                        st.markdown(
+                            "Download a reproducible package (CSV, metadata, editable script, and README).\n\n" \
+                            "Why download: adjust labels, fonts, margins, or export a high-resolution PDF for publication.\n\n" \
+                            "How: run `python reproduce_heatmap.py --input heatmap_data.csv --output heatmap.pdf --output-format pdf --dpi 300 --font-size 10` and optionally provide a JSON mapping for x-axis labels."
+                        )
+                except Exception as e:
+                    logger.debug(f"Could not prepare reproducible package: {e}")
+
                 # Filtering information is now included in the form validation
             else:
                 log_streamlit_event("Failed to generate heatmap")
@@ -643,3 +716,183 @@ def _display_heatmap_error_details(error: Exception):
     """Display detailed error information in an expandable section."""
     with st.expander("Heatmap Error Details", expanded=False):
         st.code(traceback.format_exc())
+
+
+def _build_repro_script() -> str:
+    """Return contents of a standalone script that reproduces the heatmap from CSV."""
+    # kept for backward compatibility but not used
+    return _build_repro_script_static()
+
+
+def _build_repro_script_static() -> str:
+    """Return contents of a standalone script that reproduces the heatmap as a static PNG.
+
+    The script supports an optional JSON file to remap x-axis labels:
+      python reproduce_heatmap.py --input heatmap_data.csv --output heatmap.png --xlabel-mapping my_labels.json
+    where my_labels.json is a dict mapping original column names to desired labels.
+    """
+    script_lines = [
+    '#!/usr/bin/env python3',
+    '"""',
+    'Reproduce a static heatmap PNG from `heatmap_data.csv`.',
+    '',
+    'Usage:',
+    '  python reproduce_heatmap.py --input heatmap_data.csv --output heatmap.png --xlabel-mapping labels.json --dpi 300',
+    '',
+    'The optional `labels.json` should be a JSON object mapping existing column names to new labels,',
+    'e.g. {"analysis1_contrastA": "Control vs Treated", "analysis2_contrastB": "Condition X"}',
+    '"""',
+    'import argparse',
+    'import json',
+    'import pandas as pd',
+    'import numpy as np',
+    '',
+    '',
+    'def main():',
+    '    parser = argparse.ArgumentParser()',
+    "    parser.add_argument('--input', default='heatmap_data.csv')",
+    "    parser.add_argument('--output', default='heatmap.png')",
+    "    parser.add_argument('--output-format', choices=['png','pdf','svg'], default=None, help='Output file format; if omitted, taken from metadata.json or defaults to png')",
+    "    parser.add_argument('--xlabel-mapping', default=None, help='JSON file mapping original column names to new labels')",
+    "    parser.add_argument('--dpi', type=int, default=None)",
+    "    parser.add_argument('--width', type=float, default=None, help='Figure width in inches')",
+    "    parser.add_argument('--height-per-gene', type=float, default=None, help='Height per gene in inches')",
+    "    parser.add_argument('--font-size', type=float, default=None, help='Base font size for labels')",
+    "    parser.add_argument('--left-margin', type=float, default=None, help='Left margin in inches')",
+    "    parser.add_argument('--bottom-margin', type=float, default=None, help='Bottom margin in inches')",
+    '    args = parser.parse_args()',
+    '',
+    '    # Load metadata.json if present and use it as defaults for parameters',
+    '    meta = {}',
+    '    try:',
+    "        with open('metadata.json', 'r') as mfh:",
+    '            meta = json.load(mfh)',
+    '    except Exception:',
+    '        meta = {}',
+    '',
+    '    # Resolve parameters: CLI overrides metadata; metadata overrides hardcoded defaults',
+    "    out_fmt = args.output_format or meta.get('output_format', 'png')",
+    "    dpi = args.dpi or meta.get('dpi', 300)",
+    "    width = args.width or meta.get('width', 12.0)",
+    "    height_per_gene = args.height_per_gene or meta.get('height_per_gene', 0.15)",
+    "    font_size = args.font_size or meta.get('font_size', 10.0)",
+    "    left_margin = args.left_margin or meta.get('left_margin', 2.5)",
+    "    bottom_margin = args.bottom_margin or meta.get('bottom_margin', 1.5)",
+    '',
+    '    # Read input data',
+    '    df = pd.read_csv(args.input)',
+    "    if 'Gene' in df.columns:",
+    "        df = df.set_index('Gene')",
+    '',
+    '    # Apply xlabel mapping: CLI file if provided, otherwise metadata x_axis_labels',
+    '    xlabel_map = {}',
+    '    if args.xlabel_mapping:',
+    "        with open(args.xlabel_mapping, 'r') as fh:",
+    '            xlabel_map = json.load(fh)',
+    '    else:',
+    "        xlabel_map = meta.get('x_axis_labels', {})",
+    '',
+    '    # Reorder columns if metadata provides clustered_contrasts',
+    "    clustered = meta.get('clustered_contrasts')",
+    '    if clustered and set(clustered).issubset(set(df.columns)):',
+    '        df = df[clustered]',
+    '',
+    '    # Replace column labels according to mapping, preserving order',
+    '    new_cols = [xlabel_map.get(c, c) for c in df.columns]',
+    '',
+    '    # Create figure size based on number of genes and requested width',
+    '    n_genes = df.shape[0]',
+    '    fig_height = max(4, n_genes * height_per_gene)',
+    '',
+    '    # Perform plotting inside a guarded block so errors are written to an error report',
+    '    try:',
+    '        # Now import plotting libraries (delayed to allow --help without heavy deps)',
+    '        import matplotlib',
+    "        matplotlib.use('Agg')",
+    '        import matplotlib.pyplot as plt',
+    '        import seaborn as sns',
+    '',
+    '        fig, ax = plt.subplots(figsize=(width, fig_height))',
+    '',
+    '        # Use diverging palette centered at zero',
+    '        max_abs = max(np.nanmax(np.abs(df.values)), 1.0)',
+    '        # Adjust fonts and margins',
+    "        plt.rcParams.update({'font.size': font_size})",
+    '',
+    '        sns.heatmap(',
+    '            df,',
+    "            cmap='RdBu_r',",
+    '            vmin=-max_abs,',
+    '            vmax=max_abs,',
+    "            cbar_kws={'label': 'Log2FC'},",
+    '            xticklabels=new_cols,',
+    '            yticklabels=True,',
+    '            ax=ax',
+    '        )',
+    '',
+    "        plt.xticks(rotation=45, ha='right', fontsize=font_size)",
+    '        plt.yticks(fontsize=font_size)',
+    '',
+    '        # Convert margins in inches to figure fraction',
+    '        left = left_margin / width',
+    '        bottom = bottom_margin / fig_height',
+    '        plt.subplots_adjust(left=left, right=0.98, top=0.98, bottom=bottom)',
+    '',
+    '        # Save in requested format',
+    '        ofmt = out_fmt.lower()',
+    "        if ofmt == 'pdf':",
+    "            fig.savefig(args.output, dpi=dpi, format='pdf')",
+    "        elif ofmt == 'svg':",
+    "            fig.savefig(args.output, dpi=dpi, format='svg')",
+    '        else:',
+    '            fig.savefig(args.output, dpi=dpi)',
+    '',
+    '    except Exception as exc:',
+    '        # Write an error report so users can inspect failures when running outside the app',
+    '        import traceback',
+    '        report = {',
+    "            'error': str(exc),",
+    "            'traceback': traceback.format_exc(),",
+    "            'note': 'Ensure matplotlib and seaborn are installed or run via the UORCA uv environment (e.g. `uv run python reproduce_heatmap.py ...`).'",
+    '        }',
+    '        try:',
+    "            with open('error_report.txt', 'w') as ef:",
+    "                ef.write('Error reproducing heatmap\\n')",
+    "                ef.write('Error: ' + report['error'] + '\\n\\n')",
+    "                ef.write(report['traceback'])",
+    "                ef.write('\\n\\n')",
+    "                ef.write(report['note'])",
+    '        except Exception:',
+    '            pass',
+    '        # Re-raise so CLI returns non-zero status',
+    '        raise',
+    '',
+    '',
+    "if __name__ == '__main__':",
+    "    main()",
+    "",
+    ]
+    return '\n'.join(script_lines) + '\n'
+
+
+def _build_readme_text() -> str:
+    return (
+        "UORCA Heatmap Reproducible Package\n"
+        "--------------------------------\n\n"
+        "Included files:\n"
+        "- heatmap_data.csv: CSV table of genes (rows) and contrasts (columns) containing log2 fold change values (non-significant values set to 0).\n"
+        "- metadata.json: JSON metadata including thresholds, clustered contrast order, and default x-axis label mapping.\n"
+        "- reproduce_heatmap.py: Standalone script to generate a static heatmap (PNG/PDF/SVG). Supports options to remap x-axis labels, adjust font sizes, margins, output format and DPI.\n"
+        "- README.txt: This file.\n\n"
+        "Quick start:\n"
+        "1. Unzip the package.\n"
+        "2. (Optional) Edit or create a JSON file mapping original contrast column names to publication-friendly labels, e.g.:\n"
+        "   {\"GSE111143_contrast1\": \"Control vs Treated\", \"GSE222222_contrastA\": \"Condition X\"}\n"
+        "3. Run the script to produce a high-resolution PDF for publication: \n"
+        "   python reproduce_heatmap.py --input heatmap_data.csv --output heatmap.pdf --output-format pdf --dpi 300 --xlabel-mapping my_labels.json --font-size 10 --left-margin 2.5\n\n"
+        "Why download?\n"
+        "- Edit axis labels for clarity in figures.\n"
+        "- Produce vector PDF/SVG outputs suitable for publication.\n"
+        "- Adjust fonts and margins for journal layouts.\n\n"
+        "If you need the original DEG/CPM source files included for provenance, ask to include them in the package."
+    )

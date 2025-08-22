@@ -791,6 +791,23 @@ class ResultsIntegrator:
         heatmap_df = heatmap_df.loc[clustered_genes, clustered_contrasts]
         logger.info(f"Final heatmap dimensions: {len(clustered_genes)} genes × {len(clustered_contrasts)} contrasts")
 
+        # Store last heatmap data and context for reproducibility/download
+        try:
+            # Keep a copy of the DataFrame and relevant context
+            self.last_heatmap_df = heatmap_df.copy()
+            self.last_heatmap_context = {
+                'genes': genes,
+                'contrasts': contrasts,
+                'clustered_genes': clustered_genes,
+                'clustered_contrasts': clustered_contrasts,
+                'simplified_labels': simplified_labels,
+                'contrast_labels': contrast_labels,
+                'p_value_threshold': p_thresh,
+                'lfc_threshold': lfc_thresh,
+            }
+        except Exception:
+            logger.debug("Could not store last heatmap context for reproducibility")
+
         # Create heatmap using plotly
         max_abs_value = max(abs(heatmap_df.values.min()), abs(heatmap_df.values.max()))
         if max_abs_value == 0:
