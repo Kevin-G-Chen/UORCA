@@ -245,7 +245,8 @@ def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
             print("""Please provide a directory with successful UORCA analyses. \n\nIf you believe that the directory is correct, please run: cat GSE*/metadata/analysis_info.json | grep '"analysis_success": true' - this checks for successful analyses.""")
             sys.exit(1)
         else:
-            print(f"Validation successful: {validation_message}")
+            # Suppress success message to keep CLI output clean
+            pass
 
         # Count analysis folders using same logic as ResultsIntegrator
         analysis_folders = []
