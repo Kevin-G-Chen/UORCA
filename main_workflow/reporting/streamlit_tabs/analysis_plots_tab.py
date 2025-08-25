@@ -93,22 +93,25 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
                         title = title[6:].strip()
 
                 # Format as GSExxxx - Title or just GSExxxx if no title
-                if title:
-                    display_name = f"{accession} - {title}"
-                else:
-                    display_name = accession
+                display_name = f"{accession} - {title}" if title else accession
 
                 dataset_options.append(display_name)
                 dataset_mapping[display_name] = analysis_id
-            else:
-                # Fallback for datasets without analysis info
-                dataset_options.append(analysis_id)
-                dataset_mapping[analysis_id] = analysis_id
 
         # Sort alphabetically
         dataset_options.sort()
 
-    selected_dataset_display = st.selectbox("Select a dataset to view analysis plots:", dataset_options, key="analysis_dataset_select")
+    # If there are no valid datasets, inform the user and exit early
+    if not dataset_options:
+        log_streamlit_event("No valid datasets available for analysis plots")
+        st.info("No valid datasets available. Ensure analyses completed successfully.")
+        return
+
+    selected_dataset_display = st.selectbox(
+        "Select a dataset to view analysis plots:",
+        dataset_options,
+        key="analysis_dataset_select"
+    )
     selected_dataset = dataset_mapping.get(selected_dataset_display, selected_dataset_display) if selected_dataset_display else None
 
     if not selected_dataset:
