@@ -185,7 +185,7 @@ def validate_dataset_success(results_dir):
                 import json
                 with open(info_file, 'r') as f:
                     data = json.load(f)
-                    if data.get('analysis_success') is True:
+                    if data.get('analysis_success') is True and data.get('unique_groups') is not None:
                         success_count += 1
             except (json.JSONDecodeError, IOError) as e:
                 # Skip files that can't be read or parsed

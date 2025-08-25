@@ -201,6 +201,11 @@ class ResultsIntegrator:
                     with open(info_file, 'r') as f:
                         info = json.load(f)
 
+                    # Skip datasets with invalid unique_groups
+                    if info.get('unique_groups') is None:
+                        logger.warning(f"Skipping {analysis_id}: unique_groups is None")
+                        continue
+
                     # Derive additional fields for convenience
                     info['number_of_contrasts'] = len(info.get('contrasts', []))
                     info['number_of_samples'] = self._count_unique_samples(folder)
