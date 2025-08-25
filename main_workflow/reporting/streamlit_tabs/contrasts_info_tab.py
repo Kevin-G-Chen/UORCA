@@ -5,6 +5,7 @@ This tab allows users to browse and filter contrast details.
 """
 
 import os
+import re
 import pandas as pd
 import streamlit as st
 from typing import List, Dict, Any, Set, Tuple
@@ -66,8 +67,19 @@ def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc
 
     # Display the filtered contrast information
     if not filtered_df.empty:
-        log_streamlit_event(f"Displaying {len(filtered_df)} contrasts")
-        _render_contrast_table(filtered_df, pvalue_thresh, lfc_thresh)
+        # Sort by GEO accession numeric portion extracted from the 'Dataset' column
+        df_sorted = filtered_df.copy()
+        try:
+            # 'Dataset' may be like 'GSE12345 - Title'; extract digits
+            df_sorted["_AccessionNum"] = (
+                df_sorted["Dataset"].astype(str).str.extract(r"(\d+)", expand=False).astype(int)
+            )
+        except Exception:
+            df_sorted["_AccessionNum"] = float("inf")
+        df_sorted = df_sorted.sort_values(["_AccessionNum", "Dataset"], ascending=[True, True]).drop(columns=["_AccessionNum"], errors="ignore")
+
+        log_streamlit_event(f"Displaying {len(df_sorted)} contrasts")
+        _render_contrast_table(df_sorted, pvalue_thresh, lfc_thresh)
         _render_selection_controls(filtered_df)
     else:
         log_streamlit_event("No contrasts match current filters")
@@ -171,9 +183,6 @@ def _render_filtering_controls(df: pd.DataFrame) -> pd.DataFrame:
 @log_streamlit_function
 def _render_contrast_table(filtered_df: pd.DataFrame, pvalue_thresh: float, lfc_thresh: float):
     """Render the contrast table for viewing."""
-    # Sort by DEG count by default
-    filtered_df = filtered_df.sort_values("DEGs", ascending=False)
-
     # Add parameter info for DEGs column
     deg_help_text = f"P-value < {pvalue_thresh}, |logFC| > {lfc_thresh}"
 

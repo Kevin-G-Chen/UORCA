@@ -58,11 +58,24 @@ def _render_datasets_interface(ri: ResultsIntegrator):
     # Add filtering options
     filtered_df = _render_filtering_controls(df)
 
-    # Display the filtered dataset information
+    # Sort by GEO accession (numeric part) before displaying
     if not filtered_df.empty:
-        log_streamlit_event(f"Displaying {len(filtered_df)} datasets")
-        _render_dataset_table(filtered_df)
-        _render_dataset_details(filtered_df)
+        df_sorted = filtered_df.copy()
+        try:
+            # Extract numeric part of accessions like GSE12345 for proper numeric sorting
+            df_sorted["_AccessionNum"] = (
+                df_sorted["Accession"].astype(str).str.extract(r"(\d+)", expand=False).astype(int)
+            )
+        except Exception:
+            # Fallback: no numeric extraction; use as-is
+            df_sorted["_AccessionNum"] = float("inf")
+
+        df_sorted = df_sorted.sort_values(["_AccessionNum", "Accession"], ascending=[True, True])
+        df_sorted = df_sorted.drop(columns=["_AccessionNum"], errors="ignore")
+
+        log_streamlit_event(f"Displaying {len(df_sorted)} datasets")
+        _render_dataset_table(df_sorted)
+        _render_dataset_details(df_sorted)
     else:
         log_streamlit_event("No datasets match current filters")
         st.info("No datasets match the current filters.")

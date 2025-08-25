@@ -6,6 +6,7 @@ Simplified interface with combined form for group and gene selection.
 """
 
 import os
+import re
 import logging
 import streamlit as st
 import pandas as pd
@@ -157,6 +158,13 @@ def _get_group_dataset_combinations(ri: ResultsIntegrator, selected_datasets: Li
         for item in group_dataset_combinations:
             group_id = f"{item['Sample Group']}_{item['Dataset']}"
             item['Select'] = group_id in selected_groups
+
+    # Sort combinations by dataset GEO accession numeric portion, then by dataset and group
+    def _acc_num(acc: str) -> int:
+        m = re.search(r"(\d+)", str(acc) or "")
+        return int(m.group(1)) if m else float('inf')
+
+    group_dataset_combinations.sort(key=lambda x: (_acc_num(x["Dataset"]), x["Dataset"], x["Sample Group"]))
 
     return group_dataset_combinations
 

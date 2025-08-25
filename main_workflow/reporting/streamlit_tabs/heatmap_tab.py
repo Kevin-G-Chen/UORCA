@@ -6,6 +6,7 @@ Features combined form for contrast and gene selection with proper select/clear 
 """
 
 import logging
+import re
 import streamlit as st
 import pandas as pd
 import traceback
@@ -471,7 +472,12 @@ def _create_contrast_table_data_filtered(ri: ResultsIntegrator, selected_dataset
             "Contrast": contrast["contrast_name"],
             "Description": contrast["description"]
         })
+    # Sort by GEO accession numeric portion, then by contrast name
+    def _acc_num(acc: str) -> int:
+        m = re.search(r"(\d+)", str(acc) or "")
+        return int(m.group(1)) if m else float('inf')
 
+    contrast_data.sort(key=lambda x: (_acc_num(x["Accession"]), x["Accession"], x["Contrast"]))
     return contrast_data
 
 

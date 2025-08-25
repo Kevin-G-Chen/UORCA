@@ -104,6 +104,15 @@ def _render_dataset_selection_section(ri: ResultsIntegrator, results_dir: str) -
                 # Pre-select based on session state
                 df['Select'] = df['Accession'].isin(st.session_state['selected_datasets_from_sidebar'])
 
+                # Sort by GEO accession numeric portion for intuitive ordering
+                try:
+                    df["_AccessionNum"] = (
+                        df["Accession"].astype(str).str.extract(r"(\d+)", expand=False).astype(int)
+                    )
+                except Exception:
+                    df["_AccessionNum"] = float("inf")
+                df = df.sort_values(["_AccessionNum", "Accession"], ascending=[True, True]).drop(columns=["_AccessionNum"], errors="ignore")
+
                 edited_df = st.data_editor(
                     df,
                     use_container_width=True,
