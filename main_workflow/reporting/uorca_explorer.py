@@ -126,47 +126,45 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
     # Validate directory
     valid_dir, validation_error = _validate_results_dir(results_dir)
 
-    with st.sidebar.status("Loading data...", expanded=True) as status:
-        if not valid_dir:
-            log_streamlit_event(f"Directory validation failed: {validation_error}")
-            status.update(label=f"Error: {validation_error}", state="error")
-            return None, results_dir, validation_error
+    if not valid_dir:
+        log_streamlit_event(f"Directory validation failed: {validation_error}")
+        st.sidebar.error(f"Error: {validation_error}")
+        return None, results_dir, validation_error
 
-        log_streamlit_event(f"Loading data from: {results_dir}")
-        ri, error = get_integrator(results_dir)
+    log_streamlit_event(f"Loading data from: {results_dir}")
+    ri, error = get_integrator(results_dir)
 
-        if error:
-            error_msg = f"Error loading data: {error}"
-            log_streamlit_event(f"Data loading failed: {error}")
-            status.update(label=error_msg, state="error")
-            return None, results_dir, error_msg
-        elif not ri or not ri.cpm_data:
-            error_msg = "No data found. Please check the directory path."
-            log_streamlit_event("No CPM data found in results")
-            status.update(label=error_msg, state="error")
-            return None, results_dir, error_msg
-        else:
-            log_streamlit_data_load("CPM datasets", len(ri.cpm_data))
+    if error:
+        error_msg = f"Error loading data: {error}"
+        log_streamlit_event(f"Data loading failed: {error}")
+        st.sidebar.error(error_msg)
+        return None, results_dir, error_msg
+    elif not ri or not ri.cpm_data:
+        error_msg = "No data found. Please check the directory path."
+        log_streamlit_event("No CPM data found in results")
+        st.sidebar.error(error_msg)
+        return None, results_dir, error_msg
+    else:
+        log_streamlit_data_load("CPM datasets", len(ri.cpm_data))
 
-            # Use valid contrasts logic to get accurate count and validated contrasts
-            valid_contrasts = get_valid_contrasts_with_data(ri)
-            valid_contrast_info = []
-            for contrast in valid_contrasts:
-                valid_contrast_info.append(f"{contrast['contrast_name']} ({contrast['accession']})")
+    # Use valid contrasts logic to get accurate counts, without logging full lists
+    valid_contrasts = get_valid_contrasts_with_data(ri)
+    n_datasets = len(ri.deg_data)
+    n_valid_contrasts = len(valid_contrasts)
 
-            n_datasets = len(ri.deg_data)
-            n_valid_contrasts = len(valid_contrast_info)
+    # Simplified logging: show counts only
+    log_streamlit_data_load(
+        f"Valid DEG contrasts across {n_datasets} datasets",
+        n_valid_contrasts
+    )
 
-            log_streamlit_data_load(
-                f"Valid DEG contrasts ({n_valid_contrasts}) from {n_datasets} datasets: {valid_contrast_info}",
-                n_valid_contrasts
-            )
-            status.update(label=f"Loaded {len(ri.cpm_data)} datasets", state="complete")
+    # Simple sidebar text instead of a status panel
+    st.sidebar.caption(f"Loaded {len(ri.cpm_data)} datasets")
 
-            # Check if this is the first time loading this directory
-            if 'previous_results_dir' not in st.session_state or st.session_state.previous_results_dir != results_dir:
-                st.session_state.previous_results_dir = results_dir
-                log_streamlit_event(f"New results directory loaded: {results_dir}")
+    # Check if this is the first time loading this directory
+    if 'previous_results_dir' not in st.session_state or st.session_state.previous_results_dir != results_dir:
+        st.session_state.previous_results_dir = results_dir
+        log_streamlit_event(f"New results directory loaded: {results_dir}")
 
     return ri, results_dir, None
 

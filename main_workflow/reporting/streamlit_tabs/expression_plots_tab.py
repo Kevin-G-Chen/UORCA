@@ -111,11 +111,23 @@ def _get_group_dataset_combinations(ri: ResultsIntegrator, selected_datasets: Li
     """Get all unique group-dataset combinations with duplicate handling."""
     group_dataset_combinations = []
 
+    # Log a single message once per session to avoid verbosity
+    global _logged_groups_once
+    try:
+        _logged_groups_once
+    except NameError:
+        _logged_groups_once = False
+    if not _logged_groups_once:
+        log_streamlit_event("Loading sample groups for all datasets")
+        _logged_groups_once = True
+
     for dataset_id in selected_datasets:
         if dataset_id in ri.analysis_info:
             info = ri.analysis_info[dataset_id]
             accession = info.get("accession", dataset_id)
             unique_groups = info.get("unique_groups", [])
+
+            # Do not log per-dataset to keep logs concise
 
             # Get dataset title
             dataset_title = ""
@@ -169,9 +181,12 @@ def _get_group_dataset_combinations(ri: ResultsIntegrator, selected_datasets: Li
     return group_dataset_combinations
 
 
-@log_streamlit_function
 def _get_sample_count_for_group(ri: ResultsIntegrator, dataset_id: str, group_name: str) -> int:
-    """Get the number of samples in a specific group for a dataset."""
+    """Get the number of samples in a specific group for a dataset.
+
+    Verbose logging is handled at the dataset level in _get_group_dataset_combinations
+    to avoid logging per group.
+    """
     try:
         # Look for the sample mapping file
         analysis_dir = os.path.join(ri.results_dir, dataset_id)
