@@ -67,7 +67,6 @@ Contains specialized agents handling different parts of the workflow:
 - **agents/analysis.py**
   Performs RNA-seq data analysis. Runs Kallisto quantification, prepares edgeR analysis sample mapping, and conducts differential expression analysis with edgeR/limma via R scripts.
 
-- **agents/reporting.py** (legacy - reporting functionality has been moved to main_workflow/reporting/ with comprehensive modular architecture)
 
 ### 2. **Dataset Identification**
 
@@ -113,13 +112,12 @@ The reporting directory contains a comprehensive modular Streamlit application (
   - **uorca_explorer.py**: Main modular Streamlit app with advanced caching and fragment isolation
 
   - **streamlit_tabs/**: Modular tab architecture for maintainability:
-    - **data_selection_tab.py**: Interactive tables for dataset and contrast selection
-    - **heatmap_tab.py**: Clustered heatmaps with advanced filtering and significance thresholds
-    - **expression_plots_tab.py**: Violin plots with pagination and sample grouping
-    - **analysis_plots_tab.py**: Quality control and differential expression plots from individual datasets
-    - **datasets_info_tab.py**: Dataset metadata browsing with study details and filtering
-    - **contrasts_info_tab.py**: Contrast information with descriptions and DEG counts
     - **ai_assistant_tab.py**: Complete AI-powered analysis with transparency features
+    - **analysis_plots_tab.py**: Quality control and differential expression plots from individual datasets
+    - **contrasts_info_tab.py**: Contrast information with descriptions and DEG counts
+    - **datasets_info_tab.py**: Dataset metadata browsing with study details and filtering
+    - **expression_plots_tab.py**: Violin plots with pagination and sample grouping
+    - **heatmap_tab.py**: Clustered heatmaps with advanced filtering and significance thresholds
     - **sidebar_controls.py**: Comprehensive parameter controls with auto gene selection
     - **helpers/**: Shared utilities including caching, logging, and session state management
 
@@ -138,7 +136,6 @@ The reporting directory contains a comprehensive modular Streamlit application (
     - **get_most_common_genes()**: Find frequently differentially expressed genes
     - **get_gene_contrast_stats()**: Get statistics for specific genes across contrasts
     - **filter_genes_by_contrast_sets()**: Find genes specific to contrast subsets
-    - **summarize_contrast()**: Provide contrast summaries with top DEGs
     - **Tool call logging**: Transparent tracking of AI tool usage with parameters and results
 
   - **contrast_relevance.py**: AI-powered contrast relevance assessment:
@@ -159,8 +156,8 @@ The reporting directory contains a comprehensive modular Streamlit application (
     - **GSE111143_metadata.csv**: Example GEO metadata structure
 
   - **prompts/**: AI prompt templates for various analysis workflows:
+    - **ai_agent_analysis.txt**: Prompt for end-to-end AI-driven analysis flow
     - **assess_and_select_contrasts.txt**: Prompts for intelligent contrast selection
-    - **assess_contrast_relevance.txt**: Prompts for contrast relevance scoring
 
 #### Key Features and Capabilities
   - **Performance Optimization**: Advanced caching of expensive operations, fragment isolation for efficient updates
@@ -180,6 +177,10 @@ The reporting directory contains a comprehensive modular Streamlit application (
   - `metadata.txt`: Prompt for the metadata processing agent.
 
   - `master.txt`: Orchestration agent prompt.
+
+  - `dataset_identification/`: Prompts supporting GEO dataset discovery:
+    - `extract_terms.txt`: Term extraction from research questions
+    - `assess_relevance.txt`: Relevance scoring for candidate datasets
 
 ### 7. **Shared**
 
