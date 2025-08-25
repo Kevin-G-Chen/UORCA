@@ -33,7 +33,11 @@ except Exception as e:
     """
 
 # ── agent definitions ───────────────────────────────────────────────────────
-
+master = Agent(
+    "openai:gpt-5-mini",
+    deps_type = RNAseqCoreContext,
+    system_prompt = master_prompt
+)
 
 def save_analysis_info(ctx):
     """Save analysis information to a JSON file for integration with reporting tools."""

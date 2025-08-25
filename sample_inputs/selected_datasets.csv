@@ -1,42 +1,6 @@
 Accession,organism,RelevanceScore,Valid,DatasetSizeGB
 GSE101722,Mus musculus,10.0,Yes,18.564453125
-GSE152586,Homo sapiens; Severe acute respiratory syndrome coronavirus 2,10.0,Yes,18.6171875
 GSE106148,Homo sapiens,10.0,Yes,14.267578125
-GSE121863,Homo sapiens,10.0,Yes,30.08984375
-GSE214851,Homo sapiens,9.67,Yes,46.751953125
-GSE190725,Homo sapiens,9.67,Yes,177.794921875
 GSE190436,Mus musculus,9.67,Yes,26.0068359375
-GSE102371,Homo sapiens,9.67,Yes,44.236328125
-GSE162494,Homo sapiens,9.67,Yes,41.4736328125
-GSE162615,Homo sapiens,9.67,Yes,30.4345703125
 GSE247671,Homo sapiens,9.33,Yes,7.474609375
-GSE108413,Homo sapiens,9.33,Yes,125.1708984375
-GSE185778,Homo sapiens,9.33,Yes,19.8984375
-GSE181238,Homo sapiens,9.33,Yes,40.38671875
-GSE150148,Homo sapiens,9.0,Yes,56.13671875
-GSE171370,Homo sapiens,9.0,Yes,18.2861328125
 GSE207270,Homo sapiens,9.0,Yes,19.2431640625
-GSE195796,Homo sapiens,8.67,Yes,153.2900390625
-GSE183716,Homo sapiens,8.67,Yes,17.1826171875
-GSE180063,Homo sapiens; Mus musculus; Severe acute respiratory syndrome coronavirus 2,8.67,Yes,100.384765625
-GSE154272,Homo sapiens,8.67,Yes,81.2529296875
-GSE157032,Homo sapiens,8.67,Yes,11.8740234375
-GSE146643,Mus musculus,8.33,Yes,7.6806640625
-GSE157424,Homo sapiens,8.33,Yes,12.3173828125
-GSE163838,Mesocricetus auratus,8.0,Yes,154.921875
-GSE153940,Chlorocebus sabaeus; Severe acute respiratory syndrome coronavirus 2,8.0,Yes,87.8466796875
-GSE202963,Homo sapiens,8.0,Yes,70.111328125
-GSE159593,Chlorocebus sabaeus,8.0,Yes,23.4951171875
-GSE186524,Homo sapiens,8.0,Yes,22.3056640625
-GSE195721,Mus musculus,8.0,Yes,54.599609375
-GSE106467,Mus musculus,8.0,Yes,4.9423828125
-GSE195464,Mus musculus,7.67,Yes,58.318359375
-GSE155897,Homo sapiens,7.67,Yes,10.419921875
-GSE136948,Mus musculus,7.67,Yes,8.27734375
-GSE180795,Mus musculus,7.67,Yes,112.1181640625
-GSE111752,Mus musculus,7.33,Yes,22.2783203125
-GSE146074,Mus musculus,7.33,Yes,59.3115234375
-GSE102485,Homo sapiens,7.33,Yes,93.2890625
-GSE153131,Homo sapiens,7.33,Yes,26.2255859375
-GSE174399,Homo sapiens,7.0,Yes,182.0673828125
-GSE252959,Homo sapiens,7.0,Yes,178.6025390625
