@@ -29,9 +29,10 @@ STANDARD_FMT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 # Global logger for streamlit app
 _streamlit_logger = None
 _logging_initialized = False
+_current_streamlit_log_path: pathlib.Path | None = None
 
 
-def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int = logging.INFO) -> pathlib.Path:
+def setup_streamlit_logging(log_dir: str | os.PathLike = "logs/streamlit_logs", *, level: int = logging.INFO) -> pathlib.Path:
     """
     Set up Streamlit-specific logging configuration.
 
@@ -44,16 +45,21 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
     Returns:
         Path to the created log file
     """
-    global _streamlit_logger, _logging_initialized
+    global _streamlit_logger, _logging_initialized, _current_streamlit_log_path
 
     if _streamlit_logger is not None and _logging_initialized:
-        # Already initialized - return the expected log file path
+        # Already initialized - return the current log file path
+        if _current_streamlit_log_path is not None:
+            return _current_streamlit_log_path
         log_dir = pathlib.Path(log_dir)
         return log_dir / "streamlit_app.log"
 
     log_dir = pathlib.Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_file = log_dir / "streamlit_app.log"
+
+    # Create a unique log file per session, e.g., streamlit_app_20250825_120102.log
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = log_dir / f"streamlit_app_{timestamp}.log"
 
     # First, clean up any existing handlers on the root logger that might cause duplicates
     root_logger = logging.getLogger()
@@ -88,6 +94,28 @@ def setup_streamlit_logging(log_dir: str | os.PathLike = "logs", *, level: int =
     if not _logging_initialized:
         _streamlit_logger.info("Streamlit app logging initialized")
         _logging_initialized = True
+
+    # Save current log path for reuse
+    _current_streamlit_log_path = log_file
+
+    # Enforce retention: keep only the 5 most recent streamlit_app_*.log files
+    try:
+        existing = sorted(
+            [p for p in log_dir.glob("streamlit_app_*.log") if p.is_file()],
+            key=lambda p: p.stat().st_mtime,
+        )
+        # If more than 5, delete the oldest ones (exclude current file which is newest)
+        if len(existing) > 5:
+            to_delete = existing[: len(existing) - 5]
+            for old in to_delete:
+                try:
+                    old.unlink()
+                except Exception:
+                    # Best-effort cleanup; ignore failures
+                    pass
+    except Exception:
+        # Ignore retention errors silently
+        pass
 
     return log_file
 
