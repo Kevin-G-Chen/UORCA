@@ -89,6 +89,7 @@ uv run uorca run local --input identification_results/ --output_dir ../UORCA_res
 # --cleanup: Remove intermediate files after processing
 # --max_workers: Number of parallel jobs (local only)
 ```
+**Note**: Inputting the directory rather than the CSV file is recommended, as this will ensure the research question is considered in the automated analyses.
 
 **Output**: Complete analysis results including differential expression and visualisations.
 
