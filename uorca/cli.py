@@ -236,35 +236,69 @@ def _check_environment_requirements(require_openai: bool = False):
     if require_openai and not os.getenv("OPENAI_API_KEY"):
         missing.append("OPENAI_API_KEY")
 
-    # Warn about optional variables
-    if not os.getenv("ENTREZ_API_KEY"):
-        print("Warning: ENTREZ_API_KEY not set. API requests may be rate-limited.")
-        print("Consider setting ENTREZ_API_KEY for better performance.")
+    # Inform about API key status
+    entrez_api_key_set = bool(os.getenv("ENTREZ_API_KEY"))
+    openai_key_set = bool(os.getenv("OPENAI_API_KEY"))
 
-    if not require_openai and not os.getenv("OPENAI_API_KEY"):
-        print("Warning: OPENAI_API_KEY not set. AI-powered features will be disabled.")
+    if not entrez_api_key_set:
+        print("ℹ️  ENTREZ_API_KEY not set - using slower rate limits (3 requests/second).")
+        print("   For faster processing, consider getting a free NCBI API key.")
 
-    # If missing required variables, show instructions and exit
+    if not require_openai and not openai_key_set:
+        print("ℹ️  OPENAI_API_KEY not set - AI-powered analysis features will be disabled.")
+
+    # If missing required variables, show comprehensive instructions and exit
     if missing:
-        print("\n" + "="*60)
-        print("ERROR: Missing required environment variables")
-        print("="*60)
-        print(f"Missing: {', '.join(missing)}")
-        print("\nTo fix this, create or update your .env file:")
-        print(f"  File location: {Path(__file__).resolve().parent.parent / '.env'}")
-        print("\nAdd these lines to your .env file:")
+        print("\n" + "="*70)
+        print("❌ SETUP REQUIRED: Missing essential API credentials")
+        print("="*70)
+
+        print("\n📋 What's missing:")
         for var in missing:
             if var == "ENTREZ_EMAIL":
-                print(f"  {var}='your.email@institution.edu'")
+                print("  • ENTREZ_EMAIL - Required by NCBI for accessing biological databases")
             elif var == "OPENAI_API_KEY":
-                print(f"  {var}='sk-proj-...'  # Your OpenAI API key")
-        print("\nOptional (for better performance):")
-        print("  ENTREZ_API_KEY='your_ncbi_api_key'  # Get from: https://www.ncbi.nlm.nih.gov/account/settings/")
-        print("\nExample .env file:")
-        print("  ENTREZ_EMAIL='researcher@university.edu'")
-        print("  OPENAI_API_KEY='sk-proj-abc123...'")
-        print("  ENTREZ_API_KEY='your_ncbi_key'")
-        print("="*60)
+                print("  • OPENAI_API_KEY - Required for AI-powered dataset identification")
+
+        env_file_path = Path(__file__).resolve().parent.parent / '.env'
+        print(f"\n🔧 How to fix this:")
+        print(f"   Create or edit the file: {env_file_path}")
+
+        print(f"\n📝 Add these lines to your .env file:")
+        for var in missing:
+            if var == "ENTREZ_EMAIL":
+                print(f"   {var}=your.email@institution.edu")
+            elif var == "OPENAI_API_KEY":
+                print(f"   {var}=sk-proj-your-key-here")
+
+        if not entrez_api_key_set:
+            print(f"\n⚡ Optional (for 10x faster processing):")
+            print(f"   ENTREZ_API_KEY=your_ncbi_api_key")
+
+        print(f"\n🔗 Where to get API keys:")
+        if "OPENAI_API_KEY" in missing:
+            print(f"   • OpenAI API key: https://platform.openai.com/api-keys")
+            print(f"     (Used for: AI-powered dataset relevance scoring)")
+        if not entrez_api_key_set:
+            print(f"   • NCBI API key: https://www.ncbi.nlm.nih.gov/account/settings/")
+            print(f"     (Used for: Faster biological database queries - optional but recommended)")
+
+        print(f"\n📋 Complete example .env file:")
+        print(f"   # Required")
+        print(f"   ENTREZ_EMAIL=researcher@university.edu")
+        if require_openai:
+            print(f"   OPENAI_API_KEY=sk-proj-abc123...")
+        print(f"   # Optional but recommended")
+        if not require_openai and not openai_key_set:
+            print(f"   OPENAI_API_KEY=sk-proj-abc123...  # For AI features")
+        if not entrez_api_key_set:
+            print(f"   ENTREZ_API_KEY=your_ncbi_key_here  # For faster processing")
+
+        print("\n💡 Tips:")
+        print("   • Keep your .env file secure and don't commit it to version control")
+        print("   • Use quotes around values if they contain special characters")
+        print("   • Restart your terminal after creating the .env file")
+        print("="*70)
         sys.exit(1)
 
 def run_identify(args):

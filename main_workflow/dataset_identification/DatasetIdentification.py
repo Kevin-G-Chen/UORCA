@@ -69,8 +69,27 @@ if os.getenv("ENTREZ_EMAIL"):
 if os.getenv("ENTREZ_API_KEY"):
     Entrez.api_key = os.getenv("ENTREZ_API_KEY")
 
-# OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# OpenAI client initialization with validation
+openai_api_key = os.getenv("OPENAI_API_KEY")
+if not openai_api_key:
+    logging.error("❌ OPENAI_API_KEY not found in environment variables")
+    logging.error("🔧 Dataset identification requires OpenAI API key for AI-powered relevance assessment")
+    logging.error("📝 Please add OPENAI_API_KEY=sk-proj-your-key-here to your .env file")
+    logging.error("🔗 Get your API key at: https://platform.openai.com/api-keys")
+    raise EnvironmentError(
+        "OPENAI_API_KEY is required for dataset identification. "
+        "Please set this environment variable in your .env file."
+    )
+
+try:
+    client = OpenAI(api_key=openai_api_key)
+    # Test the client with a minimal request to validate the key
+    logging.info("✅ OpenAI API key validated successfully")
+except Exception as e:
+    logging.error(f"❌ Failed to initialize OpenAI client: {e}")
+    logging.error("🔧 Please check that your OPENAI_API_KEY is valid")
+    logging.error("🔗 Verify your API key at: https://platform.openai.com/api-keys")
+    raise EnvironmentError(f"Failed to initialize OpenAI client: {e}")
 
 # Rate limiting for API calls
 class APIRateLimiter:

@@ -16,15 +16,36 @@ uv venv
 uv pip install -e .
 ```
 
-From here, specify your OpenAI API key and Entrez email in a `.env` file. Follow the template in `.env.example`:
+## 🔑 Environment Setup
 
+UORCA requires API credentials for accessing biological databases and AI services.
+
+### Required Variables
+- **`ENTREZ_EMAIL`** - Your email address (required by NCBI guidelines)
+- **`OPENAI_API_KEY`** - OpenAI API key (required for AI-powered dataset identification)
+
+### Optional (Recommended)
+- **`ENTREZ_API_KEY`** - NCBI API key (enables 10x faster processing - free from [NCBI](https://www.ncbi.nlm.nih.gov/account/settings/))
+
+### Setup Instructions
+1. Copy the template: `cp .env.example .env`
+2. Edit `.env` with your actual values:
 ```bash
-ENTREZ_EMAIL=your.email@example.com
-OPENAI_API_KEY=sk-your-openai-api-key-here
-# Optional: If you have an NCBI API key, you can also set it here
-# This is recommended for higher rate limits and better performance
-ENTREZ_API_KEY=your-ncbi-api-key-here
+ENTREZ_EMAIL=your.email@institution.edu        # Required: Any valid email
+OPENAI_API_KEY=sk-proj-your-key-here          # Required: Get from https://platform.openai.com/api-keys
+ENTREZ_API_KEY=your-ncbi-key                  # Optional: For faster processing
 ```
+
+3. Test your setup:
+```bash
+# This will validate your API keys and show helpful error messages if something is wrong
+uv run uorca identify --help
+```
+
+### Troubleshooting
+- **Missing variables**: UORCA will show clear error messages with setup instructions
+- **Invalid OpenAI key**: Check your key format (should start with `sk-proj-` or `sk-`)
+- **Rate limiting**: Add `ENTREZ_API_KEY` for faster NCBI queries (3→10 requests/second)
 
 ```bash
 # 1. Find relevant datasets for your research
