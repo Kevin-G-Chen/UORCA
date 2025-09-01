@@ -7,13 +7,18 @@ A fully containerized, AI-powered workflow for automated RNA-seq analysis of pub
 Get started with UORCA in just a few steps:
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/Kevin-G-Chen/UORCA.git
 cd UORCA
 
-# Set up the uv environment
+# 2. Set up the uv environment
 uv venv
 uv pip install -e .
+
+# 3. Download Kallisto indices (required for RNA-seq quantification)
+./download_kallisto_indices.sh        # Downloads all species (human, mouse, dog, monkey, zebrafish)
+# OR download specific species:
+./download_kallisto_indices.sh human  # Download only human index
 ```
 
 ## 🔑 Environment Setup
@@ -47,469 +52,105 @@ uv run uorca identify --help
 - **Invalid OpenAI key**: Check your key format (should start with `sk-proj-` or `sk-`)
 - **Rate limiting**: Add `ENTREZ_API_KEY` for faster NCBI queries (3→10 requests/second)
 
+## 🚀 The UORCA Workflow: Identify → Run → Explore
+
+UORCA follows a streamlined three-step workflow for comprehensive RNA-seq analysis:
+
+### Step 1: Identify - Find relevant datasets
+Discover GEO datasets that match your research question using AI-powered search:
+
 ```bash
-# 1. Find relevant datasets for your research
-uv run uorca identify -q "cancer stem cell differentiation" -o datasets
+uv run uorca identify -q "cancer stem cell differentiation" -o identification_results
 
-# An output CSV file (`datasets.csv`) will be generated with valid and relevant GEO accessions.
-
-# 2. Process datasets
-uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results  # For HPC clusters
-# OR
-uv run uorca run local --csv datasets.csv --output_dir ../UORCA_results  # For local machines
-
-# 3. Explore results interactively
-uv run uorca explore ../UORCA_results
+# Options:
+# -q: Your research question (required)
+# -o: Output directory name (default: adds timestamp)
+# -m: Max results to fetch for each search term (default: 500)
+# -r: Number of ranking iterations (default: 3)
+# -t: Relevance threshold 1-10 (default: 7.0)
+# --model: GPT model to use (default: gpt-4o-mini)
 ```
 
-## Objective and purpose
+**Output**: Directory containing `datasets.csv` with relevant GEO accessions and metadata about your search.
 
-UORCA addresses a critical bottleneck in genomics research: the time-consuming process of manually analyzing public RNA-seq datasets. While thousands of high-quality datasets exist in public repositories like GEO, researchers often lack the time, expertise, or computational resources to systematically analyze them for their research questions.
+### Step 2: Run - Process datasets through the pipeline
+Execute the complete RNA-seq analysis pipeline on identified datasets:
 
-UORCA provides:
-- **Automated end-to-end analysis**: From GEO accession to publication-ready results
-- **AI-driven decision making**: Intelligent metadata processing and experimental design
-- **Containerized deployment**: No complex dependency management required
-- **Interactive exploration**: Web-based tools for results visualization and analysis
-- **Scalable processing**: SLURM-based batch processing for multiple datasets
+```bash
+# For HPC clusters with SLURM
+uv run uorca run slurm --input identification_results/ --output_dir ../UORCA_results
 
-The workflow automatically handles:
-- Data extraction from GEO/SRA
-- Metadata cleaning and experimental design
-- RNA-seq quantification and differential expression analysis
-- Statistical analysis and visualization
-- Report generation with publication-quality figures
+# For local machines
+uv run uorca run local --input identification_results/ --output_dir ../UORCA_results --max_workers 4
 
-## End Result
+# Options:
+# --input: Directory from identify step OR CSV file
+# --output_dir: Where to save results
+# --cleanup: Remove intermediate files after processing
+# --max_workers: Number of parallel jobs (local only)
+```
 
-For each processed dataset, UORCA generates:
-- Comprehensive HTML reports with statistical summaries and visualizations
-- Differential expression tables for all experimental contrasts
-- Publication-quality plots (PCA, volcano plots, heatmaps, etc.)
-- Processed count matrices and metadata files
-- Interactive results that can be explored via the UORCA Explorer web app
+**Output**: Complete analysis results including differential expression and visualisations.
 
-For multiple datasets, additional integration tools provide:
-- Meta-analysis across datasets identifying consistent patterns
-- Interactive multi-dataset visualizations
-- Integrated gene prioritization and pathway analysis
+### Step 3: Explore - Interact with your results
+Launch the interactive web interface to explore and analyze results:
+
+```bash
+uv run uorca explore ../UORCA_results
+
+# Options:
+# --port: Web server port (default: 8501)
+# --headless: Run without opening browser
+
+# For remote access via SSH:
+# 1. On HPC: uv run uorca explore ../UORCA_results --port 8501
+# 2. On laptop: ssh -L 8000:127.0.0.1:8501 username@hpc_server
+# 3. Open browser: http://127.0.0.1:8000
+```
+
+**Features**: Interactive heatmaps, gene expression plots, and cross-dataset integration.
+
+## What UORCA Does
+
+UORCA automates the entire RNA-seq analysis workflow:
+
+1. **Dataset Discovery**: AI-powered identification of relevant GEO datasets based on your research question
+2. **Data Processing**: Automated download, quality control, and RNA-seq quantification using Kallisto
+3. **Statistical Analysis**: Differential expression analysis with automatic experimental design
+4. **Interactive Exploration**: Web-based interface for visualizing and analyzing results across multiple datasets
+5. **AI-Powered Insights**: Intelligent analysis assistant for biological interpretation
 
 ## Prerequisites
 
-UORCA runs entirely within an Apptainer/Singularity container, eliminating the need for complex dependency management. The only requirements are:
+- **Python 3.10+** with `uv` package manager
+- **For HPC**: SLURM job scheduler and Apptainer/Singularity
+- **For local**: Sufficient storage and compute resources
+- **API Keys**: OpenAI and NCBI credentials (see Environment Setup)
 
-- Access to an HPC system with SLURM and Apptainer/Singularity
-- The UORCA container file (`.sif`)
-- OpenAI API key for AI-powered analysis (set as environment variable)
+## Output Structure
 
-## Navigating this repository
-
-Everything you need for running UORCA lives under the `main_workflow/` folder. The rest of the repo contains documentation, helper scripts, and containerization files.
-
-### Container-based workflow
-
-All UORCA analyses run within an Apptainer container that includes all necessary dependencies:
-- Python environment with scientific computing libraries
-- R with Bioconductor packages for RNA-seq analysis
-- Command-line tools (Kallisto, SRA Toolkit, etc.)
-- Web frameworks for interactive visualization
-
-## Unified Command Line Interface
-
-UORCA provides a unified CLI that simplifies access to all three main workflows:
-
-```bash
-# Install UORCA package (enables CLI)
-uv pip install -e .
-
-# Dataset identification - find relevant GEO datasets
-uv run uorca identify -q "cancer stem cell differentiation" -o results.csv
-
-# Dataset analysis - run batch RNA-seq pipeline
-uv run uorca run slurm --csv datasets.csv --output_dir ../UORCA_results
-
-# Results exploration - launch interactive web app
-uv run uorca explore ../UORCA_results --port 8501
-```
-
-**Key advantages of the unified CLI:**
-- **Shorter commands**: `uv run uorca identify` vs `uv run main_workflow/dataset_identification/DatasetIdentification.py`
-- **Simplified deployment**: `uorca explore` runs directly without container dependency
-- **Batch-oriented processing**: `uorca run` focuses on efficient multi-dataset processing
-- **Consistent interface**: All commands follow the same pattern with standardized help
-- **Easy discovery**: `uv run uorca --help` and `uv run uorca COMMAND --help` for documentation
-
-### Detailed CLI Usage
-
-**Dataset Identification:**
-```bash
-# Basic usage
-uv run uorca identify -q "neuroblastoma tumor vs normal" -o my_results
-
-# Advanced options with custom model
-uv run uorca identify -q "stem cell differentiation" \
-    --threshold 7.5 \
-    --model gpt-4o \
-    -r 5 \
-    -v
-
-# Using convenient short-hand options
-uv run uorca identify -q "cancer stem cells" -m 1000 -a 500 -r 5 -v
-
-# Expert configuration
-uv run uorca identify -q "neuroblastoma research" \
-    -m 800 -a 400 --cluster-divisor 15 \
-    -r 3 -b 25 --model gpt-4o-mini -v
-```
-
-**Dataset Analysis:**
-```bash
-# SLURM batch processing with CSV file
-uv run uorca run slurm --input datasets.csv --output_dir ../UORCA_results --cleanup
-
-# SLURM batch processing with identification results directory (recommended)
-uv run uorca run slurm --input identification_results/ --output_dir ../UORCA_results --cleanup
-
-# Local parallel processing with CSV file
-uv run uorca run local --input datasets.csv \
-    --output_dir /path/to/results \
-    --resource_dir ./data/kallisto_indices \
-    --max_workers 4 --cleanup
-
-# Local parallel processing with identification results directory (recommended)
-uv run uorca run local --input identification_results/ \
-    --output_dir /path/to/results \
-    --max_workers 4 --cleanup
-```
-
-**Results Exploration:**
-```bash
-# Explore specific results directory
-uv run uorca explore /path/to/results
-
-# Custom settings with different port
-uv run uorca explore /path/to/results --port 8502 --headless
-
-# For remote access via SSH tunnel
-uv run uorca explore ../UORCA_results --port 8501
-```
-
-#### Single dataset analysis
-
-```bash
-# Using the container directly
-./scratch/sbatch_script/Run_MasterAgent.sh
-
-# Or submit via SLURM with custom parameters
-sbatch --output=logs/my_analysis.out \
-       --error=logs/my_analysis.err \
-       Run_MasterAgent.sh
-```
-
-#### Multiple dataset analysis
-
-UORCA provides efficient batch processing for multiple datasets. You can use either:
-- A CSV file directly with dataset information
-- A directory from `uorca identify` (recommended - carries research question through workflow)
-
-```bash
-# SLURM batch processing with identification results directory (recommended)
-uv run uorca run slurm --input identification_results/ --output_dir ../UORCA_results --cleanup
-
-# SLURM batch processing with CSV file
-uv run uorca run slurm --input datasets.csv --output_dir ../UORCA_results --cleanup
-
-# Local parallel processing with identification results directory (recommended)  
-uv run uorca run local --input identification_results/ --output_dir ../UORCA_results --max_workers 4 --cleanup
-
-# Local parallel processing with CSV file
-uv run uorca run local --input datasets.csv --output_dir ../UORCA_results --max_workers 4 --cleanup
-```
-
-**Note:** Using the identification results directory automatically integrates your research question into the analysis workflow, allowing the metadata agent to design more targeted experimental contrasts.
-
-For legacy batch processing with advanced resource management:
-```bash
-# Process multiple datasets with storage-aware scheduling
-uv run main_workflow/run_helpers/submit_datasets.py \
-    --csv_file datasets.csv \
-    --output_dir ../UORCA_results \
-    --max_parallel 10 \
-    --max_storage_gb 500 \
-    --cleanup
-```
-
-### Agentic workflow architecture
-
-UORCA employs a multi-agent AI system where specialized agents handle different aspects of the analysis:
-
-1. **Master agent (`master.py`)**
-   - Orchestrates the entire workflow
-   - Handles CLI inputs and coordinates between agents
-   - Manages checkpointing and error recovery
-
-2. **Extraction agent (`agents/extraction.py`)**
-   - Downloads GEO Series metadata and sample information
-   - Fetches FASTQ files from SRA using optimized parallel downloading
-   - Automatically determines organism from taxonomic metadata
-
-3. **Metadata agent (`agents/metadata.py`)**
-   - Cleans and standardizes sample metadata
-   - Intelligently merges biological replicates and conditions
-   - Designs experimental contrasts for differential expression
-
-4. **Analysis agent (`agents/analysis.py`)**
-   - Runs Kallisto quantification with automatic parallelization
-   - Performs edgeR/limma differential expression analysis
-   - Generates statistical summaries and quality control metrics
-
-5. **Reporting agent (`agents/reporting.py`)**
-   - Creates publication-quality visualizations
-   - Builds comprehensive HTML reports using Sphinx
-   - Organizes results for downstream exploration
-
-Each agent has access to specialized tools and can make autonomous decisions while maintaining full traceability of the analysis process.
-
-## Additional scripts and tools
-
-### Dataset identification
-
-Automatically discover relevant GEO datasets for your research question:
-
-```bash
-# Using unified CLI (recommended)
-uv run uorca identify -q "cancer stem cell differentiation" -o identification_results/
-
-# Or using direct script execution
-uv run main_workflow/dataset_identification/DatasetIdentification.py \
-    -q "cancer stem cell differentiation" \
-    -t 7.0 \
-    -o identification_results/
-```
-
-**Features:**
-- AI-powered search term extraction from research queries
-- Automated relevance scoring of GEO datasets
-- SRA metadata validation for RNA-seq experiments
-- Direct output formatting for batch processing
-- **JSON metadata output** with timing, relevance statistics, and research question
-- Research question integration throughout the analysis workflow
-
-### Multi-dataset processing
-#### Multiple dataset analysis
-
-Process datasets using the batch-oriented CLI:
-
-```bash
-# SLURM batch processing with identification results (recommended)
-uv run uorca run slurm --input identification_results/ --output_dir ../UORCA_results --cleanup
-
-# SLURM batch processing with CSV file
-uv run uorca run slurm --input datasets.csv --output_dir ../UORCA_results --cleanup
-
-# Local parallel processing with identification results (recommended)
-uv run uorca run local --input identification_results/ --output_dir ../UORCA_results --max_workers 4 --cleanup
-
-# Local parallel processing with CSV file
-uv run uorca run local --input datasets.csv --output_dir ../UORCA_results --max_workers 4 --cleanup
-
-# Legacy batch processing with storage-aware scheduling
-uv run main_workflow/run_helpers/submit_datasets.py \
-    --csv_file multi_dataset_input.csv \
-    --output_dir ../UORCA_results \
-    --resource_dir ./data/kallisto_indices \
-    --max_parallel 10 \
-    --max_storage_gb 500 \
-    --cleanup
-```
-
-**Key features:**
-- Intelligent job scheduling based on dataset size
-- Storage-aware resource management to prevent disk overflow
-- Automatic cleanup of intermediate files
-- Comprehensive progress tracking and error reporting
-- Results ready for immediate exploration in UORCA Explorer
-
-**Integrated Research Question Workflow:**
-When using identification results directories (recommended), the original research question automatically flows through the entire analysis pipeline:
-
-1. **Dataset Identification** → Saves research question in `identification_metadata.json`
-2. **Batch Processing** → Extracts research question and saves to `research_question.json`
-3. **Metadata Analysis** → Tailors experimental contrasts to address the specific research question
-4. **Results Exploration** → Pre-loads research question in AI assistant for targeted analysis
-
-This integration ensures that experimental contrasts and AI analysis remain focused on your original research objectives.
-
-**CSV file format:**
-```csv
-Accession,DatasetSizeBytes
-GSE123456,15000000000
-GSE789012,8500000000
-```
-
-### Results integration
-
-Integrate findings across multiple datasets:
-
-```bash
-# Create integrated analysis across all results
-uv run main_workflow/additional_scripts/ResultsIntegration.py \
-    --results_dir ../UORCA_results \
-    --output_dir ../UORCA_results/integrated_results \
-    --pvalue_threshold 0.05 \
-    --lfc_threshold 1.0
-
-# Then explore integrated results using the CLI
-uv run uorca explore ../UORCA_results/integrated_results
-```
-
-**Features:**
-- Cross-dataset gene prioritization with intelligent ranking
-- Interactive multi-dataset heatmaps with clustering
-- Meta-analysis statistical summaries
-- Publication-ready integrated visualizations
-- Seamless integration with UORCA Explorer for interactive analysis
-
-## UORCA Explorer: Interactive Results Exploration
-
-UORCA Explorer is a containerized Streamlit web application for interactive exploration of analysis results, featuring a modern modular architecture for enhanced performance and maintainability.
-
-### Container-based usage
-
-**Running the Explorer:**
-
-```bash
-# Using the CLI (recommended - runs directly without container)
-uv run uorca explore ../UORCA_results --port 8501
-
-# Or using containerized script (for container environments)
-./run_uorca_explorer.sh [results_directory] [port]
-
-# Example with custom settings
-./run_uorca_explorer.sh ../UORCA_results 8501
-```
-
-**Remote access:**
-
-1. Start the Explorer on your HPC system:
-   ```bash
-   # Using the CLI (direct Python execution)
-   uv run uorca explore ../UORCA_results --port 8501
-
-   # Or using container script (containerized execution)
-   ./run_uorca_explorer.sh ../UORCA_results 8501
-   ```
-
-2. Create SSH tunnel from your laptop:
-   ```bash
-   ssh -L 8000:127.0.0.1:8501 your_username@hpc_server
-   ```
-
-3. Open `http://127.0.0.1:8000` in your browser
-
-### Key Features
-
-**Interactive Analysis:**
-- **Smart Gene Selection**: Auto-identified DEGs with intelligent ranking or custom gene lists with validation
-- **Dataset & Contrast Selection**: Interactive tables for selecting subsets of datasets and contrasts for focused analysis
-- **Dynamic Visualization**: Real-time heatmaps, expression plots, and statistical summaries with advanced caching
-- **Export Capabilities**: Download results as CSV or interactive HTML reports
-
-**Advanced Exploration:**
-- **Multi-dataset Integration**: Compare patterns across multiple studies with clustered heatmaps
-- **Statistical Filtering**: Adjustable significance thresholds and fold-change cutoffs with separate heatmap filters
-- **Quality Control**: Dataset-specific diagnostic plots including PCA, volcano plots, and MA plots
-- **Analysis Plots**: Interactive alternatives to static R plots with hover information and sample grouping
-
-**AI-Powered Analysis with Transparency:**
-- **One-Click Complete Analysis**: Streamlined workflow combining contrast relevance and gene analysis
-- **Contrast Relevance Assessment**: AI scoring and intelligent selection of contrasts relevant to research questions
-- **Tool Call Transparency**: Real-time display of AI tool usage with parameters and results for full transparency
-- **Automated Gene Discovery**: AI-driven identification of key differential expression patterns across selected contrasts
-- **Intelligent Threshold Selection**: AI automatically chooses appropriate statistical thresholds based on data characteristics
-- **Pattern Recognition**: AI identifies both shared and context-specific gene expression signatures
-- **Biological Interpretation**: AI provides structured reasoning and biological context for findings
-
-**Performance & Architecture:**
-- **Modular Design**: Separate tab modules for better maintainability and development workflow
-- **Advanced Caching**: Expensive operations like gene identification cached across sessions
-- **Fragment Isolation**: Efficient tab switching without recomputation using Streamlit fragments
-- **Automatic Pagination**: Large gene sets handled efficiently with 30 genes per page
-- **Responsive Design**: Professional styling optimized for analysis workflows
-
-### Available Tabs
-
-**Data Selection & Exploration:**
-- **☑️ Select Data & Contrasts**: Interactive tables for choosing datasets and contrasts with DEG counts
-- **🌡️ Explore DEG Heatmap**: Clustered heatmaps of log2 fold changes with hover information and filtering
-- **📈 Plot Gene Expression**: Violin plots showing expression distributions across sample groups
-- **🧑‍🔬 Analyze Experiments**: Quality control and differential expression plots from individual datasets
-
-**Information & AI Analysis:**
-- **📋 View Dataset Info**: Browse and filter dataset metadata with study details and descriptions
-- **🔍 View Contrast Info**: Browse contrast details with descriptions and DEG counts
-- **🤖 AI Assistant**: Complete AI-powered analysis with contrast relevance assessment and gene discovery
-
-### Troubleshooting
-
-**Container Issues:**
-- Ensure the container file exists at the specified path
-- Verify Apptainer/Singularity module is loaded
-- Check that results directory contains properly formatted analysis outputs
-
-**Access Issues:**
-- Confirm SSH tunnel is active for remote access
-- Verify firewall settings allow the specified port
-- Check that no other services are using the same port
-
-**Performance Tips:**
-- Use auto-selected DEGs for optimal performance with cached gene identification
-- Enable cleanup mode for long-running batch jobs
-- Monitor storage usage when processing large datasets
-- Use the dedicated "Select Data & Contrasts" tab for efficient dataset browsing
-- AI analysis benefits from OpenAI API key configuration for full functionality
-
-## File organization
-
-UORCA generates a structured output hierarchy:
+UORCA generates organized results for each dataset:
 
 ```
 UORCA_results/
 ├── GSE123456/                    # Individual dataset results
-│   ├── metadata/                 # Sample information and experimental design
-│   ├── quantification/           # Kallisto abundance files
-│   ├── analysis/                 # Differential expression results
-│   ├── figures/                  # Publication-quality plots
-│   └── report/                   # HTML report and summary
-├── integrated_results/           # Multi-dataset integration
-├── logs/                         # Analysis logs and progress tracking
-└── job_status/                   # SLURM job management files
+│   ├── metadata/                 # Sample information
+│   ├── quantification/           # Kallisto outputs
+│   ├── analysis/                 # Differential expression
+│   ├── figures/                  # Visualizations
+│   └── report/                   # HTML summary
+└── integrated_results/           # Cross-dataset analysis
 ```
 
-## Getting started
+## Getting Help
 
-1. **Obtain the container**: Contact the UORCA development team for access to the latest container image
+- **Command help**: `uv run uorca --help` or `uv run uorca COMMAND --help`
+- **Issues**: Submit via [GitHub Issues](https://github.com/Kevin-G-Chen/UORCA/issues)
 
-2. **Set up your environment**:
-   ```bash
-   export OPENAI_API_KEY="your_api_key_here"  # Required for AI Assistant functionality
-   ```
+## Citation
 
-3. **Run a test analysis**:
-   ```bash
-   # Modify the script to point to your container location
-   ./scratch/sbatch_script/Run_MasterAgent.sh
-   ```
+If you use UORCA in your research, please cite our work (manuscript in preparation).
 
-4. **Explore results interactively**:
-   ```bash
-   ./run_uorca_explorer.sh ../UORCA_results
-   ```
+## License
 
-5. **Use the AI Assistant** (if OpenAI API key is configured):
-   - Navigate to the "🤖 AI Assistant" tab
-   - Enter your research question
-   - Click "🚀 Run Complete AI Analysis" for automated contrast relevance assessment and gene discovery
-   - View transparent AI tool usage and biological interpretations
-
-For questions, issues, or feature requests, please contact the UORCA development team or submit an issue through the project repository.
+This project is under development. License information will be added upon public release.
