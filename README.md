@@ -16,7 +16,7 @@ uv venv
 uv pip install -e .
 
 # 3. Download Kallisto indices (required for RNA-seq quantification)
-./download_kallisto_indices.sh        # Downloads all species (human, mouse, dog, monkey, zebrafish)
+./download_kallisto_indices.sh        # Downloads human, mouse, dog, monkey, zebrafish
 # OR download specific species:
 ./download_kallisto_indices.sh human  # Download only human index
 ```
@@ -30,7 +30,7 @@ UORCA requires API credentials for accessing biological databases and AI service
 - **`OPENAI_API_KEY`** - OpenAI API key (required for AI-powered dataset identification)
 
 ### Optional (Recommended)
-- **`ENTREZ_API_KEY`** - NCBI API key (enables 10x faster processing - free from [NCBI](https://www.ncbi.nlm.nih.gov/account/settings/))
+- **`ENTREZ_API_KEY`** - NCBI API key (enables >3x faster processing - free from [NCBI](https://www.ncbi.nlm.nih.gov/account/settings/))
 
 ### Setup Instructions
 1. Copy the template: `cp .env.example .env`
@@ -68,7 +68,7 @@ uv run uorca identify -q "cancer stem cell differentiation" -o identification_re
 # -m: Max results to fetch for each search term (default: 500)
 # -r: Number of ranking iterations (default: 3)
 # -t: Relevance threshold 1-10 (default: 7.0)
-# --model: GPT model to use (default: gpt-4o-mini)
+# --model: GPT model to use (default: gpt-5-mini)
 ```
 
 **Output**: Directory containing `datasets.csv` with relevant GEO accessions and metadata about your search.
