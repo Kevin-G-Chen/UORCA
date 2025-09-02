@@ -246,7 +246,7 @@ def _check_environment_requirements(require_openai: bool = False):
 
     if not require_openai and not openai_key_set:
         print("ℹ️  OPENAI_API_KEY not set - AI-powered analysis features will be disabled.")
-
+    
     # If missing required variables, show comprehensive instructions and exit
     if missing:
         print("\n" + "="*70)
@@ -271,35 +271,87 @@ def _check_environment_requirements(require_openai: bool = False):
             elif var == "OPENAI_API_KEY":
                 print(f"   {var}=sk-proj-your-key-here")
 
-        if not entrez_api_key_set:
-            print(f"\n⚡ Optional (for 10x faster processing):")
-            print(f"   ENTREZ_API_KEY=your_ncbi_api_key")
-
         print(f"\n🔗 Where to get API keys:")
         if "OPENAI_API_KEY" in missing:
             print(f"   • OpenAI API key: https://platform.openai.com/api-keys")
-            print(f"     (Used for: AI-powered dataset relevance scoring)")
-        if not entrez_api_key_set:
-            print(f"   • NCBI API key: https://www.ncbi.nlm.nih.gov/account/settings/")
-            print(f"     (Used for: Faster biological database queries - optional but recommended)")
-
-        print(f"\n📋 Complete example .env file:")
-        print(f"   # Required")
-        print(f"   ENTREZ_EMAIL=researcher@university.edu")
-        if require_openai:
-            print(f"   OPENAI_API_KEY=sk-proj-abc123...")
-        print(f"   # Optional but recommended")
-        if not require_openai and not openai_key_set:
-            print(f"   OPENAI_API_KEY=sk-proj-abc123...  # For AI features")
-        if not entrez_api_key_set:
-            print(f"   ENTREZ_API_KEY=your_ncbi_key_here  # For faster processing")
-
-        print("\n💡 Tips:")
-        print("   • Keep your .env file secure and don't commit it to version control")
-        print("   • Use quotes around values if they contain special characters")
-        print("   • Restart your terminal after creating the .env file")
+        
         print("="*70)
         sys.exit(1)
+
+
+def _check_kallisto_indices(resource_dir: str):
+    """Check if Kallisto indices are available and provide clear instructions if missing."""
+    from pathlib import Path
+    
+    # Convert to Path object
+    indices_path = Path(resource_dir).resolve()
+    
+    # Define expected species
+    expected_species = ['human', 'mouse', 'dog', 'monkey', 'zebrafish']
+    
+    # Check if the directory exists
+    if not indices_path.exists():
+        print("\n" + "="*70)
+        print("⚠️  ERROR: Kallisto indices directory not found!")
+        print("="*70)
+        print(f"\nExpected directory: {indices_path}")
+        print("\nKallisto indices are REQUIRED for RNA-seq quantification.")
+        print("\nTo download the indices, run:")
+        print("\n  ./download_kallisto_indices.sh")
+        print("\nThis will download indices for: human, mouse, dog, monkey, zebrafish")
+        print("\nAlternatively, download specific species:")
+        print("  ./download_kallisto_indices.sh human")
+        print("  ./download_kallisto_indices.sh mouse")
+        print("\nIf you have indices in a different location, specify with --resource_dir")
+        print("="*70)
+        sys.exit(1)
+    
+    # Check which species indices are present
+    found_species = []
+    missing_species = []
+    
+    for species in expected_species:
+        species_dir = indices_path / species
+        index_file = species_dir / "index.idx"
+        t2g_file = species_dir / "t2g.txt"
+        
+        if species_dir.exists() and index_file.exists() and t2g_file.exists():
+            found_species.append(species)
+        else:
+            missing_species.append(species)
+    
+    # Report status
+    if not found_species:
+        print("\n" + "="*70)
+        print("⚠️  ERROR: No Kallisto indices found!")
+        print("="*70)
+        print(f"\nChecked directory: {indices_path}")
+        print("\nNo valid indices found for any species.")
+        print("\nTo download ALL indices, run:")
+        print("\n  ./download_kallisto_indices.sh")
+        print("\nTo download specific species:")
+        print("  ./download_kallisto_indices.sh human")
+        print("  ./download_kallisto_indices.sh mouse")
+        print("\nExpected structure:")
+        print(f"  {indices_path}/")
+        print("    ├── human/")
+        print("    │   ├── index.idx")
+        print("    │   └── t2g.txt")
+        print("    ├── mouse/")
+        print("    │   ├── index.idx")
+        print("    │   └── t2g.txt")
+        print("    └── ...")
+        print("="*70)
+        sys.exit(1)
+    
+    # Warn if some species are missing
+    if missing_species:
+        print(f"\n✓ Found Kallisto indices for: {', '.join(found_species)}")
+        print(f"ℹ️  Missing indices for: {', '.join(missing_species)}")
+        print(f"   To download missing species, run: ./download_kallisto_indices.sh {missing_species[0]}")
+    else:
+        print(f"✓ All Kallisto indices found in: {indices_path}")
+
 
 def run_identify(args):
     """Run the dataset identification workflow."""
@@ -338,6 +390,9 @@ def run_batch_slurm(args):
     # Load and validate environment variables
     _load_environment_variables()
     _check_environment_requirements(require_openai=True)  # Pipeline needs OpenAI
+    
+    # Check for Kallisto indices
+    _check_kallisto_indices(args.resource_dir)
 
     try:
         # Handle config file auto-detection
@@ -382,6 +437,9 @@ def run_batch_local(args):
     # Load and validate environment variables
     _load_environment_variables()
     _check_environment_requirements(require_openai=True)  # Pipeline needs OpenAI
+    
+    # Check for Kallisto indices
+    _check_kallisto_indices(args.resource_dir)
 
     try:
         processor = get_batch_processor('local')
