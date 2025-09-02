@@ -20,10 +20,14 @@ uv pip install -e .
 # OR download specific species:
 ./download_kallisto_indices.sh human  # Download only human index
 
-# 4. (Optional) Pull the Docker container for containerized execution
-docker pull kevingchen/uorca:0.1.0
-# OR for Singularity/Apptainer:
+# 4. (Optional) Pull the container for containerized execution
+# For Singularity/Apptainer (recommended for HPC/SLURM):
 singularity pull uorca_0.1.0.sif docker://kevingchen/uorca:0.1.0
+# OR Apptainer (newer name, same command):
+apptainer pull uorca_0.1.0.sif docker://kevingchen/uorca:0.1.0
+
+# For Docker (local development only):
+docker pull kevingchen/uorca:0.1.0
 ```
 
 ## 🔑 Environment Setup
@@ -129,9 +133,22 @@ UORCA automates the entire RNA-seq analysis workflow:
 ## Prerequisites
 
 - **Python 3.10+** with `uv` package manager
-- **For HPC**: SLURM job scheduler and Apptainer/Singularity
+- **For HPC/SLURM**: 
+  - SLURM job scheduler
+  - Apptainer or Singularity (preferred over Docker for security)
+  - Note: Singularity/Apptainer runs containers without root privileges, making it ideal for multi-user HPC environments
 - **For local**: Sufficient storage and compute resources
 - **API Keys**: OpenAI and NCBI credentials (see Environment Setup)
+
+### Container Runtime Notes
+
+**Why Singularity/Apptainer for HPC?**
+- **Security**: Runs without root privileges (unlike Docker)
+- **SLURM Integration**: Native support via `--container` flag
+- **Performance**: Bare-metal performance with minimal overhead
+- **Portability**: SIF files are single files, easy to share across nodes
+
+The command `singularity pull` automatically converts Docker images to Singularity's SIF format, allowing you to use Docker Hub images while maintaining HPC security requirements.
 
 ## Output Structure
 
@@ -139,13 +156,33 @@ UORCA generates organized results for each dataset:
 
 ```
 UORCA_results/
-├── GSE123456/                    # Individual dataset results
-│   ├── metadata/                 # Sample information
-│   ├── quantification/           # Kallisto outputs
-│   ├── analysis/                 # Differential expression
-│   ├── figures/                  # Visualizations
-│   └── report/                   # HTML summary
-└── integrated_results/           # Cross-dataset analysis
+├── GSE123456/                           # Individual dataset results
+│   ├── metadata/                        # Sample and experimental information
+│   │   ├── GSE123456_metadata.csv      # Sample metadata
+│   │   ├── analysis_info.json          # Analysis parameters
+│   │   ├── contrasts.csv               # Experimental contrasts
+│   │   └── edger_analysis_samples.csv  # Samples used in analysis
+│   ├── RNAseqAnalysis/                  # Differential expression results
+│   │   ├── CPM.csv                     # Counts per million
+│   │   ├── DGE_norm.RDS                # Normalized expression object
+│   │   ├── MDS.png                     # Multidimensional scaling plot
+│   │   ├── filtering_density.png       # Expression filtering diagnostics
+│   │   ├── normalization_boxplots.png  # Normalization quality control
+│   │   ├── sa_plot.png                 # Sample relationship plot
+│   │   ├── voom_mean_variance.png     # Mean-variance trend
+│   │   └── Contrast1_vs_Contrast2/    # Per-contrast results
+│   │       ├── DEG.csv                # Differentially expressed genes
+│   │       ├── volcano_plot.png       # Volcano plot
+│   │       ├── ma_plot.png            # MA plot
+│   │       └── heatmap_top50.png     # Top 50 DEGs heatmap
+│   └── logs/                           # Processing logs
+│       ├── analysis_tool_logs_*.json  # Tool execution logs
+│       └── *.log                       # Timestamped process logs
+├── GSE789012/                          # Another dataset...
+├── job_status/                         # SLURM job tracking
+│   └── GSE*_status.json               # Individual job status files
+└── logs/                               # Batch processing logs
+    └── run_GSE*.out/.err              # SLURM output/error logs
 ```
 
 ## Getting Help
