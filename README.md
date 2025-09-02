@@ -19,6 +19,11 @@ uv pip install -e .
 ./download_kallisto_indices.sh        # Downloads human, mouse, dog, monkey, zebrafish
 # OR download specific species:
 ./download_kallisto_indices.sh human  # Download only human index
+
+# 4. (Optional) Pull the Docker container for containerized execution
+docker pull kevingchen/uorca:0.1.0
+# OR for Singularity/Apptainer:
+singularity pull uorca_0.1.0.sif docker://kevingchen/uorca:0.1.0
 ```
 
 ## 🔑 Environment Setup
