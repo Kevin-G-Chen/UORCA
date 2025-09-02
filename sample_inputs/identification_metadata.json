@@ -1,0 +1,8 @@
+{
+  "input_query": "Comparison of transcriptomic changes induced by Type 1 Diabetes and SARS-CoV-2 infection",
+  "start_time": "2025-08-19T09:37:32.676951",
+  "end_time": "2025-08-19T11:37:53.439199",
+  "total_datasets_assessed": 260,
+  "datasets_deemed_relevant": 45,
+  "threshold_used": 7.0
+}

@@ -76,7 +76,7 @@ uv run uorca identify -q "cancer stem cell differentiation" -o identification_re
 # --model: GPT model to use (default: gpt-5-mini)
 ```
 
-**Output**: Directory containing `datasets.csv` with relevant GEO accessions and metadata about your search.
+**Output**: Directory containing `selected_datasets.csv` with relevant GEO accessions and metadata about your search.
 
 ### Step 2: Run - Process datasets through the pipeline
 Execute the complete RNA-seq analysis pipeline on identified datasets:
@@ -94,7 +94,7 @@ uv run uorca run local --input identification_results/ --output_dir ../UORCA_res
 # --cleanup: Remove intermediate files after processing
 # --max_workers: Number of parallel jobs (local only)
 ```
-**Note**: Inputting the directory rather than the CSV file is recommended, as this will ensure the research question is considered in the automated analyses.
+**Note**: Inputting the directory rather than the CSV file is recommended, as this will ensure the research question is considered in the automated analyses. See `sample_inputs` for an example - feel free to test using this directory!
 
 **Output**: Complete analysis results including differential expression and visualisations.
 
