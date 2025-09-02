@@ -2,9 +2,9 @@
 
 A fully containerized, AI-powered workflow for automated RNA-seq analysis of public datasets from the Gene Expression Omnibus (GEO).
 
-## Quickstart
+## Preparation
 
-Get started with UORCA in just a few steps:
+The following steps will be needed to set up UORCA:
 
 ```bash
 # 1. Clone the repository
@@ -48,12 +48,6 @@ UORCA requires API credentials for accessing biological databases and AI service
 ENTREZ_EMAIL=your.email@institution.edu        # Required: Any valid email
 OPENAI_API_KEY=sk-proj-your-key-here          # Required: Get from https://platform.openai.com/api-keys
 ENTREZ_API_KEY=your-ncbi-key                  # Optional: For faster processing
-```
-
-3. Test your setup:
-```bash
-# This will validate your API keys and show helpful error messages if something is wrong
-uv run uorca identify --help
 ```
 
 ### Troubleshooting
