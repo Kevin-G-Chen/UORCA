@@ -10,6 +10,7 @@ import pandas as pd
 import streamlit as st
 import traceback
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 
 from .helpers import (
     check_ai_generating,
@@ -20,7 +21,9 @@ from .helpers import (
     log_streamlit_tab,
     is_analysis_successful,
     get_valid_contrasts_from_analysis_info,
-    validate_contrast_has_deg_data
+    validate_contrast_has_deg_data,
+    create_dataset_download_package,
+    generate_plot_filename
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -118,6 +121,133 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
         log_streamlit_event("No dataset selected for analysis plots")
         st.info("Please select a dataset to view RNA-seq analysis plots.")
         return
+
+    # Add download options in expandable panel
+    if selected_dataset and ri:
+        dataset_accession = ri.analysis_info.get(selected_dataset, {}).get("accession", selected_dataset)
+        
+        with st.expander("Download Options", expanded=False):
+            # Initialize session state for checkboxes if not exists
+            if f"download_components_{selected_dataset}" not in st.session_state:
+                st.session_state[f"download_components_{selected_dataset}"] = {
+                    'metadata': True,
+                    'abundance': True,
+                    'qc_plots': True,
+                    'deg_analysis': True,
+                    'include_pdfs': False  # Default to false for speed
+                }
+            
+            # Create checkboxes for component selection
+            st.markdown("**Select components to include:**")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                include_metadata = st.checkbox(
+                    "Metadata files",
+                    value=st.session_state[f"download_components_{selected_dataset}"].get('metadata', True),
+                    key=f"checkbox_metadata_{selected_dataset}",
+                    help="Include contrasts.csv, sample information, and analysis configuration"
+                )
+                include_qc = st.checkbox(
+                    "QC plots",
+                    value=st.session_state[f"download_components_{selected_dataset}"].get('qc_plots', True),
+                    key=f"checkbox_qc_{selected_dataset}",
+                    help="Include PCA, MDS, normalization, and other quality control plots"
+                )
+            
+            with col2:
+                include_abundance = st.checkbox(
+                    "Abundance data (Kallisto)",
+                    value=st.session_state[f"download_components_{selected_dataset}"].get('abundance', True),
+                    key=f"checkbox_abundance_{selected_dataset}",
+                    help="Include transcript-level quantification results for each sample"
+                )
+                include_deg = st.checkbox(
+                    "DEG analysis",
+                    value=st.session_state[f"download_components_{selected_dataset}"].get('deg_analysis', True),
+                    key=f"checkbox_deg_{selected_dataset}",
+                    help="Include differential expression results, plots, and CPM data for all contrasts"
+                )
+            
+            # PDF generation option
+            st.markdown("**Additional options:**")
+            include_pdfs = st.checkbox(
+                "Generate PDF versions of DEG plots (slower)",
+                value=st.session_state[f"download_components_{selected_dataset}"].get('include_pdfs', False),
+                key=f"checkbox_pdfs_{selected_dataset}",
+                help="Generate high-resolution PDF versions of volcano plots, MA plots, and heatmaps for each contrast. This significantly increases processing time but provides publication-quality vector graphics."
+            )
+            
+            # Update session state
+            components = {
+                'metadata': include_metadata,
+                'abundance': include_abundance,
+                'qc_plots': include_qc,
+                'deg_analysis': include_deg,
+                'include_pdfs': include_pdfs
+            }
+            st.session_state[f"download_components_{selected_dataset}"] = components
+            
+            # Download section with clear two-step process
+            st.markdown("---")
+            st.markdown("**Download Process:**")
+            
+            # Check if package is ready
+            if f"package_ready_{selected_dataset}" not in st.session_state:
+                # Step 1: Prepare package button
+                st.info("**Step 1**: Click below to prepare your customized package. Once ready, a download button will appear.")
+                
+                if st.button("Prepare Download Package", key=f"download_btn_{selected_dataset}", type="primary"):
+                    # Check if at least one component is selected
+                    if not any([include_metadata, include_abundance, include_qc, include_deg]):
+                        st.error("Please select at least one component to download.")
+                    else:
+                        spinner_text = "Preparing your download package..."
+                        if include_pdfs and include_deg:
+                            num_contrasts = len(ri.deg_data.get(selected_dataset, {}))
+                            if num_contrasts > 0:
+                                spinner_text = f"Preparing package with {num_contrasts} contrast(s)... Generating PDF versions of plots, this may take a moment."
+                        
+                        with st.spinner(spinner_text):
+                            package_bytes = create_dataset_download_package(
+                                ri=ri,
+                                results_dir=results_dir,
+                                dataset_id=selected_dataset,
+                                dataset_accession=dataset_accession,
+                                components=components
+                            )
+                        
+                        if package_bytes:
+                            # Store package in session state
+                            st.session_state[f"package_ready_{selected_dataset}"] = {
+                                'bytes': package_bytes,
+                                'filename': f"{dataset_accession}_analysis_package.zip"
+                            }
+                            st.rerun()
+                        else:
+                            st.warning("Could not create download package. Some files may be missing.")
+            else:
+                # Step 2: Download ready
+                package_data = st.session_state[f"package_ready_{selected_dataset}"]
+                st.success("**Step 2**: Your package is ready! Click the button below to download.")
+                
+                col1, col2, col3 = st.columns([2, 3, 2])
+                with col1:
+                    st.download_button(
+                        label="Download Package",
+                        data=package_data['bytes'],
+                        file_name=package_data['filename'],
+                        mime="application/zip",
+                        key=f"download_final_{selected_dataset}",
+                        use_container_width=True
+                    )
+                with col2:
+                    if st.button("Prepare New Package", key=f"reset_download_{selected_dataset}"):
+                        # Clear the package data to allow reconfiguration
+                        del st.session_state[f"package_ready_{selected_dataset}"]
+                        st.rerun()
+    
+    st.markdown("---")  # Add separator after download section
 
     # Load sample groups for the selected dataset
     groups = _load_sample_groups(ri, selected_dataset)
@@ -542,14 +672,6 @@ def _render_deg_table(selected_dataset: str, selected_contrast: str, contrast_pa
                 column_config=column_config
             )
 
-            # Add download button for DEG file
-            csv = pd.read_csv(deg_file).to_csv(index=False)  # Use original values for download
-            st.download_button(
-                label="Download DEG Table as CSV",
-                data=csv,
-                file_name=f"{selected_dataset}_{selected_contrast}_DEG.csv",
-                mime="text/csv"
-            )
 
         except Exception as e:
             st.error(f"Error loading DEG file: {str(e)}")
@@ -584,14 +706,6 @@ def _render_metadata_section(ri: ResultsIntegrator, selected_dataset: str):
                 use_container_width=True
             )
 
-            # Add download button for metadata
-            csv = metadata_df.to_csv(index=False)
-            st.download_button(
-                label="Download Metadata as CSV",
-                data=csv,
-                file_name=f"{accession}_metadata.csv",
-                mime="text/csv"
-            )
 
         except Exception as e:
             st.error(f"Error loading metadata file: {str(e)}")

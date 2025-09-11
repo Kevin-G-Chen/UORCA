@@ -12,6 +12,10 @@ import plotly.graph_objects as go
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, Set, List
 from datetime import datetime
+import zipfile
+import shutil
+import io
+import pandas as pd
 
 # Import the main integrator
 from ResultsIntegration import ResultsIntegrator
@@ -102,6 +106,346 @@ def generate_plot_filename(plot_type: str, extension: str = "pdf") -> str:
     """
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"uorca_{plot_type}_{timestamp}.{extension}"
+
+
+def add_directory_to_zip(zip_file: zipfile.ZipFile, source_dir: str, archive_dir: str):
+    """
+    Recursively add a directory to a ZIP file.
+    
+    Args:
+        zip_file: ZipFile object to add files to
+        source_dir: Source directory path
+        archive_dir: Directory name in the archive
+    """
+    if not os.path.exists(source_dir):
+        logger.warning(f"Directory not found: {source_dir}")
+        return
+    
+    for root, dirs, files in os.walk(source_dir):
+        for file in files:
+            file_path = os.path.join(root, file)
+            arcname = os.path.join(archive_dir, os.path.relpath(file_path, source_dir))
+            try:
+                zip_file.write(file_path, arcname)
+            except Exception as e:
+                logger.warning(f"Could not add {file_path} to archive: {e}")
+
+
+def create_dataset_download_package(
+    ri: 'ResultsIntegrator',
+    results_dir: str,
+    dataset_id: str,
+    dataset_accession: str,
+    components: Optional[Dict[str, bool]] = None
+) -> Optional[bytes]:
+    """
+    Create a comprehensive download package for a dataset analysis.
+    
+    Args:
+        ri: ResultsIntegrator instance
+        results_dir: Path to results directory
+        dataset_id: Dataset ID (internal)
+        dataset_accession: Dataset accession (e.g., GSE147834)
+        components: Dictionary specifying which components to include:
+                   - 'metadata': Include metadata files
+                   - 'abundance': Include abundance data
+                   - 'qc_plots': Include QC plots
+                   - 'deg_analysis': Include DEG analysis data and plots
+                   If None, all components are included (default)
+    
+    Returns:
+        ZIP file bytes if successful, None if failed
+    """
+    # Default to including all components if not specified
+    if components is None:
+        components = {
+            'metadata': True,
+            'abundance': True,
+            'qc_plots': True,
+            'deg_analysis': True
+        }
+    
+    try:
+        # Create in-memory ZIP file
+        zip_buffer = io.BytesIO()
+        
+        with zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+            package_name = f"{dataset_accession}_analysis_package"
+            dataset_path = os.path.join(results_dir, dataset_id)
+            
+            # 1. Add metadata files (if selected) - only GSE_metadata.csv and contrasts.csv
+            if components.get('metadata', True):
+                metadata_dir = os.path.join(dataset_path, "metadata")
+                if os.path.exists(metadata_dir):
+                    # Only include specific metadata files
+                    metadata_files = [
+                        f"{dataset_accession}_metadata.csv",
+                        "contrasts.csv"
+                    ]
+                    for filename in metadata_files:
+                        file_path = os.path.join(metadata_dir, filename)
+                        if os.path.exists(file_path):
+                            with open(file_path, 'rb') as f:
+                                zf.writestr(f"{package_name}/metadata/{filename}", f.read())
+            
+            # 2. Add abundance directory (if selected and exists)
+            if components.get('abundance', True):
+                abundance_dir = os.path.join(dataset_path, "abundance")
+                if os.path.exists(abundance_dir):
+                    add_directory_to_zip(zf, abundance_dir, f"{package_name}/abundance")
+            
+            # 3. Add QC plots (if selected)
+            if components.get('qc_plots', True):
+                include_pdfs = components.get('include_pdfs', False)
+                _add_qc_plots_to_zip(zf, ri, dataset_id, dataset_path, package_name, include_pdfs)
+            
+            # 4. Add DEG analysis data and plots (if selected)
+            if components.get('deg_analysis', True):
+                include_pdfs = components.get('include_pdfs', False)
+                _add_deg_analysis_to_zip(zf, ri, dataset_id, dataset_path, package_name, include_pdfs)
+                
+                # Add CPM data as part of DEG analysis
+                if dataset_id in ri.cpm_data:
+                    cpm_df = ri.cpm_data[dataset_id]
+                    cpm_csv = cpm_df.to_csv(index=False)
+                    zf.writestr(f"{package_name}/DEG_analysis/CPM_data.csv", cpm_csv)
+            
+            # 6. Create and add README (always include, but customize content)
+            readme_content = _generate_dataset_readme(ri, dataset_id, dataset_accession, components)
+            zf.writestr(f"{package_name}/README.txt", readme_content)
+        
+        zip_buffer.seek(0)
+        return zip_buffer.getvalue()
+        
+    except Exception as e:
+        logger.error(f"Failed to create download package for {dataset_accession}: {e}")
+        st.error(f"Failed to create download package: {str(e)}")
+        return None
+
+
+def _add_qc_plots_to_zip(
+    zf: zipfile.ZipFile,
+    ri: 'ResultsIntegrator',
+    dataset_id: str,
+    dataset_path: str,
+    package_name: str,
+    include_pdfs: bool = False
+):
+    """Add QC plots to the ZIP package."""
+    rnaseq_dir = os.path.join(dataset_path, "RNAseqAnalysis")
+    
+    # Static QC plots (always include PNGs)
+    static_plots = [
+        ("MDS.png", "MDS.png"),
+        ("filtering_density.png", "filtering_density.png"),
+        ("normalization_boxplots.png", "normalization_boxplots.png"),
+        ("voom_mean_variance.png", "voom_mean_variance.png"),
+        ("sa_plot.png", "sa_plot.png")
+    ]
+    
+    for source_file, dest_file in static_plots:
+        source_path = os.path.join(rnaseq_dir, source_file)
+        if os.path.exists(source_path):
+            with open(source_path, 'rb') as f:
+                zf.writestr(f"{package_name}/QC_plots/{dest_file}", f.read())
+    
+    # Only generate PCA plot PDF if requested and data available
+    if include_pdfs and dataset_id in ri.cpm_data:
+        try:
+            # Import only if needed
+            from single_analysis_plots import create_pca_plot, load_sample_groups
+            
+            cpm_df = ri.cpm_data[dataset_id]
+            analysis_info = ri.analysis_info.get(dataset_id)
+            groups = load_sample_groups(ri.results_dir, dataset_id, cpm_df, analysis_info)
+            
+            pca_fig = create_pca_plot(cpm_df, groups)
+            if pca_fig:
+                pdf_bytes = plotly_fig_to_pdf_bytes(pca_fig, width=1200, height=800, scale=2)
+                if pdf_bytes:
+                    zf.writestr(f"{package_name}/QC_plots/PCA_plot.pdf", pdf_bytes)
+        except Exception as e:
+            logger.debug(f"Could not generate PCA plot PDF: {e}")
+
+
+def _add_deg_analysis_to_zip(
+    zf: zipfile.ZipFile,
+    ri: 'ResultsIntegrator',
+    dataset_id: str,
+    dataset_path: str,
+    package_name: str,
+    include_pdfs: bool = False
+):
+    """Add DEG analysis data and plots to the ZIP package."""
+    rnaseq_dir = os.path.join(dataset_path, "RNAseqAnalysis")
+    
+    # Process each contrast
+    if dataset_id in ri.deg_data:
+        for contrast_id, deg_df in ri.deg_data[dataset_id].items():
+            contrast_dir = f"{package_name}/DEG_analysis/contrast_{contrast_id}"
+            
+            # Always save DEG results as CSV
+            deg_csv = deg_df.to_csv(index=False)
+            zf.writestr(f"{contrast_dir}/DEG_results.csv", deg_csv)
+            
+            # Always add static PNG plots if they exist
+            contrast_path = os.path.join(rnaseq_dir, contrast_id)
+            static_plots = [
+                ("volcano_plot.png", "volcano_plot.png"),
+                ("ma_plot.png", "ma_plot.png"),
+                ("heatmap_top50.png", "heatmap_top50.png")
+            ]
+            
+            for source_file, dest_file in static_plots:
+                source_path = os.path.join(contrast_path, source_file)
+                if os.path.exists(source_path):
+                    with open(source_path, 'rb') as f:
+                        zf.writestr(f"{contrast_dir}/{dest_file}", f.read())
+            
+            # Only generate interactive plot PDFs if requested
+            if include_pdfs:
+                try:
+                    from single_analysis_plots import create_volcano_plot, create_ma_plot, create_deg_heatmap, load_sample_groups
+                    
+                    # Volcano plot PDF
+                    volcano_fig = create_volcano_plot(deg_df)
+                    if volcano_fig:
+                        pdf_bytes = plotly_fig_to_pdf_bytes(volcano_fig, width=1200, height=800, scale=2)
+                        if pdf_bytes:
+                            zf.writestr(f"{contrast_dir}/volcano_plot.pdf", pdf_bytes)
+                    
+                    # MA plot PDF
+                    ma_fig = create_ma_plot(deg_df)
+                    if ma_fig:
+                        pdf_bytes = plotly_fig_to_pdf_bytes(ma_fig, width=1200, height=800, scale=2)
+                        if pdf_bytes:
+                            zf.writestr(f"{contrast_dir}/ma_plot.pdf", pdf_bytes)
+                    
+                    # Heatmap PDF (if CPM data available)
+                    if dataset_id in ri.cpm_data:
+                        cpm_df = ri.cpm_data[dataset_id]
+                        analysis_info = ri.analysis_info.get(dataset_id)
+                        groups = load_sample_groups(ri.results_dir, dataset_id, cpm_df, analysis_info)
+                        
+                        heatmap_fig = create_deg_heatmap(cpm_df, deg_df, groups)
+                        if heatmap_fig:
+                            pdf_bytes = plotly_fig_to_pdf_bytes(heatmap_fig, width=1200, height=1000, scale=2)
+                            if pdf_bytes:
+                                zf.writestr(f"{contrast_dir}/heatmap.pdf", pdf_bytes)
+                                
+                except Exception as e:
+                    logger.debug(f"Could not generate interactive plot PDFs for {contrast_id}: {e}")
+
+
+def _generate_dataset_readme(
+    ri: 'ResultsIntegrator',
+    dataset_id: str,
+    dataset_accession: str,
+    components: Optional[Dict[str, bool]] = None
+) -> str:
+    """Generate README content for the dataset package."""
+    if components is None:
+        components = {'metadata': True, 'abundance': True, 'qc_plots': True, 'deg_analysis': True}
+    
+    readme_lines = [
+        f"UORCA Analysis Package for {dataset_accession}",
+        "=" * 50,
+        "",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        "",
+        "PACKAGE CONTENTS",
+        "-" * 20,
+        ""
+    ]
+    
+    section_num = 1
+    
+    # Add sections based on what was included
+    if components.get('metadata', False):
+        readme_lines.extend([
+            f"{section_num}. metadata/",
+            f"   - {dataset_accession}_metadata.csv: Original dataset metadata with sample information",
+            "   - contrasts.csv: Contrast definitions and descriptions",
+            ""
+        ])
+        section_num += 1
+    
+    if components.get('abundance', False):
+        readme_lines.extend([
+            f"{section_num}. abundance/",
+            "   - Sample-specific Kallisto quantification results",
+            "   - Each sample directory contains:",
+            "     * abundance.tsv: Transcript-level abundance estimates",
+            "     * run_info.json: Kallisto run information",
+            ""
+        ])
+        section_num += 1
+    
+    if components.get('qc_plots', False):
+        readme_lines.extend([
+            f"{section_num}. QC_plots/",
+            "   - PCA_plot.pdf: Principal component analysis (if PDF option selected)",
+            "   - MDS.png: Multi-dimensional scaling plot",
+            "   - filtering_density.png: Gene expression filtering results",
+            "   - normalization_boxplots.png: Before/after normalization",
+            "   - voom_mean_variance.png: Mean-variance relationship",
+            "   - sa_plot.png: Sigma vs average expression",
+            ""
+        ])
+        section_num += 1
+    
+    if components.get('deg_analysis', False):
+        readme_lines.extend([
+            f"{section_num}. DEG_analysis/",
+            "   - CPM_data.csv: Normalized expression values (counts per million)",
+            "   - contrast_*/: Results for each contrast containing:",
+            "     * DEG_results.csv: Differential expression statistics",
+            "     * volcano_plot.pdf/png: Volcano plot visualization",
+            "     * ma_plot.pdf/png: MA plot visualization",
+            "     * heatmap.pdf/png: Top 50 DEGs heatmap",
+            ""
+        ])
+    
+    readme_lines.extend([
+        "DATASET INFORMATION",
+        "-" * 20,
+        ""
+    ])
+    
+    # Add dataset-specific information
+    if dataset_id in ri.analysis_info:
+        info = ri.analysis_info[dataset_id]
+        readme_lines.extend([
+            f"Organism: {info.get('organism', 'Unknown')}",
+            f"Sample groups: {', '.join(info.get('unique_groups', []))}",
+            f"Number of contrasts: {len(ri.deg_data.get(dataset_id, {}))}",
+            ""
+        ])
+    
+    # Add dataset title if available
+    if hasattr(ri, 'dataset_info') and dataset_id in ri.dataset_info:
+        title = ri.dataset_info[dataset_id].get('title', '')
+        if title:
+            if title.startswith('Title:'):
+                title = title[6:].strip()
+            readme_lines.extend([
+                f"Title: {title}",
+                ""
+            ])
+    
+    readme_lines.extend([
+        "NOTES",
+        "-" * 20,
+        "- All plots are static images (PNG or PDF format)",
+        "- PDF files are high-resolution vector graphics suitable for publication",
+        "- PNG files are raster images from the original analysis",
+        "- DEG_results.csv contains full differential expression statistics",
+        "- CPM_data.csv contains normalized expression values for all genes",
+        "",
+        "For questions or issues, please refer to the UORCA documentation."
+    ])
+    
+    return "\n".join(readme_lines)
 
 
 def setup_fragment_decorator():
@@ -701,6 +1045,10 @@ __all__ = [
     # PDF export helpers
     'plotly_fig_to_pdf_bytes',
     'generate_plot_filename',
+    
+    # Dataset download helpers
+    'create_dataset_download_package',
+    'add_directory_to_zip',
 
     # Streamlit logging functions
     'setup_streamlit_logging',
