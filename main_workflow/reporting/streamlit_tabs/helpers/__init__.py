@@ -11,6 +11,7 @@ import streamlit as st
 import plotly.graph_objects as go
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, Set, List
+from datetime import datetime
 
 # Import the main integrator
 from ResultsIntegration import ResultsIntegrator
@@ -48,6 +49,59 @@ class ModuleFilter(logging.Filter):
 
     def filter(self, record):
         return any(record.name.startswith(n) for n in self.names)
+
+
+def plotly_fig_to_pdf_bytes(fig: go.Figure, width: int = 1200, height: int = 800, scale: float = 2.0) -> Optional[bytes]:
+    """
+    Convert a Plotly figure to PDF bytes for download.
+    
+    Args:
+        fig: Plotly figure object
+        width: Width of the PDF in pixels (default 1200)
+        height: Height of the PDF in pixels (default 800)
+        scale: Scale factor for higher resolution (default 2.0 for 2x resolution)
+    
+    Returns:
+        PDF bytes if successful, None if failed
+    """
+    try:
+        import plotly.io as pio
+        
+        # Convert figure to PDF bytes
+        pdf_bytes = pio.to_image(
+            fig, 
+            format='pdf',
+            width=width,
+            height=height,
+            scale=scale  # Higher scale for better quality
+        )
+        
+        logger.debug(f"Successfully converted Plotly figure to PDF ({len(pdf_bytes)} bytes)")
+        return pdf_bytes
+        
+    except ImportError as e:
+        logger.error(f"PDF export requires kaleido package: {e}")
+        st.error("PDF export requires the kaleido package. Please install it with: uv add kaleido")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to convert figure to PDF: {e}")
+        st.error(f"Failed to generate PDF: {str(e)}")
+        return None
+
+
+def generate_plot_filename(plot_type: str, extension: str = "pdf") -> str:
+    """
+    Generate a timestamped filename for plot downloads.
+    
+    Args:
+        plot_type: Type of plot (e.g., "heatmap", "expression_plots")
+        extension: File extension (default "pdf")
+    
+    Returns:
+        Formatted filename with timestamp
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"uorca_{plot_type}_{timestamp}.{extension}"
 
 
 def setup_fragment_decorator():
@@ -643,6 +697,10 @@ __all__ = [
     'filter_genes_by_organism',
     'filter_genes_by_organism_datasets',
     'get_organism_display_name',
+    
+    # PDF export helpers
+    'plotly_fig_to_pdf_bytes',
+    'generate_plot_filename',
 
     # Streamlit logging functions
     'setup_streamlit_logging',

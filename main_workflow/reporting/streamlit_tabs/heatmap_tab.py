@@ -24,7 +24,9 @@ from .helpers import (
     group_contrasts_by_organism,
     filter_genes_by_organism,
     get_organism_display_name,
-    get_valid_contrasts_with_data
+    get_valid_contrasts_with_data,
+    plotly_fig_to_pdf_bytes,
+    generate_plot_filename
 )
 from ResultsIntegration import ResultsIntegrator
 import io
@@ -50,7 +52,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
         **kwargs: Additional arguments (maintained for compatibility)
     """
     st.header("Explore DEG Heatmap")
-    st.markdown("Construct a heatmap of selected genes and contrasts.")
+    st.markdown("Construct a heatmap of selected genes and contrasts. The generated plots can be downloaded. The data and script to produce the heatmap can also be downloaded for further customisation.")
 
     # Get selected datasets from sidebar
     if not selected_datasets:
@@ -606,71 +608,89 @@ def _draw_heatmap(
                 log_streamlit_event("Heatmap generated successfully")
                 st.plotly_chart(fig, use_container_width=True)
 
+                # Download buttons section
+                st.markdown("---")
+                st.subheader("Download Options")
+
                 # Prepare reproducible download package immediately if heatmap data available
                 try:
                     last_df = getattr(ri, 'last_heatmap_df', None)
                     last_ctx = getattr(ri, 'last_heatmap_context', None)
-                    if last_df is not None and last_ctx is not None:
-                        # Build in-memory ZIP immediately so users can download right away
-                        zip_buffer = io.BytesIO()
-                        with zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
-                            # heatmap data CSV
-                            csv_bytes = last_df.reset_index().to_csv(index=False).encode('utf-8')
-                            zf.writestr('heatmap_data.csv', csv_bytes)
 
-                            # metadata JSON - include x-axis default labels mapping
-                            try:
-                                clustered = last_ctx.get('clustered_contrasts') or []
-                                contrast_labels = last_ctx.get('contrast_labels') or []
-                                simplified = last_ctx.get('simplified_labels') or []
-                                # Build x-axis label mapping: contrast_label -> simplified_label (if available)
-                                x_axis_labels = {c: s for c, s in zip(contrast_labels, simplified) if c in clustered}
-                            except Exception:
-                                x_axis_labels = {}
+                    # Create two columns for download buttons
+                    col1, col2 = st.columns(2)
 
-                            meta = {
-                                'generated_at': datetime.utcnow().isoformat() + 'Z',
-                                'p_value_threshold': last_ctx.get('p_value_threshold'),
-                                'lfc_threshold': last_ctx.get('lfc_threshold'),
-                                'genes': last_ctx.get('genes'),
-                                'contrast_labels': last_ctx.get('contrast_labels'),
-                                'clustered_genes': last_ctx.get('clustered_genes'),
-                                'clustered_contrasts': last_ctx.get('clustered_contrasts'),
-                                'x_axis_labels': x_axis_labels,
-                                # Default plotting parameters for reproduce script
-                                'output_format': 'png',
-                                'dpi': 300,
-                                'width': 12.0,
-                                'height_per_gene': 0.15,
-                                'font_size': 10.0,
-                                'left_margin': 2.5,
-                                'bottom_margin': 1.5
-                            }
-                            zf.writestr('metadata.json', json.dumps(meta, indent=2))
+                    # PDF download button in first column
+                    with col1:
+                        pdf_bytes = plotly_fig_to_pdf_bytes(fig, width=1600, height=1200, scale=2)
+                        if pdf_bytes:
+                            st.download_button(
+                                label="Download as PDF",
+                                data=pdf_bytes,
+                                file_name=generate_plot_filename("heatmap", "pdf"),
+                                mime="application/pdf",
+                                help="Download the heatmap as a high-resolution PDF suitable for publications"
+                            )
 
-                            # reproducible script (static output: PNG/PDF/SVG, supports label mapping and layout params)
-                            repro_script = _build_repro_script_static()
-                            zf.writestr('reproduce_heatmap.py', repro_script)
+                    # Reproducible package button in second column
+                    with col2:
+                        if last_df is not None and last_ctx is not None:
+                            # Build in-memory ZIP immediately so users can download right away
+                            zip_buffer = io.BytesIO()
+                            with zipfile.ZipFile(zip_buffer, mode='w', compression=zipfile.ZIP_DEFLATED) as zf:
+                                # heatmap data CSV
+                                csv_bytes = last_df.reset_index().to_csv(index=False).encode('utf-8')
+                                zf.writestr('heatmap_data.csv', csv_bytes)
 
-                            # README describing files and usage
-                            readme_text = _build_readme_text()
-                            zf.writestr('README.txt', readme_text)
+                                # metadata JSON - include x-axis default labels mapping
+                                try:
+                                    clustered = last_ctx.get('clustered_contrasts') or []
+                                    contrast_labels = last_ctx.get('contrast_labels') or []
+                                    simplified = last_ctx.get('simplified_labels') or []
+                                    # Build x-axis label mapping: contrast_label -> simplified_label (if available)
+                                    x_axis_labels = {c: s for c, s in zip(contrast_labels, simplified) if c in clustered}
+                                except Exception:
+                                    x_axis_labels = {}
 
-                        zip_buffer.seek(0)
+                                meta = {
+                                    'generated_at': datetime.utcnow().isoformat() + 'Z',
+                                    'p_value_threshold': last_ctx.get('p_value_threshold'),
+                                    'lfc_threshold': last_ctx.get('lfc_threshold'),
+                                    'genes': last_ctx.get('genes'),
+                                    'contrast_labels': last_ctx.get('contrast_labels'),
+                                    'clustered_genes': last_ctx.get('clustered_genes'),
+                                    'clustered_contrasts': last_ctx.get('clustered_contrasts'),
+                                    'x_axis_labels': x_axis_labels,
+                                    # Default plotting parameters for reproduce script
+                                    'output_format': 'png',
+                                    'dpi': 300,
+                                    'width': 12.0,
+                                    'height_per_gene': 0.15,
+                                    'font_size': 10.0,
+                                    'left_margin': 2.5,
+                                    'bottom_margin': 1.5
+                                }
+                                zf.writestr('metadata.json', json.dumps(meta, indent=2))
 
-                        file_name = f"uorca_heatmap_repro_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.zip"
-                        # Rename button and add descriptive text
-                        st.download_button(
-                            label="Reproduce and edit heatmap",
-                            data=zip_buffer.getvalue(),
-                            file_name=file_name,
-                            mime='application/zip'
-                        )
-                        st.markdown(
-                            "Download a reproducible package (CSV, metadata, editable script, and README).\n\n" \
-                            "Why download: adjust labels, fonts, margins, or export a high-resolution PDF for publication.\n\n" \
-                            "How: run `python reproduce_heatmap.py --input heatmap_data.csv --output heatmap.pdf --output-format pdf --dpi 300 --font-size 10` and optionally provide a JSON mapping for x-axis labels."
-                        )
+                                # reproducible script (static output: PNG/PDF/SVG, supports label mapping and layout params)
+                                repro_script = _build_repro_script_static()
+                                zf.writestr('reproduce_heatmap.py', repro_script)
+
+                                # README describing files and usage
+                                readme_text = _build_readme_text()
+                                zf.writestr('README.txt', readme_text)
+
+                            zip_buffer.seek(0)
+
+                            file_name = f"uorca_heatmap_repro_{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.zip"
+                            # Rename button and add descriptive text
+                            st.download_button(
+                                label="Reproduce and edit heatmap",
+                                data=zip_buffer.getvalue(),
+                                file_name=file_name,
+                                mime='application/zip',
+                                help="Download a reproducible package (CSV, metadata, editable script, and README). Adjust labels, fonts, margins, or export a high-resolution PDF for publication. Run: python reproduce_heatmap.py --input heatmap_data.csv --output heatmap.pdf --output-format pdf --dpi 300 --font-size 10"
+                            )
                 except Exception as e:
                     logger.debug(f"Could not prepare reproducible package: {e}")
 

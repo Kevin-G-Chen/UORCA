@@ -23,7 +23,9 @@ from .helpers import (
     log_streamlit_user_action,
     group_datasets_by_organism,
     filter_genes_by_organism_datasets,
-    get_organism_display_name
+    get_organism_display_name,
+    plotly_fig_to_pdf_bytes,
+    generate_plot_filename
 )
 from ResultsIntegration import ResultsIntegrator
 
@@ -479,6 +481,17 @@ def _draw_expression_plots(
 
                 # Display the plot
                 st.plotly_chart(fig2, use_container_width=True)
+                
+                # Add PDF download button
+                pdf_bytes = plotly_fig_to_pdf_bytes(fig2, width=1600, height=1200, scale=2)
+                if pdf_bytes:
+                    st.download_button(
+                        label="Download as PDF",
+                        data=pdf_bytes,
+                        file_name=generate_plot_filename("expression_plots", "pdf"),
+                        mime="application/pdf",
+                        help="Download the expression plots as a high-resolution PDF suitable for publications"
+                    )
 
             else:
                 log_streamlit_event("Failed to generate expression plots")
