@@ -193,10 +193,9 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
 def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List[str], contrast_data: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Render the combined form for contrast and gene selection."""
 
-    with st.form("heatmap_combined_form"):
+    # 1) Contrast selection (kept at the top)
+    with st.form("heatmap_contrasts_form"):
         st.subheader("Analysis Configuration")
-
-        # Contrast Selection Section
         st.markdown("**Contrasts**")
 
         if contrast_data:
@@ -206,8 +205,6 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
                 lambda row: (row['Accession'], row['Contrast']) in st.session_state['selected_contrasts_heatmap'],
                 axis=1
             )
-
-
 
             edited_df = st.data_editor(
                 df,
@@ -241,41 +238,54 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
             edited_df = pd.DataFrame()
             st.info("No contrasts available for selected datasets")
 
-        # Gene Selection Section
-        st.markdown("---")
-        st.markdown("**Gene Selection**")
+        contrasts_submitted = st.form_submit_button("Apply Contrast Selection", type="primary")
+        if contrasts_submitted:
+            # Get selected contrasts and store in session state, then rerun
+            selected_contrasts = []
+            if not edited_df.empty:
+                selected_rows = edited_df[edited_df["Select"] == True]
+                selected_contrasts = [
+                    (row["Accession"], row["Contrast"])
+                    for _, row in selected_rows.iterrows()
+                ]
+            st.session_state['selected_contrasts_heatmap'] = set(selected_contrasts)
+            log_streamlit_user_action(f"Contrast selection updated: {len(selected_contrasts)} contrasts selected for heatmap")
+            st.rerun()
 
-        # Gene selection method
-        gene_selection_method = st.radio(
-            "Choose gene selection method",
-            options=["Frequent DEGs", "Custom"],
-            key="heatmap_combined_gene_method",
-            help="**Frequent DEGs**: Automatically finds genes that are consistently differentially expressed across multiple contrasts. **Custom**: Use your own gene list for targeted analysis.",
-            horizontal=True
-        )
+    # 2) Gene selection method (below contrasts; outside form to trigger rerun)
+    st.markdown("---")
+    st.markdown("**Gene Selection**")
+    gene_selection_method = st.radio(
+        "Choose gene selection method",
+        options=["Frequent DEGs", "Custom"],
+        key="heatmap_combined_gene_method",
+        help="**Frequent DEGs**: Automatically finds genes that are consistently differentially expressed across multiple contrasts. **Custom**: Use your own gene list for targeted analysis.",
+        horizontal=True,
+    )
 
-        # Always show both gene selection options
-        # Gene count (for Frequent DEGs)
-        gene_count_input = st.text_input(
-            "Number of genes to display (Frequent DEGs)",
-            value="50",
-            help="Number of top frequently differentially expressed genes to include",
-            key="heatmap_combined_gene_count"
-        )
-
-        # Custom gene input (always visible)
-        custom_genes_input = st.text_area(
-            "Custom Gene List",
-            height=150,
-            placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
-            help="Enter gene symbols, one per line. Genes will be filtered by significance thresholds.",
-            key="heatmap_combined_custom_genes"
-        )
-
-        # Parse custom genes without preview display
-        custom_genes_list = []
-        if custom_genes_input.strip():
-            custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+    # 3) Gene/threshold inputs and final submit
+    with st.form("heatmap_gene_form"):
+        # Conditional input display based on currently selected method
+        if gene_selection_method == "Frequent DEGs":
+            gene_count_input = st.text_input(
+                "Number of genes to display",
+                value="50",
+                help="Number of top frequently differentially expressed genes to include",
+                key="heatmap_combined_gene_count"
+            )
+            custom_genes_list = []
+        else:
+            custom_genes_input = st.text_area(
+                "Custom Gene List",
+                height=150,
+                placeholder="Enter one gene per line, e.g.:\nTP53\nEGFR\nMYC\nBRCA1",
+                help="Enter gene symbols, one per line. Genes will be filtered by significance thresholds.",
+                key="heatmap_combined_custom_genes"
+            )
+            custom_genes_list = []
+            if custom_genes_input.strip():
+                custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
+            gene_count_input = "50"  # not used in custom mode
 
         # Significance Thresholds
         st.markdown("**Significance Thresholds**")
@@ -295,166 +305,145 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
                 key="heatmap_combined_pvalue_threshold"
             )
 
-        # Validation
-        validation_error = False
-        try:
-            lfc_val = float(lfc_thresh)
-            pval_val = float(pvalue_thresh)
-        except ValueError:
-            st.error("Please enter valid numeric values for thresholds")
-            lfc_val, pval_val = 1.0, 0.05
-            validation_error = True
+        submitted = st.form_submit_button("Generate Heatmap", type="primary")
 
-        # Validate gene count (always validate since it's always shown)
-        try:
-            gene_count = int(gene_count_input)
-            if gene_count <= 0:
-                raise ValueError("Gene count must be positive")
-        except ValueError:
-            st.error("Please enter a valid positive number for gene count")
+        if submitted:
+            validation_error = False
+
+            # Parse thresholds
+            try:
+                lfc_val = float(lfc_thresh)
+                pval_val = float(pvalue_thresh)
+            except ValueError:
+                st.error("Please enter valid numeric values for thresholds")
+                lfc_val, pval_val = 1.0, 0.05
+                validation_error = True
+
+            # Validate gene count for Frequent DEGs
             gene_count = 50
-            validation_error = True
+            if gene_selection_method == "Frequent DEGs":
+                try:
+                    gene_count = int(gene_count_input)
+                    if gene_count <= 0:
+                        raise ValueError("Gene count must be positive")
+                except ValueError:
+                    st.error("Please enter a valid positive number for gene count")
+                    gene_count = 50
+                    validation_error = True
 
-        # Method-specific validation
-        if gene_selection_method == "Custom":
-            if not custom_genes_list:
+            # Custom requires at least one gene
+            if gene_selection_method == "Custom" and not custom_genes_list:
                 st.error("Please enter at least one gene for custom selection")
                 validation_error = True
 
-        # Single submit button
-        submitted = st.form_submit_button("Generate Heatmap Analysis", type="primary")
-
-        if submitted and not validation_error:
-            # Get selected contrasts from current form state
-            selected_contrasts = []
-            if not edited_df.empty:
-                selected_rows = edited_df[edited_df["Select"] == True]
-                selected_contrasts = [
-                    (row["Accession"], row["Contrast"])
-                    for _, row in selected_rows.iterrows()
-                ]
-
-            # Update session state with current selections
-            st.session_state['selected_contrasts_heatmap'] = set(selected_contrasts)
-
-            # Validation
+            # Read selected contrasts from session state
+            selected_contrasts = list(st.session_state.get('selected_contrasts_heatmap', set()))
             if not selected_contrasts:
                 st.error("Please select at least one contrast")
-                return None
+                validation_error = True
 
-            # Gene validation with detailed checking (like expression plots)
-            if gene_selection_method == "Custom":
-                if not custom_genes_list:
-                    st.error("Please enter at least one gene for custom selection")
-                    return None
+            if not validation_error:
+                # Additional gene/contrast validation for Custom mode
+                if gene_selection_method == "Custom":
+                    with st.expander("Gene and contrast validation", expanded=False):
+                        st.write(f"**Total genes entered:** {len(custom_genes_list)}")
+                        st.write(f"**Total contrasts selected:** {len(selected_contrasts)}")
 
-                # Show gene and contrast validation with detailed checking
-                with st.expander("Gene and contrast validation", expanded=False):
-                    st.write(f"**Total genes entered:** {len(custom_genes_list)}")
-                    st.write(f"**Total contrasts selected:** {len(selected_contrasts)}")
+                        st.write("")
 
-                    st.write("")  # Add spacing
+                        available_genes = set()
+                        significant_genes = set()
+                        contrasts_with_data = []
+                        contrasts_without_data = []
+                        contrasts_with_no_significant_custom_genes = []
 
-                    # Check which genes are actually found in the selected contrasts
-                    available_genes = set()
-                    significant_genes = set()
-                    contrasts_with_data = []
-                    contrasts_without_data = []
-                    contrasts_with_no_significant_custom_genes = []
+                        for accession, contrast_id in selected_contrasts:
+                            analysis_id = None
+                            for aid in ri.analysis_info:
+                                if ri.analysis_info[aid].get('accession') == accession:
+                                    analysis_id = aid
+                                    break
 
-                    for accession, contrast_id in selected_contrasts:
-                        # Find the analysis_id for this accession
-                        analysis_id = None
-                        for aid in ri.analysis_info:
-                            if ri.analysis_info[aid].get('accession') == accession:
-                                analysis_id = aid
-                                break
+                            if analysis_id and analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
+                                deg_df = ri.deg_data[analysis_id][contrast_id]
+                                if 'Gene' in deg_df.columns:
+                                    all_contrast_genes = set(deg_df['Gene'].tolist())
+                                    available_genes.update(all_contrast_genes)
+                                    contrasts_with_data.append(f"{accession}:{contrast_id}")
 
-                        if analysis_id and analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
-                            deg_df = ri.deg_data[analysis_id][contrast_id]
-                            if 'Gene' in deg_df.columns:
-                                all_contrast_genes = set(deg_df['Gene'].tolist())
-                                available_genes.update(all_contrast_genes)
-                                contrasts_with_data.append(f"{accession}:{contrast_id}")
+                                    contrast_has_significant_custom_genes = False
+                                    if 'adj.P.Val' in deg_df.columns and 'logFC' in deg_df.columns:
+                                        significant_contrast_genes = deg_df[
+                                            (deg_df['adj.P.Val'] < pval_val) &
+                                            (abs(deg_df['logFC']) > lfc_val)
+                                        ]['Gene'].tolist()
+                                        significant_genes.update(significant_contrast_genes)
 
-                                # Check if this contrast has any significant custom genes
-                                contrast_has_significant_custom_genes = False
-                                if 'adj.P.Val' in deg_df.columns and 'logFC' in deg_df.columns:
-                                    significant_contrast_genes = deg_df[
-                                        (deg_df['adj.P.Val'] < pval_val) &
-                                        (abs(deg_df['logFC']) > lfc_val)
-                                    ]['Gene'].tolist()
-                                    significant_genes.update(significant_contrast_genes)
+                                        custom_genes_in_contrast = [gene for gene in custom_genes_list if gene in significant_contrast_genes]
+                                        if custom_genes_in_contrast:
+                                            contrast_has_significant_custom_genes = True
 
-                                    # Check if any of our custom genes are significant in this contrast
-                                    custom_genes_in_contrast = [gene for gene in custom_genes_list if gene in significant_contrast_genes]
-                                    if custom_genes_in_contrast:
-                                        contrast_has_significant_custom_genes = True
+                                    if not contrast_has_significant_custom_genes:
+                                        contrasts_with_no_significant_custom_genes.append(f"{accession}:{contrast_id}")
+                            else:
+                                contrasts_without_data.append(f"{accession}:{contrast_id}")
 
-                                if not contrast_has_significant_custom_genes:
-                                    contrasts_with_no_significant_custom_genes.append(f"{accession}:{contrast_id}")
-                        else:
-                            contrasts_without_data.append(f"{accession}:{contrast_id}")
+                        found_genes = [gene for gene in custom_genes_list if gene in available_genes]
+                        missing_genes = [gene for gene in custom_genes_list if gene not in available_genes]
+                        found_but_filtered = [gene for gene in found_genes if gene not in significant_genes]
+                        will_display = [gene for gene in found_genes if gene in significant_genes]
 
-                    # Categorise genes
-                    found_genes = [gene for gene in custom_genes_list if gene in available_genes]
-                    missing_genes = [gene for gene in custom_genes_list if gene not in available_genes]
-                    found_but_filtered = [gene for gene in found_genes if gene not in significant_genes]
-                    will_display = [gene for gene in found_genes if gene in significant_genes]
+                        st.write("**Gene Analysis:**")
 
-                    # Gene validation results
-                    st.write("**Gene Analysis:**")
+                        if will_display:
+                            st.write(f"**{len(will_display)} genes will be displayed** in the heatmap")
 
-                    if will_display:
-                        st.write(f"**{len(will_display)} genes will be displayed** in the heatmap")
+                        if missing_genes:
+                            st.write(f"\n**{len(missing_genes)} genes not found in selected contrasts:**")
+                            if len(missing_genes) <= 10:
+                                st.write(", ".join(missing_genes))
+                            else:
+                                st.write(f"{', '.join(missing_genes[:10])}, ... (+{len(missing_genes)-10} more)")
 
-                    if missing_genes:
-                        st.write(f"\n**{len(missing_genes)} genes not found in selected contrasts:**")
-                        if len(missing_genes) <= 10:
-                            st.write(", ".join(missing_genes))
-                        else:
-                            st.write(f"{', '.join(missing_genes[:10])}, ... (+{len(missing_genes)-10} more)")
+                        if found_but_filtered:
+                            st.write(f"\n**{len(found_but_filtered)} genes found but will be filtered out** (never significant in selected contrasts):")
+                            if len(found_but_filtered) <= 10:
+                                st.write(", ".join(found_but_filtered))
+                            else:
+                                st.write(f"{', '.join(found_but_filtered[:10])}, ... (+{len(found_but_filtered)-10} more)")
 
-                    if found_but_filtered:
-                        st.write(f"\n**{len(found_but_filtered)} genes found but will be filtered out** (never significant in selected contrasts):")
-                        if len(found_but_filtered) <= 10:
-                            st.write(", ".join(found_but_filtered))
-                        else:
-                            st.write(f"{', '.join(found_but_filtered[:10])}, ... (+{len(found_but_filtered)-10} more)")
+                        st.write(f"\n**Contrast Analysis:**")
+                        st.write(f"**{len(contrasts_with_data)} contrasts have data available**")
 
-                    # Contrast validation results
-                    st.write(f"\n**Contrast Analysis:**")
-                    st.write(f"**{len(contrasts_with_data)} contrasts have data available**")
+                        if contrasts_without_data:
+                            st.write(f"\n**{len(contrasts_without_data)} contrasts missing data:**")
+                            for contrast in contrasts_without_data:
+                                st.write(f"• {contrast}")
 
-                    if contrasts_without_data:
-                        st.write(f"\n**{len(contrasts_without_data)} contrasts missing data:**")
-                        for contrast in contrasts_without_data:
-                            st.write(f"• {contrast}")
+                        if contrasts_with_no_significant_custom_genes:
+                            st.write(f"\n**{len(contrasts_with_no_significant_custom_genes)} contrasts have no significant custom genes:**")
+                            for contrast in contrasts_with_no_significant_custom_genes:
+                                st.write(f"• {contrast}")
 
-                    if contrasts_with_no_significant_custom_genes:
-                        st.write(f"\n**{len(contrasts_with_no_significant_custom_genes)} contrasts have no significant custom genes:**")
-                        for contrast in contrasts_with_no_significant_custom_genes:
-                            st.write(f"• {contrast}")
+                        if not will_display:
+                            st.write(f"\n**ERROR:** No genes will be displayed! All custom genes are either missing or never significant.")
+                            return None
 
-                    if not will_display:
-                        st.write(f"\n**ERROR:** No genes will be displayed! All custom genes are either missing or never significant.")
-                        return None
+                if gene_selection_method == "Frequent DEGs":
+                    log_streamlit_user_action(f"Heatmap analysis: {len(selected_contrasts)} contrasts, LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
+                else:
+                    log_streamlit_user_action(f"Heatmap analysis: {len(selected_contrasts)} contrasts, LFC={lfc_val}, P={pval_val}, method=Custom, custom_genes={len(custom_genes_list)}")
 
-            if gene_selection_method == "Frequent DEGs":
-                log_streamlit_user_action(f"Heatmap analysis: {len(selected_contrasts)} contrasts, LFC={lfc_val}, P={pval_val}, genes={gene_count}, method=Frequent DEGs")
-            else:
-                log_streamlit_user_action(f"Heatmap analysis: {len(selected_contrasts)} contrasts, LFC={lfc_val}, P={pval_val}, method=Custom, custom_genes={len(custom_genes_list)}")
-
-            return {
-                'contrasts': selected_contrasts,
-                'gene_params': {
-                    'lfc_thresh': lfc_val,
-                    'pvalue_thresh': pval_val,
-                    'gene_count': gene_count,
-                    'gene_selection_method': gene_selection_method,
-                    'custom_genes': custom_genes_list
+                return {
+                    'contrasts': selected_contrasts,
+                    'gene_params': {
+                        'lfc_thresh': lfc_val,
+                        'pvalue_thresh': pval_val,
+                        'gene_count': gene_count,
+                        'gene_selection_method': gene_selection_method,
+                        'custom_genes': custom_genes_list
+                    }
                 }
-            }
 
     return None
 
