@@ -514,7 +514,8 @@ class ResultsIntegrator:
                          hide_empty_rows_cols: bool = False,
                          font_size: int = 12,
                          show_grid_lines: bool = True,
-                         grid_opacity: float = 0.3) -> go.Figure:
+                         grid_opacity: float = 0.3,
+                         cluster_genes: bool = True) -> go.Figure:
         """
         Create an interactive heatmap of log fold changes for selected genes across contrasts.
 
@@ -754,25 +755,27 @@ class ResultsIntegrator:
             logger.warning("No contrasts remain after filtering empty columns")
             return None
 
-        # Perform hierarchical clustering on both axes if there are enough data points
         # Perform hierarchical clustering on both axes
-        # 1. Cluster genes (rows)
-        if len(heatmap_df) > 1:  # Only cluster if we have multiple genes
-            try:
-                # Only cluster if we have non-zero values
-                if non_zero_count > 0:
-                    gene_linkage = sch.linkage(pdist(heatmap_df.values), method='complete')
-                    gene_order = sch.leaves_list(gene_linkage)
-                    clustered_genes = heatmap_df.index[gene_order].tolist()
-                else:
-                    # Skip clustering if all values are zero
-                    logger.warning("Skipping gene clustering due to lack of non-zero values")
-                    clustered_genes = heatmap_df.index.tolist()
-            except Exception as e:
-                logger.warning(f"Error clustering genes: {str(e)}. Using original order.")
-                clustered_genes = heatmap_df.index.tolist()
-        else:
+        # 1. Cluster genes (rows) unless explicitly disabled
+        if not cluster_genes:
             clustered_genes = heatmap_df.index.tolist()
+        else:
+            if len(heatmap_df) > 1:  # Only cluster if we have multiple genes
+                try:
+                    # Only cluster if we have non-zero values
+                    if non_zero_count > 0:
+                        gene_linkage = sch.linkage(pdist(heatmap_df.values), method='complete')
+                        gene_order = sch.leaves_list(gene_linkage)
+                        clustered_genes = heatmap_df.index[gene_order].tolist()
+                    else:
+                        # Skip clustering if all values are zero
+                        logger.warning("Skipping gene clustering due to lack of non-zero values")
+                        clustered_genes = heatmap_df.index.tolist()
+                except Exception as e:
+                    logger.warning(f"Error clustering genes: {str(e)}. Using original order.")
+                    clustered_genes = heatmap_df.index.tolist()
+            else:
+                clustered_genes = heatmap_df.index.tolist()
 
         # 2. Cluster contrasts (columns)
         if len(heatmap_df.columns) > 1:  # Only cluster if we have multiple contrasts
@@ -819,6 +822,21 @@ class ResultsIntegrator:
             max_abs_value = 1.0  # Avoid division by zero
             logger.warning("All values in heatmap are zero - using default color scale range of -1 to 1")
 
+        # Compute dynamic sizing to better accommodate long gene lists and labels
+        try:
+            max_gene_label_len = max((len(str(g)) for g in heatmap_df.index), default=10)
+        except Exception:
+            max_gene_label_len = 10
+
+        # Row height scales with font_size (approx px per row)
+        row_height = max(18, int(font_size * 1.8))
+        dynamic_height = int(140 + len(heatmap_df) * row_height)
+        # Allow taller figures when many genes, but cap to avoid extreme sizes
+        height_px = max(650, min(4500, dynamic_height))
+
+        # Left margin scales with gene label length and font size
+        left_margin = max(250, min(520, int(40 + max_gene_label_len * font_size * 0.7)))
+
         # Create the heatmap
         fig = px.imshow(
             heatmap_df,
@@ -826,8 +844,8 @@ class ResultsIntegrator:
             labels=dict(x="Contrast", y="Gene", color="Log2FC"),
             title="Differential Expression Heatmap (Log2 Fold Change)",
             aspect="auto",  # Maintain aspect ratio based on data
-            height=max(600, min(2000, len(heatmap_df) * 22)),  # Taller height based on number of genes (capped at 2000px)
-            width=max(600, min(1500, len(heatmap_df.columns) * 80)),  # Dynamic width based on number of contrasts
+            height=height_px,
+            width=max(700, min(1700, len(heatmap_df.columns) * 90)),  # Dynamic width based on number of contrasts
             zmin=-max_abs_value,  # Symmetrical color scale
             zmax=max_abs_value,
             color_continuous_midpoint=0  # Ensure white is at 0
@@ -835,7 +853,7 @@ class ResultsIntegrator:
 
         # Improve layout
         fig.update_layout(
-            margin=dict(l=250, r=20, t=60, b=120),
+            margin=dict(l=left_margin, r=20, t=60, b=120),
             coloraxis_colorbar=dict(title="Log2FC"),
             font_family="Inter, sans-serif",
             font_size=font_size
@@ -851,11 +869,11 @@ class ResultsIntegrator:
 
         # We'll create custom hover data with descriptions in the update_traces call below
 
-        # Create a 3D array with gene logFC, contrast description, accession info, and original contrast name
+        # Create a 3D array with gene logFC, contrast description, contrast formula, accession info, and original contrast name
         # First dimension: rows (genes)
         # Second dimension: columns (contrasts)
-        # Third dimension: data types (0: contrast description, 1: accession, 2: original contrast name)
-        hover_info = np.empty((*heatmap_df.shape, 3), dtype=object)
+        # Third dimension: data types (0: contrast description, 1: accession, 2: original contrast name, 3: contrast formula)
+        hover_info = np.empty((*heatmap_df.shape, 4), dtype=object)
 
         # Keep track of original contrast names for both hover and axis labels
         original_contrast_names = []
@@ -881,10 +899,19 @@ class ResultsIntegrator:
                 if j == 0 and i == 0:  # Only collect once per contrast
                     original_contrast_names.append(simplified_name)
 
-                # Store description, accession, and simplified contrast name
+                # Get contrast formula/expression if available
+                expression = ""
+                try:
+                    if hasattr(self, "contrast_info") and contrast_id in self.contrast_info:
+                        expression = self.contrast_info[contrast_id].get('expression', '') or ''
+                except Exception:
+                    expression = ''
+
+                # Store description, accession, simplified contrast name, and expression
                 hover_info[i, j, 0] = description
                 hover_info[i, j, 1] = accession
                 hover_info[i, j, 2] = simplified_name
+                hover_info[i, j, 3] = expression
 
         # Update hover template with conditional formatting, accession, and description
         hover_template = (
@@ -893,6 +920,7 @@ class ResultsIntegrator:
             "<b>Log2FC:</b> %{z:.2f}<br>" +
             "<b>Accession:</b> %{customdata[1]}<br>" +
             "<b>Description:</b> %{customdata[0]}<br>" +
+            "<b>Formula:</b> %{customdata[3]}<br>" +
             "<extra></extra>"  # Hide secondary info
         )
         fig.update_traces(

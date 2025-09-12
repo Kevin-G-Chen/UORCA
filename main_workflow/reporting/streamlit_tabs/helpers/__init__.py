@@ -583,7 +583,15 @@ def cached_figure_creation(
 
     try:
         if func_name == "create_lfc_heatmap":
-            return ri.create_lfc_heatmap(*args, **kwargs)
+            try:
+                return ri.create_lfc_heatmap(*args, **kwargs)
+            except TypeError as e:
+                # Backward compatibility: older RI may not accept 'cluster_genes'
+                if "cluster_genes" in str(e):
+                    safe_kwargs = dict(kwargs)
+                    safe_kwargs.pop("cluster_genes", None)
+                    return ri.create_lfc_heatmap(*args, **safe_kwargs)
+                raise
         elif func_name == "create_expression_plots":
             # Map positional arguments to correct parameters for create_expression_plots
             if len(args) >= 15:

@@ -145,6 +145,21 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                 organism_contrasts = organism_groups[organism]
                 organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
 
+                # Frequent DEG helper: species-specific copy dropdown
+                if gene_params.get('gene_selection_method') == 'Frequent DEGs':
+                    try:
+                        species_genes = cached_identify_important_genes(
+                            results_dir=ri.results_dir,
+                            selected_contrasts=organism_contrasts,
+                            top_frequent=gene_params.get('gene_count', 50),
+                            p_value_threshold=gene_params.get('pvalue_thresh', 0.05),
+                            lfc_threshold=gene_params.get('lfc_thresh', 1.0)
+                        ) or []
+                        with st.expander(f"Copy Frequent DEGs for {get_organism_display_name(organism)} ({len(species_genes)})", expanded=False):
+                            st.code("\n".join(species_genes) if species_genes else "", language=None)
+                    except Exception:
+                        pass
+
                 _draw_heatmap(
                     ri,
                     organism_genes,
@@ -155,7 +170,8 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                     hide_empty_rows_cols=True,
                     font_size=12,
                     show_grid_lines=True,
-                    grid_opacity=0.3
+                    grid_opacity=0.3,
+                    cluster_genes=gene_params.get('cluster_genes', True)
                 )
                 heatmap_rendered = True
                 # Persist full render specification for seamless re-display
@@ -177,6 +193,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                         'font_size': 12,
                         'show_grid_lines': True,
                         'grid_opacity': 0.3,
+                        'cluster_genes': gene_params.get('cluster_genes', True),
                     },
                 }
             else:
@@ -190,6 +207,21 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                         organism_contrasts = organism_groups[organism]
                         organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
 
+                        # Frequent DEG helper: species-specific copy UI in each tab
+                        if gene_params.get('gene_selection_method') == 'Frequent DEGs':
+                            try:
+                                species_genes = cached_identify_important_genes(
+                                    results_dir=ri.results_dir,
+                                    selected_contrasts=organism_contrasts,
+                                    top_frequent=gene_params.get('gene_count', 50),
+                                    p_value_threshold=gene_params.get('pvalue_thresh', 0.05),
+                                    lfc_threshold=gene_params.get('lfc_thresh', 1.0)
+                                ) or []
+                                with st.expander(f"Copy Frequent DEGs for {get_organism_display_name(organism)} ({len(species_genes)})", expanded=False):
+                                    st.code("\n".join(species_genes) if species_genes else "", language=None)
+                            except Exception:
+                                pass
+
                         if organism_genes:
                             _draw_heatmap(
                                 ri,
@@ -201,7 +233,8 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                                 hide_empty_rows_cols=True,
                                 font_size=12,
                                 show_grid_lines=True,
-                                grid_opacity=0.3
+                                grid_opacity=0.3,
+                                cluster_genes=gene_params.get('cluster_genes', True)
                             )
                             heatmap_rendered = True
                         else:
@@ -233,6 +266,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                             'font_size': 12,
                             'show_grid_lines': True,
                             'grid_opacity': 0.3,
+                            'cluster_genes': gene_params.get('cluster_genes', True),
                         },
                     }
 
@@ -262,6 +296,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                             font_size=params.get('font_size', 12),
                             show_grid_lines=params.get('show_grid_lines', True),
                             grid_opacity=params.get('grid_opacity', 0.3),
+                            cluster_genes=params.get('cluster_genes', True),
                         )
             else:
                 # Single organism re-render
@@ -277,6 +312,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                     font_size=params.get('font_size', 12),
                     show_grid_lines=params.get('show_grid_lines', True),
                     grid_opacity=params.get('grid_opacity', 0.3),
+                    cluster_genes=params.get('cluster_genes', True),
                 )
 
 
@@ -377,6 +413,12 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
             if custom_genes_input.strip():
                 custom_genes_list = [gene.strip() for gene in custom_genes_input.strip().split('\n') if gene.strip()]
             gene_count_input = "50"  # not used in custom mode
+            keep_gene_order = st.checkbox(
+                "Keep gene order (disable y-axis clustering)",
+                value=False,
+                help="If enabled, the heatmap will preserve the order of your custom gene list and will not cluster genes on the y-axis.",
+                key="heatmap_keep_gene_order_custom"
+            )
 
         # Significance Thresholds
         st.markdown("**Significance Thresholds**")
@@ -532,7 +574,8 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
                         'pvalue_thresh': pval_val,
                         'gene_count': gene_count,
                         'gene_selection_method': gene_selection_method,
-                        'custom_genes': custom_genes_list
+                        'custom_genes': custom_genes_list,
+                        'cluster_genes': False if (gene_selection_method == "Custom" and st.session_state.get("heatmap_keep_gene_order_custom", False)) else True
                     }
                 }
 
@@ -655,7 +698,8 @@ def _draw_heatmap(
     hide_empty_rows_cols: bool,
     font_size: int,
     show_grid_lines: bool,
-    grid_opacity: float
+    grid_opacity: float,
+    cluster_genes: bool = True
 ):
     """
     Create and display the heatmap using fragment isolation.
@@ -682,6 +726,7 @@ def _draw_heatmap(
                 font_size,
                 show_grid_lines,
                 grid_opacity,
+                cluster_genes=cluster_genes,
             )
 
             if fig:
