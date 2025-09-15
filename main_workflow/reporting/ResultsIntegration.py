@@ -1039,22 +1039,14 @@ class ResultsIntegrator:
         # Create a tidy (long) dataframe for all expression data
         all_long_data = []
 
-        # Maximum number of genes to process in one page (optimized for 2 plots per row)
-        genes_per_page = 20
-        # Save original gene list
+        # Save original gene list and validate
         gene_list = genes.copy() if genes is not None else []
-
-        # If no genes are provided, return None
         if not gene_list:
             logger.warning("No genes provided for expression plots")
             return None
 
-        gene_pages = [gene_list[i:i + genes_per_page] for i in range(0, len(gene_list), genes_per_page)]
-
-        if len(gene_pages) > 1:
-            logger.info(f"Splitting {len(gene_list)} genes into {len(gene_pages)} pages for visualization")
-            # Process first page only
-            genes = gene_pages[0]
+        # Use all genes (no pagination)
+        genes = gene_list
 
         # Process each analysis and build tidy data
         for analysis_id in analyses:
@@ -1226,32 +1218,59 @@ class ResultsIntegrator:
             plot_df['LogExpression'] = np.log2(plot_df['Expression'] + 1)
             y_axis_title = "Log<sub>2</sub>(CPM+1)"
 
-        # Use simple consistent spacing values that work well across different panel counts
-        facet_row_spacing = 0.03
+        # Choose a compact facet spacing and guarantee it respects Plotly's constraint
+        # Max allowed is 1/(rows-1); use a small value (0.02) or just under the max, whichever is lower.
+        if n_rows > 1:
+            max_allowed_row_spacing = (1.0 / (n_rows - 1)) - 1e-6
+            facet_row_spacing = min(0.02, max_allowed_row_spacing)
+            if facet_row_spacing < 0:
+                facet_row_spacing = 0.0
+        else:
+            facet_row_spacing = 0.02
         facet_col_spacing = 0.03
+
+        # Build combined x-axis labels in the format: "GSEXXXX - group <group>"
+        # We include a dedicated column so we can show clear, per-dataset group labels on the x-axis
+        if 'Accession' not in plot_df.columns:
+            # Each melted_df chunk already had a single accession; ensure a column exists for clarity
+            # If not present, infer from DatasetDisplay when possible; otherwise fall back to Analysis
+            # Prefer using analysis_info accession directly where available
+            plot_df['Accession'] = plot_df.apply(
+                lambda r: self.analysis_info.get(r['Analysis'], {}).get('accession', r['Analysis'])
+                if isinstance(r.get('Analysis', None), str) else r.get('Analysis', ''), axis=1
+            )
+
+        # Construct the x-axis label using only the group name (no accession)
+        full_label_series = plot_df['Group'].astype(str)
+
+        # Truncate labels longer than 20 characters and append '...'
+        MAX_LABEL_CHARS = 20
+        plot_df['XLabel'] = full_label_series.apply(
+            lambda s: s if len(str(s)) <= MAX_LABEL_CHARS else str(s)[:MAX_LABEL_CHARS] + '...'
+        )
 
         # Create boxplot (proof of concept - simple implementation)
         fig = px.box(
             plot_df,
-            x='Group',
+            x='XLabel',
             y='LogExpression',
             color='DatasetDisplay',
             facet_col='Gene',
             facet_col_wrap=facet_col_wrap,
             custom_data=['HoverText'],
             points="all",
-            title=f"Gene Expression Across Samples (Page {page_number} of {len(gene_pages)})",
-            labels={'LogExpression': y_axis_title, 'Group': 'Group', 'DatasetDisplay': 'Dataset'},
+            title="Gene Expression Across Samples",
+            labels={'LogExpression': y_axis_title, 'DatasetDisplay': 'Dataset'},
             facet_row_spacing=facet_row_spacing,
             facet_col_spacing=facet_col_spacing
         )
 
         # Layout adjustments optimized for readability (2 plots per row)
         fig.update_layout(
-            height=525 * n_rows,  # 525px per row (1.5x taller than original 350px)
+            height=450 * n_rows,  # 450px per row for consistent subplot size
             width=600 * facet_col_wrap,  # 600px per column (wider for better boxplot visibility)
             legend_title_text="Dataset",
-            margin=dict(l=40, r=20, t=80, b=40),
+            margin=dict(l=40, r=20, t=80, b=20),
             font_family="Inter, sans-serif",
         )
 
@@ -1265,8 +1284,14 @@ class ResultsIntegrator:
         else:  # Default to bottom
             fig.update_layout(legend=dict(orientation="h", y=-0.35, x=0.5, xanchor="center", yanchor="top"))
 
-        # Remove x-axis completely from all facets - no processing at all
-        fig.update_xaxes(visible=False)
+        # Configure x-axis visibility and labeling
+        if hide_x_labels:
+            # Hide when explicitly requested (e.g., tight layouts in static exports)
+            fig.update_xaxes(visible=False)
+        else:
+            # Show axis tick labels on all facets with reasonable rotation, minimal standoff, and no axis title
+            fig.update_xaxes(visible=True, showticklabels=True, tickangle=45, ticklabelstandoff=2, title_text="",
+                             tickfont=dict(size=10))
 
         # Configure grid lines and ensure y-axis ticks are shown on each plot
         if show_grid_lines:
@@ -1296,10 +1321,11 @@ class ResultsIntegrator:
             hovertemplate="%{customdata[0]}<extra></extra>"
         )
 
-        # Update facet formatting (remove "Gene=" prefix and make bold and larger)
+        # Update facet formatting (remove "Gene=" prefix, enlarge, and nudge upward to reduce overlap)
         fig.for_each_annotation(lambda a: a.update(
             text=f"{a.text.split('=')[1]}",
-            font=dict(size=int(facet_font_size * 2), color="#333", family="Inter, sans-serif")
+            font=dict(size=int(facet_font_size * 2), color="#333", family="Inter, sans-serif"),
+            yshift=14
         ))
 
         # Configure y-axis scaling - each plot gets its own scale unless lock_y_axis is True
@@ -1313,28 +1339,7 @@ class ResultsIntegrator:
             # Each facet gets its own y-axis scale (default behavior we want to ensure)
             fig.update_yaxes(matches=None)
 
-        # X-axis is completely removed above
-        pass
-
-        # Add note about number of genes
-        if len(genes) < len(gene_list):
-            fig.add_annotation(
-                text=f"Showing {genes_found} genes (page {page_number} of {len(gene_pages)})",
-                x=0.5, y=1.05,
-                xref="paper", yref="paper",
-                showarrow=False,
-                font=dict(size=12),
-                align="center"
-            )
-        elif genes_found < len(genes):
-            fig.add_annotation(
-                text=f"Only {genes_found} of {len(genes)} genes found in data",
-                x=0.5, y=1.05,
-                xref="paper", yref="paper",
-                showarrow=False,
-                font=dict(size=12, color="red"),
-                align="center"
-            )
+        # No pagination annotations; all selected genes are shown in one figure
 
         # Save to file if specified
         if output_file is not None:
@@ -1651,11 +1656,11 @@ class ResultsIntegrator:
             logger.error(f"Error creating LFC heatmap: {str(e)}")
             lfc_heatmap = None
 
-        # Create expression plots (first page)
+        # Create expression plots (single page with all selected genes)
         try:
             output_path = os.path.join(self.output_dir, f"expression_{plot_type}_plots.html")
             expr_plot = self.create_expression_plots(
-                genes=gene_list[:30],  # Only show first page in main report
+                genes=gene_list,
                 plot_type=plot_type,
                 output_file=output_path,
                 hide_x_labels=hide_x_labels  # Use parameter value
@@ -1663,48 +1668,6 @@ class ResultsIntegrator:
         except Exception as e:
             logger.error(f"Error creating expression plots: {str(e)}")
             expr_plot = None
-
-        # If we have many genes, create additional pages (but limit to 2 additional pages to avoid long processing)
-        if len(gene_list) > 30:
-            # Maximum number of genes per page
-            genes_per_page = 30
-            num_pages = min(3, (len(gene_list) + genes_per_page - 1) // genes_per_page)
-
-            # Create a directory for additional pages
-            plots_dir = os.path.join(self.output_dir, "expression_plots")
-            os.makedirs(plots_dir, exist_ok=True)
-
-            # Create additional pages (limited to 2 more pages)
-            for page in range(1, num_pages):
-                start_idx = page * genes_per_page
-                end_idx = min(start_idx + genes_per_page, len(gene_list))
-                page_genes = gene_list[start_idx:end_idx]
-
-                try:
-                    output_path = os.path.join(plots_dir, f"expression_{plot_type}_page{page+1}.html")
-                    self.create_expression_plots(
-                        genes=page_genes,
-                        plot_type=plot_type,
-                        output_file=output_path,
-                        hide_x_labels=hide_x_labels,  # Use parameter value
-                        page_number=page+1  # Page number for this batch
-                    )
-                    logger.info(f"Created expression plot page {page+1}")
-                except Exception as e:
-                    logger.error(f"Error creating expression plots page {page+1}: {str(e)}")
-
-        # Generate additional pages links if there are many genes
-        additional_pages_html = ""
-        if len(gene_list) > 30:
-            page_links = []
-            num_additional_pages = min(2, (len(gene_list) + 29) // 30 - 1)
-            for i in range(num_additional_pages):
-                page_num = i + 2
-                page_links.append(f'<a href="expression_plots/expression_{plot_type}_page{page_num}.html" target="_blank" style="margin-right: 5px; font-size: 12px; padding: 5px 10px;">Page {page_num}</a>')
-            additional_pages_html = f"""
-                            <p><small>Additional pages:
-                            {''.join(page_links)}
-                            </small></p>"""
 
         # Generate contrast details HTML
         if not self.deg_data:
@@ -1758,7 +1721,6 @@ class ResultsIntegrator:
                         <li>
                             <strong>Gene Expression Plots</strong>: Shows expression levels (CPM) for selected genes across samples.
                             <br><a href="expression_{plot_type}_plots.html" class="vis-link" target="_blank">View Expression Plots</a>
-                            {additional_pages_html}
                         </li>
                     </ul>
                 </div>
