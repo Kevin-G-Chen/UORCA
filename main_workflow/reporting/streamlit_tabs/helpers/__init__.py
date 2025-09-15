@@ -55,14 +55,14 @@ class ModuleFilter(logging.Filter):
         return any(record.name.startswith(n) for n in self.names)
 
 
-def plotly_fig_to_pdf_bytes(fig: go.Figure, width: int = 1200, height: int = 800, scale: float = 2.0) -> Optional[bytes]:
+def plotly_fig_to_pdf_bytes(fig: go.Figure, width: Optional[int] = None, height: Optional[int] = None, scale: float = 2.0) -> Optional[bytes]:
     """
     Convert a Plotly figure to PDF bytes for download.
     
     Args:
         fig: Plotly figure object
-        width: Width of the PDF in pixels (default 1200)
-        height: Height of the PDF in pixels (default 800)
+        width: Width of the PDF in pixels (defaults to figure width if None)
+        height: Height of the PDF in pixels (defaults to figure height if None)
         scale: Scale factor for higher resolution (default 2.0 for 2x resolution)
     
     Returns:
@@ -70,15 +70,19 @@ def plotly_fig_to_pdf_bytes(fig: go.Figure, width: int = 1200, height: int = 800
     """
     try:
         import plotly.io as pio
-        
-        # Convert figure to PDF bytes
-        pdf_bytes = pio.to_image(
-            fig, 
-            format='pdf',
-            width=width,
-            height=height,
-            scale=scale  # Higher scale for better quality
-        )
+        # Determine export dimensions from figure if not provided
+        export_width = int(fig.layout.width) if width is None and fig.layout.width else width
+        export_height = int(fig.layout.height) if height is None and fig.layout.height else height
+
+        # Build args for to_image without passing None for width/height
+        to_image_kwargs = dict(format='pdf', scale=scale)
+        if export_width is not None:
+            to_image_kwargs['width'] = export_width
+        if export_height is not None:
+            to_image_kwargs['height'] = export_height
+
+        # Convert figure to PDF bytes using kaleido
+        pdf_bytes = pio.to_image(fig, **to_image_kwargs)
         
         logger.debug(f"Successfully converted Plotly figure to PDF ({len(pdf_bytes)} bytes)")
         return pdf_bytes

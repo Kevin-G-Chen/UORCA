@@ -481,17 +481,55 @@ def _draw_expression_plots(
 
                 # Display the plot
                 st.plotly_chart(fig2, use_container_width=True)
-                
-                # Add PDF download button
-                pdf_bytes = plotly_fig_to_pdf_bytes(fig2, width=1600, height=1200, scale=2)
-                if pdf_bytes:
-                    st.download_button(
-                        label="Download as PDF",
-                        data=pdf_bytes,
-                        file_name=generate_plot_filename("expression_plots", "pdf"),
-                        mime="application/pdf",
-                        help="Download the expression plots as a high-resolution PDF suitable for publications"
-                    )
+
+                # Two-step PDF export to avoid heavy processing until requested
+                import hashlib
+                signature = "|".join(sorted(current_genes)) + "||" + "|".join(sorted(dataset_selection)) + "||" + "|".join(sorted(actual_groups))
+                key_base = hashlib.md5(signature.encode()).hexdigest()[:10]
+                pdf_state_key = f"expr_pdf_bytes_{key_base}"
+
+                st.markdown("---")
+                st.markdown("**PDF Export**")
+                if pdf_state_key not in st.session_state:
+                    st.info("Step 1: Click to prepare the PDF using current settings. A download button will appear once ready.")
+                    st.caption("Note: With many genes or sample groups, preparing the PDF can take up to a few minutes.")
+                    if st.button("Prepare PDF", key=f"prepare_pdf_{key_base}", type="primary"):
+                        with st.spinner("Generating PDF (this can take a moment)..."):
+                            fig_width = int(fig2.layout.width) if fig2.layout.width else None
+                            fig_height = int(fig2.layout.height) if fig2.layout.height else None
+                            pdf_bytes = plotly_fig_to_pdf_bytes(fig2, width=fig_width, height=fig_height, scale=2)
+                        if pdf_bytes:
+                            st.session_state[pdf_state_key] = pdf_bytes
+                            # Immediately show the download UI without forcing a rerun
+                            st.success("Step 2: PDF is ready. Click to download.")
+                            col_dl, col_reset = st.columns([2, 1])
+                            with col_dl:
+                                st.download_button(
+                                    label="Download as PDF",
+                                    data=pdf_bytes,
+                                    file_name=generate_plot_filename("expression_plots", "pdf"),
+                                    mime="application/pdf",
+                                    use_container_width=True
+                                )
+                            with col_reset:
+                                if st.button("Prepare New PDF", key=f"reset_pdf_now_{key_base}"):
+                                    del st.session_state[pdf_state_key]
+                        else:
+                            st.warning("Could not generate PDF. Ensure Kaleido is installed and try again.")
+                else:
+                    st.success("Step 2: PDF is ready. Click to download.")
+                    col_dl, col_reset = st.columns([2, 1])
+                    with col_dl:
+                        st.download_button(
+                            label="Download as PDF",
+                            data=st.session_state[pdf_state_key],
+                            file_name=generate_plot_filename("expression_plots", "pdf"),
+                            mime="application/pdf",
+                            use_container_width=True
+                        )
+                    with col_reset:
+                        if st.button("Prepare New PDF", key=f"reset_pdf_{key_base}"):
+                            del st.session_state[pdf_state_key]
 
             else:
                 log_streamlit_event("Failed to generate expression plots")

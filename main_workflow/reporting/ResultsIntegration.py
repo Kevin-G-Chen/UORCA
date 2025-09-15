@@ -1267,10 +1267,10 @@ class ResultsIntegrator:
 
         # Layout adjustments optimized for readability (2 plots per row)
         fig.update_layout(
-            height=450 * n_rows,  # 450px per row for consistent subplot size
+            height=475 * n_rows,  # 475px per row for consistent subplot size
             width=600 * facet_col_wrap,  # 600px per column (wider for better boxplot visibility)
             legend_title_text="Dataset",
-            margin=dict(l=40, r=20, t=80, b=20),
+            margin=dict(l=40, r=20, t=80, b=6),
             font_family="Inter, sans-serif",
         )
 
@@ -1284,14 +1284,24 @@ class ResultsIntegrator:
         else:  # Default to bottom
             fig.update_layout(legend=dict(orientation="h", y=-0.35, x=0.5, xanchor="center", yanchor="top"))
 
-        # Configure x-axis visibility and labeling
+        # Configure x-axis visibility, labeling, and gridlines
         if hide_x_labels:
             # Hide when explicitly requested (e.g., tight layouts in static exports)
             fig.update_xaxes(visible=False)
         else:
-            # Show axis tick labels on all facets with reasonable rotation, minimal standoff, and no axis title
-            fig.update_xaxes(visible=True, showticklabels=True, tickangle=45, ticklabelstandoff=2, title_text="",
+            # Show axis tick labels on all facets with minimal standoff, align close to plot, and no axis title
+            fig.update_xaxes(visible=True, showticklabels=True, tickangle=45,
+                             ticklabelstandoff=0, automargin=True, title_text="",
                              tickfont=dict(size=10))
+
+        # Add light dotted vertical gridlines to separate groups across the full plotting area
+        if show_grid_lines:
+            fig.update_xaxes(showgrid=True,
+                             gridwidth=0.5,
+                             gridcolor=f"rgba(200,200,200,{grid_opacity})",
+                             griddash='dot')
+        else:
+            fig.update_xaxes(showgrid=False)
 
         # Configure grid lines and ensure y-axis ticks are shown on each plot
         if show_grid_lines:
@@ -1338,6 +1348,9 @@ class ResultsIntegrator:
         else:
             # Each facet gets its own y-axis scale (default behavior we want to ensure)
             fig.update_yaxes(matches=None)
+
+        # Prefer y-axis ticks every 2 units for readability (avoid 5-unit steps)
+        fig.update_yaxes(dtick=2)
 
         # No pagination annotations; all selected genes are shown in one figure
 

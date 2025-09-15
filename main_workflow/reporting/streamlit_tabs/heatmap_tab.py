@@ -761,13 +761,16 @@ def _draw_heatmap(
                         st.session_state['heatmap_dl_cache'] = {}
                     dl_cache = st.session_state['heatmap_dl_cache']
 
-                    # PDF download button in first column (cached)
+                    # PDF download button in first column (cached and prepared immediately, using dynamic figure size)
                     with col1:
                         pdf_bytes = None
                         if cache_key and cache_key in dl_cache and dl_cache[cache_key].get('pdf_bytes'):
                             pdf_bytes = dl_cache[cache_key]['pdf_bytes']
                         else:
-                            pdf_bytes = plotly_fig_to_pdf_bytes(fig, width=1600, height=1200, scale=2)
+                            # Use figure's own dimensions for parity with on-screen rendering
+                            fig_width = int(fig.layout.width) if fig.layout.width else None
+                            fig_height = int(fig.layout.height) if fig.layout.height else None
+                            pdf_bytes = plotly_fig_to_pdf_bytes(fig, width=fig_width, height=fig_height, scale=2)
                             if cache_key and pdf_bytes:
                                 dl_cache.setdefault(cache_key, {})['pdf_bytes'] = pdf_bytes
                         if pdf_bytes:
