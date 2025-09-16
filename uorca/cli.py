@@ -159,7 +159,7 @@ Example slurm_config.yaml:
     local_parser.add_argument("--max_workers", type=int,
                              help="Maximum number of parallel workers (default: auto-detect 75%% of CPU cores)")
     local_parser.add_argument("--max_storage_gb", type=float,
-                             help="Maximum storage usage in GB (default: auto-detect 75%% of available memory)")
+                             help="Maximum storage usage in GB (default: auto-detect 75%% of available disk free space)")
     local_parser.add_argument("--no-cleanup", action="store_true",
                              help="Skip cleanup of FASTQ and SRA files after analysis")
     local_parser.add_argument("--timeout_hours", type=float, default=6,

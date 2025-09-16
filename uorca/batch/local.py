@@ -261,9 +261,15 @@ class LocalBatchProcessor(BatchProcessor):
         # Use 75% of available CPU cores, minimum 1
         max_workers = max(1, int(mp.cpu_count() * 0.75))
 
-        # Use 75% of available memory for storage limit
-        total_memory_gb = psutil.virtual_memory().total / (1024**3)
-        max_storage_gb = max(50, int(total_memory_gb * 0.75))
+        # Use 75% of available disk space as a conservative storage limit
+        # Note: Final value is recomputed against the actual output directory in submit_datasets
+        try:
+            disk = psutil.disk_usage('/')
+            free_gb = disk.free / (1024**3)
+            max_storage_gb = max(50, int(free_gb * 0.75))
+        except Exception:
+            # Fallback to a safe default if disk stats are unavailable
+            max_storage_gb = 100
 
         return {
             'max_workers': max_workers,
@@ -307,8 +313,6 @@ class LocalBatchProcessor(BatchProcessor):
                 missing.append("Docker (not available or not running)")
         except (subprocess.TimeoutExpired, FileNotFoundError):
             missing.append("Docker (not installed or not in PATH)")
-
-        return missing
 
         return missing
 
@@ -499,6 +503,16 @@ class LocalBatchProcessor(BatchProcessor):
         df, research_question = self.validate_csv_file(input_path)
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
+
+        # If max_storage_gb not explicitly provided, compute from the output directory's filesystem
+        if 'max_storage_gb' not in kwargs or kwargs.get('max_storage_gb') is None:
+            try:
+                disk = psutil.disk_usage(str(output_path))
+                free_gb = disk.free / (1024**3)
+                params['max_storage_gb'] = max(50, int(free_gb * 0.75))
+                print(f"Auto-configured max_storage_gb to {params['max_storage_gb']} GB (75% of free space on {output_path.resolve()})")
+            except Exception as e:
+                print(f"Warning: Could not determine disk space for {output_path}: {e}. Using default max_storage_gb={params['max_storage_gb']} GB")
 
         # Save research question if available
         self.save_research_question(output_dir, research_question)
