@@ -159,11 +159,13 @@ Example slurm_config.yaml:
     local_parser.add_argument("--max_workers", type=int,
                              help="Maximum number of parallel workers (default: auto-detect 75%% of CPU cores)")
     local_parser.add_argument("--max_storage_gb", type=float,
-                             help="Maximum storage usage in GB (default: auto-detect 75%% of available disk free space)")
+                             help="Maximum storage usage in GB (default: min(50 GB, 75%% of available disk free space))")
     local_parser.add_argument("--no-cleanup", action="store_true",
                              help="Skip cleanup of FASTQ and SRA files after analysis")
     local_parser.add_argument("--timeout_hours", type=float, default=6,
                              help="Timeout per job in hours")
+    local_parser.add_argument("--container_tmpfs_gb", type=int,
+                             help="Size of container /tmp tmpfs in GB (default: 20). Set 0 to disable tmpfs mount.")
 
 
     local_parser.set_defaults(func=run_batch_local)
@@ -456,6 +458,8 @@ def run_batch_local(args):
             params['max_workers'] = args.max_workers
         if args.max_storage_gb:
             params['max_storage_gb'] = args.max_storage_gb
+        if args.container_tmpfs_gb is not None:
+            params['container_tmpfs_gb'] = args.container_tmpfs_gb
 
         # Submit jobs
         jobs_submitted = processor.submit_datasets(args.input, args.output_dir, **params)

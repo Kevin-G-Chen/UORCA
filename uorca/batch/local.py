@@ -25,7 +25,8 @@ from .base import BatchProcessor
 
 
 def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
-                           cleanup: bool, status_dir: str, docker_image: str = "kevingchen/uorca:0.1.0") -> Dict[str, Any]:
+                           cleanup: bool, status_dir: str, docker_image: str = "kevingchen/uorca:0.1.0",
+                           container_tmpfs_gb: int = 20) -> Dict[str, Any]:
     """
     Run a single dataset analysis locally using Docker.
 
@@ -84,24 +85,34 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         # Build Docker command
         cmd = [
             'docker', 'run', '--rm',
-            # Storage configuration to prevent disk space exhaustion
-            '--tmpfs', '/tmp:rw,size=20g',  # 20GB temporary filesystem
-            '--shm-size=4g',               # Increase shared memory
-            # Mount volumes
+        ]
+
+        # Storage configuration to prevent host disk exhaustion
+        if container_tmpfs_gb and container_tmpfs_gb > 0:
+            cmd += ['--tmpfs', f'/tmp:rw,size={int(container_tmpfs_gb)}g']
+        cmd += ['--shm-size=4g']  # Increase shared memory
+
+        # Mount volumes
+        cmd += [
             '-v', f'{output_path}:{docker_output_dir}',
             '-v', f'{resource_path}:{docker_resource_dir}',
             '-v', f'{project_root}:/workspace/src',
             '--workdir', '/workspace/src',  # Mount source code so we use local changes
-            # Pass environment variables
+        ]
+
+        # Pass environment variables
+        cmd += [
             '-e', 'UV_NO_SYNC=1',
             '-e', 'PATH=/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
             '-e', 'VIRTUAL_ENV=/workspace/.venv',
             '-e', f'ENTREZ_EMAIL={os.getenv("ENTREZ_EMAIL", "")}',
             '-e', f'OPENAI_API_KEY={os.getenv("OPENAI_API_KEY", "")}',
             '-e', f'ENTREZ_API_KEY={os.getenv("ENTREZ_API_KEY", "")}',
-            # Use the specified Docker image
+        ]
+
+        # Use the specified Docker image and run command
+        cmd += [
             docker_image,
-            # Command to run inside container
             'python', 'main_workflow/master.py',
             '--accession', accession,
             '--output_dir', docker_output_dir,
@@ -261,15 +272,15 @@ class LocalBatchProcessor(BatchProcessor):
         # Use 75% of available CPU cores, minimum 1
         max_workers = max(1, int(mp.cpu_count() * 0.75))
 
-        # Use 75% of available disk space as a conservative storage limit
+        # Default storage limit: min(50 GB, 75% of free disk space)
         # Note: Final value is recomputed against the actual output directory in submit_datasets
         try:
             disk = psutil.disk_usage('/')
             free_gb = disk.free / (1024**3)
-            max_storage_gb = max(50, int(free_gb * 0.75))
+            max_storage_gb = int(min(50, free_gb * 0.75))
         except Exception:
             # Fallback to a safe default if disk stats are unavailable
-            max_storage_gb = 100
+            max_storage_gb = 50
 
         return {
             'max_workers': max_workers,
@@ -278,7 +289,8 @@ class LocalBatchProcessor(BatchProcessor):
             'resource_dir': './data/kallisto_indices/',
             'check_interval': 600,  # 10 minutes
             'timeout_hours': 6,
-            'docker_image': 'kevingchen/uorca:0.1.0'
+            'docker_image': 'kevingchen/uorca:0.1.0',
+            'container_tmpfs_gb': 20
         }
 
     def load_environment_variables(self):
@@ -383,6 +395,10 @@ class LocalBatchProcessor(BatchProcessor):
             max_storage = params['max_storage_gb']
             available_storage = max_storage - self.current_storage_used
 
+            # Respect max_workers: do not submit beyond allowed parallelism
+            if len(self.running_jobs) >= params['max_workers']:
+                return
+
             for i, job_info in enumerate(self.job_queue):
                 row = job_info['row']
                 storage_needed = row['SafeStorageGB']
@@ -400,7 +416,8 @@ class LocalBatchProcessor(BatchProcessor):
                         job_id=job_id,
                         storage_gb=storage_needed,
                         max_workers=params['max_workers'],
-                        docker_image=params['docker_image']
+                        docker_image=params['docker_image'],
+                        container_tmpfs_gb=params.get('container_tmpfs_gb', 20)
                     )
 
                     # Submit job (check executor is available)
@@ -415,7 +432,8 @@ class LocalBatchProcessor(BatchProcessor):
                         resource_dir=params['resource_dir'],
                         cleanup=params['cleanup'],
                         status_dir=str(status_dir),
-                        docker_image=params['docker_image']
+                        docker_image=params['docker_image'],
+                        container_tmpfs_gb=params.get('container_tmpfs_gb', 20)
                     )
 
                     # Track the running job
@@ -509,8 +527,8 @@ class LocalBatchProcessor(BatchProcessor):
             try:
                 disk = psutil.disk_usage(str(output_path))
                 free_gb = disk.free / (1024**3)
-                params['max_storage_gb'] = max(50, int(free_gb * 0.75))
-                print(f"Auto-configured max_storage_gb to {params['max_storage_gb']} GB (75% of free space on {output_path.resolve()})")
+                params['max_storage_gb'] = int(min(50, free_gb * 0.75))
+                print(f"Auto-configured max_storage_gb to {params['max_storage_gb']} GB (min(50 GB, 75% of free space on {output_path.resolve()}))")
             except Exception as e:
                 print(f"Warning: Could not determine disk space for {output_path}: {e}. Using default max_storage_gb={params['max_storage_gb']} GB")
 
