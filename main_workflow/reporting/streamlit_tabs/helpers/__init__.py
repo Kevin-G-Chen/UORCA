@@ -9,6 +9,7 @@ import os
 import logging
 import streamlit as st
 import plotly.graph_objects as go
+import plotly.express as px
 from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, Set, List
 from datetime import datetime
@@ -55,6 +56,98 @@ class ModuleFilter(logging.Filter):
         return any(record.name.startswith(n) for n in self.names)
 
 
+_logged_versions_once: bool = False
+
+
+def prepare_figure_for_export(fig: go.Figure, fmt: str = 'pdf') -> go.Figure:
+    """
+    Clone and normalize a Plotly figure for static export.
+    - Ensures template/background are set
+    - Embeds explicit colors per trace when missing
+    - Reduces alpha on markers for vector formats to avoid desaturation
+    """
+    try:
+        # Clone to avoid mutating original figure shown in app
+        fig_dict = fig.to_dict()
+        export_fig = go.Figure(fig_dict)
+
+        # Explicit template and backgrounds
+        export_fig.update_layout(template='plotly', paper_bgcolor='white', plot_bgcolor='white')
+        # Slightly increase margins for export for improved readability
+        m = export_fig.layout.margin or {}
+        try:
+            ml = int(getattr(m, 'l', 40) or 40)
+            mr = int(getattr(m, 'r', 20) or 20)
+            mt = int(getattr(m, 't', 80) or 80)
+            mb = int(getattr(m, 'b', 10) or 10)
+        except Exception:
+            ml, mr, mt, mb = 40, 20, 80, 10
+        export_fig.update_layout(margin=dict(l=ml + 10, r=mr + 10, t=mt + 14, b=mb + 14))
+
+        # Build color map from existing mapping or fallback palette
+        # Try to derive mapping from traces by their name
+        names = []
+        for tr in export_fig.data:
+            nm = getattr(tr, 'name', None)
+            if nm is not None and nm not in names:
+                names.append(nm)
+        palette = px.colors.qualitative.Plotly
+        name_to_color = {nm: palette[i % len(palette)] for i, nm in enumerate(names)}
+
+        # Apply explicit colors and adjust alpha for vector formats
+        adjusted = 0
+        for tr in export_fig.data:
+            try:
+                if getattr(tr, 'type', None) == 'box':
+                    nm = getattr(tr, 'name', None)
+                    color_val = name_to_color.get(nm)
+                    # If missing marker color, set it
+                    if hasattr(tr, 'marker') and getattr(tr.marker, 'color', None) is None and color_val:
+                        tr.marker.color = color_val
+                    # If missing line color, set it
+                    if hasattr(tr, 'line') and getattr(tr.line, 'color', None) is None and color_val:
+                        tr.line.color = color_val
+                    # Reduce alpha issues for vector outputs
+                    if fmt in ('pdf', 'svg') and hasattr(tr, 'marker'):
+                        # Use solid markers for better fidelity
+                        try:
+                            tr.marker.opacity = 1.0
+                        except Exception:
+                            pass
+                    adjusted += 1
+            except Exception:
+                pass
+
+        return export_fig
+    except Exception as e:
+        # If any error occurs during preparation, return original figure without extra logging
+        return fig
+
+
+def plotly_fig_to_image_bytes(fig: go.Figure, fmt: str, width: Optional[int] = None, height: Optional[int] = None, scale: float = 2.0) -> Optional[bytes]:
+    try:
+        import plotly.io as pio
+        export_fig = prepare_figure_for_export(fig, fmt)
+        # Determine export dimensions
+        export_width = int(export_fig.layout.width) if width is None and export_fig.layout.width else width
+        export_height = int(export_fig.layout.height) if height is None and export_fig.layout.height else height
+        to_image_kwargs = dict(format=fmt, scale=scale)
+        if export_width is not None:
+            to_image_kwargs['width'] = export_width
+        if export_height is not None:
+            to_image_kwargs['height'] = export_height
+        img_bytes = pio.to_image(export_fig, **to_image_kwargs)
+        return img_bytes
+    except ImportError as e:
+        logger.error(f"Static export requires kaleido package: {e}")
+        st.error("Static export requires the kaleido package. Please install it with: uv add kaleido")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to convert figure to {fmt.upper()}: {e}")
+        st.error(f"Failed to generate {fmt.upper()}: {str(e)}")
+        return None
+
+
 def plotly_fig_to_pdf_bytes(fig: go.Figure, width: Optional[int] = None, height: Optional[int] = None, scale: float = 2.0) -> Optional[bytes]:
     """
     Convert a Plotly figure to PDF bytes for download.
@@ -69,23 +162,7 @@ def plotly_fig_to_pdf_bytes(fig: go.Figure, width: Optional[int] = None, height:
         PDF bytes if successful, None if failed
     """
     try:
-        import plotly.io as pio
-        # Determine export dimensions from figure if not provided
-        export_width = int(fig.layout.width) if width is None and fig.layout.width else width
-        export_height = int(fig.layout.height) if height is None and fig.layout.height else height
-
-        # Build args for to_image without passing None for width/height
-        to_image_kwargs = dict(format='pdf', scale=scale)
-        if export_width is not None:
-            to_image_kwargs['width'] = export_width
-        if export_height is not None:
-            to_image_kwargs['height'] = export_height
-
-        # Convert figure to PDF bytes using kaleido
-        pdf_bytes = pio.to_image(fig, **to_image_kwargs)
-        
-        logger.debug(f"Successfully converted Plotly figure to PDF ({len(pdf_bytes)} bytes)")
-        return pdf_bytes
+        return plotly_fig_to_image_bytes(fig, 'pdf', width=width, height=height, scale=scale)
         
     except ImportError as e:
         logger.error(f"PDF export requires kaleido package: {e}")
@@ -95,6 +172,14 @@ def plotly_fig_to_pdf_bytes(fig: go.Figure, width: Optional[int] = None, height:
         logger.error(f"Failed to convert figure to PDF: {e}")
         st.error(f"Failed to generate PDF: {str(e)}")
         return None
+
+
+def plotly_fig_to_png_bytes(fig: go.Figure, width: Optional[int] = None, height: Optional[int] = None, scale: float = 2.0) -> Optional[bytes]:
+    return plotly_fig_to_image_bytes(fig, 'png', width=width, height=height, scale=scale)
+
+
+def plotly_fig_to_svg_bytes(fig: go.Figure, width: Optional[int] = None, height: Optional[int] = None, scale: float = 2.0) -> Optional[bytes]:
+    return plotly_fig_to_image_bytes(fig, 'svg', width=width, height=height, scale=scale)
 
 
 def generate_plot_filename(plot_type: str, extension: str = "pdf") -> str:

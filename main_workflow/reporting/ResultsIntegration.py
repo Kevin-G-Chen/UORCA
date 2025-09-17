@@ -1218,15 +1218,18 @@ class ResultsIntegrator:
             plot_df['LogExpression'] = np.log2(plot_df['Expression'] + 1)
             y_axis_title = "Log<sub>2</sub>(CPM+1)"
 
-        # Choose a compact facet spacing and guarantee it respects Plotly's constraint
-        # Max allowed is 1/(rows-1); use a small value (0.02) or just under the max, whichever is lower.
-        if n_rows > 1:
+        # Adaptive facet spacing to reduce label overlap when few rows
+        if n_rows <= 1:
+            facet_row_spacing = 0.06
+        elif n_rows == 2:
+            facet_row_spacing = 0.05
+        elif n_rows <= 4:
+            facet_row_spacing = 0.04
+        else:
             max_allowed_row_spacing = (1.0 / (n_rows - 1)) - 1e-6
-            facet_row_spacing = min(0.02, max_allowed_row_spacing)
+            facet_row_spacing = min(0.03, max_allowed_row_spacing)
             if facet_row_spacing < 0:
                 facet_row_spacing = 0.0
-        else:
-            facet_row_spacing = 0.02
         facet_col_spacing = 0.03
 
         # Build combined x-axis labels in the format: "GSEXXXX - group <group>"
@@ -1249,7 +1252,21 @@ class ResultsIntegrator:
             lambda s: s if len(str(s)) <= MAX_LABEL_CHARS else str(s)[:MAX_LABEL_CHARS] + '...'
         )
 
-        # Create boxplot (proof of concept - simple implementation)
+        # Build an explicit color map for datasets to ensure colors are embedded (important for static export)
+        try:
+            import plotly.express as px
+            palette = px.colors.qualitative.Plotly
+        except Exception:
+            palette = [
+                "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"
+            ]
+
+        unique_datasets = list(pd.unique(plot_df['DatasetDisplay']))
+        color_discrete_map = {ds: palette[i % len(palette)] for i, ds in enumerate(unique_datasets)}
+        # diagnostics removed
+
+        # Create boxplot (explicit color mapping + all other settings)
         fig = px.box(
             plot_df,
             x='XLabel',
@@ -1262,12 +1279,24 @@ class ResultsIntegrator:
             title="Gene Expression Across Samples",
             labels={'LogExpression': y_axis_title, 'DatasetDisplay': 'Dataset'},
             facet_row_spacing=facet_row_spacing,
-            facet_col_spacing=facet_col_spacing
+            facet_col_spacing=facet_col_spacing,
+            color_discrete_map=color_discrete_map
         )
 
-        # Layout adjustments optimized for readability (2 plots per row)
+        # Layout adjustments optimized for readability (adaptive per-row height)
+        if n_rows <= 2:
+            height_per_row = 560
+        elif n_rows <= 4:
+            height_per_row = 520
+        elif n_rows <= 6:
+            height_per_row = 480
+        elif n_rows <= 10:
+            height_per_row = 460
+        else:
+            height_per_row = 440
+
         fig.update_layout(
-            height=475 * n_rows,  # 475px per row for consistent subplot size
+            height=height_per_row * max(1, n_rows),
             width=600 * facet_col_wrap,  # 600px per column (wider for better boxplot visibility)
             legend_title_text="Dataset",
             margin=dict(l=40, r=20, t=80, b=6),
@@ -1322,9 +1351,7 @@ class ResultsIntegrator:
         if show_raw_points:
             fig.update_traces(marker=dict(size=4, opacity=0.5), jitter=0,
                               selector=dict(type='box'))
-            fig.update_traces(pointpos = 0,
-                width = 0.7,
-                selector = dict(type='box'))
+            fig.update_traces(pointpos=0, width=0.7, selector=dict(type='box'))
 
         # Use the custom hover text we created in the data
         fig.update_traces(
@@ -1337,6 +1364,27 @@ class ResultsIntegrator:
             font=dict(size=int(facet_font_size * 2), color="#333", family="Inter, sans-serif"),
             yshift=14
         ))
+
+        # Ensure background and template are explicitly defined (avoids theme-dependent exports)
+        fig.update_layout(template='plotly', paper_bgcolor='white', plot_bgcolor='white')
+
+        # Explicitly set per-trace colors to embed into the figure (helps Kaleido PDF)
+        colored_traces = 0
+        for tr in fig.data:
+            try:
+                if hasattr(tr, 'type') and tr.type == 'box':
+                    # Match by trace name to DatasetDisplay
+                    name = getattr(tr, 'name', None)
+                    if name in color_discrete_map:
+                        color_val = color_discrete_map[name]
+                        if hasattr(tr, 'marker'):
+                            tr.marker.color = color_val
+                        if hasattr(tr, 'line'):
+                            tr.line.color = color_val
+                        colored_traces += 1
+            except Exception as _:
+                pass
+        # diagnostics removed
 
         # Configure y-axis scaling - each plot gets its own scale unless lock_y_axis is True
         if lock_y_axis and not plot_df.empty:
