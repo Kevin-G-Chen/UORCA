@@ -26,7 +26,7 @@ from .helpers import (
     generate_plot_filename
 )
 from ResultsIntegration import ResultsIntegrator
-from .helpers.r_repro_bundle import create_r_reproduction_bundle
+# R script bundling is now integrated into create_dataset_download_package via components['r_script']
 
 # Import single analysis plotting functions
 try:
@@ -170,6 +170,17 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
                     help="Include differential expression results, plots, and CPM data for all contrasts"
                 )
             
+            # R script option
+            include_rscript = st.checkbox(
+                "R script",
+                value=st.session_state[f"download_components_{selected_dataset}"].get('r_script', False),
+                key=f"checkbox_rscript_{selected_dataset}",
+                help=(
+                    "Include a single self-contained RNAseq.R that reproduces the analysis. "
+                    "If selected, sample metadata and abundance files are always included regardless of other selections."
+                )
+            )
+            
             # PDF generation option
             st.markdown("**Additional options:**")
             include_pdfs = st.checkbox(
@@ -185,6 +196,7 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
                 'abundance': include_abundance,
                 'qc_plots': include_qc,
                 'deg_analysis': include_deg,
+                'r_script': include_rscript,
                 'include_pdfs': include_pdfs
             }
             st.session_state[f"download_components_{selected_dataset}"] = components
@@ -200,7 +212,7 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
                 
                 if st.button("Prepare Download Package", key=f"download_btn_{selected_dataset}", type="primary"):
                     # Check if at least one component is selected
-                    if not any([include_metadata, include_abundance, include_qc, include_deg]):
+                    if not any([include_metadata, include_abundance, include_qc, include_deg, include_rscript]):
                         st.error("Please select at least one component to download.")
                     else:
                         spinner_text = "Preparing your download package..."
@@ -209,13 +221,18 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
                             if num_contrasts > 0:
                                 spinner_text = f"Preparing package with {num_contrasts} contrast(s)... Generating PDF versions of plots, this may take a moment."
                         
+                        # If R script selected, enforce metadata + abundance inclusion
+                        effective_components = components.copy()
+                        if effective_components.get('r_script'):
+                            effective_components['metadata'] = True
+                            effective_components['abundance'] = True
                         with st.spinner(spinner_text):
                             package_bytes = create_dataset_download_package(
                                 ri=ri,
                                 results_dir=results_dir,
                                 dataset_id=selected_dataset,
                                 dataset_accession=dataset_accession,
-                                components=components
+                                components=effective_components
                             )
                         
                         if package_bytes:
@@ -248,42 +265,7 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
                         del st.session_state[f"package_ready_{selected_dataset}"]
                         st.rerun()
 
-            # R Reproduction Bundle (auto-resolving, minimal)
-            st.markdown("---")
-            st.markdown("**R Reproduction Bundle**")
-            st.caption("Create a bundle containing a single self-contained RNAseq.R, sample metadata, abundance files, and t2g.txt when available. Run with: Rscript RNAseq.R")
-
-            r_key = f"r_bundle_ready_{selected_dataset}"
-            if r_key not in st.session_state:
-                if st.button("Prepare R Reproduction Bundle", key=f"prepare_r_bundle_{selected_dataset}"):
-                    with st.spinner("Preparing R reproduction bundle..."):
-                        r_bytes = create_r_reproduction_bundle(
-                            ri=ri,
-                            results_dir=results_dir,
-                            dataset_id=selected_dataset,
-                            dataset_accession=dataset_accession
-                        )
-                    if r_bytes:
-                        st.session_state[r_key] = {
-                            'bytes': r_bytes,
-                            'filename': f"{dataset_accession}_R_repro_bundle.zip"
-                        }
-                        st.rerun()
-                    else:
-                        st.warning("Could not create R reproduction bundle. Ensure metadata or abundance paths are available.")
-            else:
-                r_data = st.session_state[r_key]
-                st.success("R reproduction bundle is ready.")
-                st.download_button(
-                    label="Download R Bundle",
-                    data=r_data['bytes'],
-                    file_name=r_data['filename'],
-                    mime='application/zip',
-                    key=f"download_r_bundle_{selected_dataset}"
-                )
-                if st.button("Prepare Again", key=f"reset_r_bundle_{selected_dataset}"):
-                    del st.session_state[r_key]
-                    st.rerun()
+            # Note: R reproduction is integrated into the package via the 'R script' option above
     
     st.markdown("---")  # Add separator after download section
 

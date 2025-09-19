@@ -17,6 +17,7 @@ import zipfile
 import shutil
 import io
 import pandas as pd
+from pathlib import Path
 
 # Import the main integrator
 from ResultsIntegration import ResultsIntegrator
@@ -220,6 +221,281 @@ def add_directory_to_zip(zip_file: zipfile.ZipFile, source_dir: str, archive_dir
                 logger.warning(f"Could not add {file_path} to archive: {e}")
 
 
+# ----- R script packaging helpers (centralized) -----
+
+def _repo_paths_for_r() -> Dict[str, Path]:
+    here = Path(__file__).resolve()
+    reporting_dir = here.parents[2]
+    main_workflow_dir = reporting_dir.parent
+    addl_scripts = main_workflow_dir / "additional_scripts"
+    repo_root = main_workflow_dir.parent
+    return {
+        "reporting_dir": reporting_dir,
+        "main_workflow_dir": main_workflow_dir,
+        "rnaseq_r": addl_scripts / "RNAseq.R",
+        "repo_root": repo_root,
+    }
+
+
+def _first_existing(paths: List[Path]) -> Optional[Path]:
+    for p in paths:
+        if p and p.exists():
+            return p
+    return None
+
+
+def _load_analysis_info(results_dir: str, dataset_id: str) -> Optional[Dict[str, Any]]:
+    analysis_dir = Path(results_dir) / dataset_id
+    for f in [analysis_dir / "metadata" / "analysis_info.json", analysis_dir / "analysis_info.json"]:
+        if f.exists():
+            try:
+                import json
+                return json.loads(f.read_text())
+            except Exception:
+                return None
+    return None
+
+
+def _load_sample_mapping(results_dir: str, dataset_id: str) -> Optional[pd.DataFrame]:
+    analysis_dir = Path(results_dir) / dataset_id
+    candidate_paths = [
+        analysis_dir / "metadata" / "edger_analysis_samples.csv",
+        analysis_dir / "edger_analysis_samples.csv",
+        Path(results_dir) / "edger_analysis_samples.csv",
+        Path(results_dir).parent / "edger_analysis_samples.csv",
+    ]
+    f = _first_existing(candidate_paths)
+    if f is None:
+        return None
+    try:
+        df_head = pd.read_csv(f, nrows=0)
+        first_col = df_head.columns[0] if len(df_head.columns) else None
+        index_col = 0 if (first_col == '' or (isinstance(first_col, str) and first_col.startswith('Unnamed'))) else None
+        return pd.read_csv(f, index_col=index_col)
+    except Exception:
+        return pd.read_csv(f)
+
+
+def _ensure_absolute_abundance_paths(df: pd.DataFrame, results_dir: str, dataset_id: str) -> pd.DataFrame:
+    df = df.copy()
+    if "abundance_file" not in df.columns:
+        return df
+    base = Path(results_dir) / dataset_id
+    newvals: List[str] = []
+    for val in df["abundance_file"].astype(str).tolist():
+        p = Path(val)
+        newvals.append(str(p if p.is_absolute() else (base / p).resolve()))
+    df["abundance_file"] = newvals
+    return df
+
+
+def _synthesize_contrasts_from_info(info: Optional[Dict[str, Any]]) -> Optional[pd.DataFrame]:
+    try:
+        if info and isinstance(info.get("contrasts"), list) and info["contrasts"]:
+            rows = []
+            for c in info["contrasts"]:
+                if isinstance(c, dict) and ("name" in c and "expression" in c):
+                    rows.append({
+                        "name": c.get("name"),
+                        "expression": c.get("expression"),
+                        "description": c.get("description", ""),
+                    })
+            if rows:
+                return pd.DataFrame(rows)
+    except Exception:
+        return None
+    return None
+
+
+def _iter_files(dir_path: Path):
+    for root, _, files in os.walk(dir_path):
+        for fn in files:
+            yield Path(root) / fn
+
+
+def _patch_rnaseq_template(group_col: str, use_contrasts: bool) -> Optional[str]:
+    paths = _repo_paths_for_r()
+    rnaseq_r = paths["rnaseq_r"]
+    if not rnaseq_r.exists():
+        return None
+    template_text = rnaseq_r.read_text(encoding='utf-8')
+    fixed_block = (
+        f"metadata_file <- \"metadata/edger_analysis_samples.csv\"\n"
+        f"merged_group <- \"{group_col}\"\n"
+        f"output_dir <- \".\"\n"
+        f"tx2gene_file <- if (file.exists(\"t2g.txt\")) \"t2g.txt\" else \"NA\"\n"
+        + ("contrasts_file <- \"metadata/contrasts.csv\"\n" if use_contrasts else "contrasts_file <- NULL\n")
+    )
+    patched_text = template_text.replace(
+        "args <- commandArgs(trailingOnly = TRUE)\n\nmetadata_file <- args[1]\nmerged_group <- args[2]\noutput_dir <- args[3]\ntx2gene_file <- args[4]\ncontrasts_file <- if(length(args) > 4) args[5] else NULL\n",
+        fixed_block,
+    )
+    if fixed_block not in patched_text:
+        insert_after = "suppressPackageStartupMessages(library(gplots))\n"
+        if insert_after in patched_text:
+            patched_text = patched_text.replace(insert_after, insert_after + "\n" + fixed_block + "\n")
+        else:
+            patched_text = fixed_block + "\n" + patched_text
+    return patched_text
+
+
+def add_rscript_bundle_to_zip(
+    zf: zipfile.ZipFile,
+    ri: 'ResultsIntegrator',
+    results_dir: str,
+    dataset_id: str,
+    dataset_accession: str,
+    zip_root: str,
+):
+    """Add a self-contained RNAseq.R and required files into the existing zip under zip_root.
+
+    - Ensures abundance/ is included
+    - Writes metadata/edger_analysis_samples.csv with relative abundance paths
+    - Includes metadata/analysis_info.json, metadata/contrasts.csv (or synthesizes)
+    - Includes t2g.txt when available
+    - Writes RNAseq.R patched with embedded parameters
+    """
+    dataset_path = Path(results_dir) / dataset_id
+    info = _load_analysis_info(results_dir, dataset_id)
+
+    # Include analysis_info.json if present
+    if info is not None:
+        import json
+        try:
+            zf.writestr(f"{zip_root}/metadata/analysis_info.json", json.dumps(info, indent=2))
+        except Exception:
+            pass
+
+    # Sample mapping
+    sample_df = _load_sample_mapping(results_dir, dataset_id)
+    if sample_df is None:
+        # Synthesize from abundance directory
+        abund_dir = dataset_path / "abundance"
+        rows: List[Dict[str, Any]] = []
+        if abund_dir.exists():
+            for sub in sorted([p for p in abund_dir.iterdir() if p.is_dir()]):
+                tsv = sub / "abundance.tsv"
+                if tsv.exists():
+                    rows.append({
+                        "sample": sub.name,
+                        "abundance_file": str(tsv.resolve()),
+                        "Group": sub.name.split("_")[0] if "_" in sub.name else "Group1",
+                    })
+        if not rows:
+            return
+        sample_df = pd.DataFrame(rows)
+
+    # Ensure absolute paths for abundance_file
+    sample_df = _ensure_absolute_abundance_paths(sample_df, results_dir, dataset_id)
+
+    # Copy abundance directory using same helper as package
+    abund_dir = dataset_path / "abundance"
+    if abund_dir.exists():
+        add_directory_to_zip(zf, str(abund_dir), f"{zip_root}/abundance")
+        new_paths: List[str] = []
+        for _, row in sample_df.iterrows():
+            abspath = Path(str(row.get("abundance_file", "")))
+            sample_dir = abspath.parent.name if abspath.parent.name else None
+            relp = f"abundance/{sample_dir or 'UNKNOWN'}/abundance.tsv"
+            new_paths.append(relp)
+        if new_paths:
+            sample_df["abundance_file"] = new_paths
+    else:
+        # Fallback: copy from each abundance_file parent
+        new_paths: List[str] = []
+        for _, row in sample_df.iterrows():
+            abspath = Path(str(row.get("abundance_file", "")))
+            src_dir = abspath.parent
+            if src_dir.exists():
+                for p in _iter_files(src_dir):
+                    arcname = Path(zip_root) / "abundance" / src_dir.name / p.relative_to(src_dir)
+                    try:
+                        with open(p, 'rb') as f:
+                            zf.writestr(str(arcname), f.read())
+                    except Exception:
+                        pass
+                new_paths.append(f"abundance/{src_dir.name}/abundance.tsv")
+            else:
+                new_paths.append("abundance/UNKNOWN/abundance.tsv")
+        if new_paths:
+            sample_df["abundance_file"] = new_paths
+
+    # Write sample mapping CSV into zip
+    zf.writestr(f"{zip_root}/metadata/edger_analysis_samples.csv", sample_df.to_csv(index=False))
+
+    # Contrasts: copy or synthesize
+    contr_file = _first_existing([
+        dataset_path / "metadata" / "contrasts.csv",
+        dataset_path / "contrasts.csv",
+    ])
+    if contr_file and contr_file.exists():
+        with open(contr_file, 'rb') as f:
+            zf.writestr(f"{zip_root}/metadata/contrasts.csv", f.read())
+        use_contrasts = True
+    else:
+        # From analysis_info if present
+        contr_df = _synthesize_contrasts_from_info(info)
+        if contr_df is not None and len(contr_df) > 0 and {"name", "expression"}.issubset(contr_df.columns):
+            zf.writestr(f"{zip_root}/metadata/contrasts.csv", contr_df.to_csv(index=False))
+            use_contrasts = True
+        else:
+            use_contrasts = False
+
+    # t2g selection
+    t2g_note = ""
+    try:
+        if info and isinstance(info.get("tx2gene_file_used"), str) and info["tx2gene_file_used"]:
+            t2g_path = Path(info["tx2gene_file_used"]).resolve()
+            if t2g_path.exists():
+                with open(t2g_path, 'rb') as f:
+                    zf.writestr(f"{zip_root}/t2g.txt", f.read())
+        else:
+            # organism fallback
+            org_map = {
+                "Homo sapiens": "human",
+                "Mus musculus": "mouse",
+                "Canis lupus familiaris": "dog",
+                "Macaca mulatta": "monkey",
+                "Danio rerio": "zebrafish",
+            }
+            species = org_map.get((info or {}).get("organism", ""), None)
+            paths = _repo_paths_for_r()
+            if species:
+                cand = paths["repo_root"] / "data" / "kallisto_indices" / species / "t2g.txt"
+                if cand.exists():
+                    with open(cand, 'rb') as f:
+                        zf.writestr(f"{zip_root}/t2g.txt", f.read())
+    except Exception:
+        pass
+
+    # Group column selection
+    group_col = None
+    if info and isinstance(info.get("merged_column"), str) and info["merged_column"] in sample_df.columns:
+        group_col = info["merged_column"]
+    elif "merged_column" in sample_df.columns:
+        group_col = "merged_column"
+    else:
+        # Heuristic: choose a non-file categorical column with few uniques
+        for cn in sample_df.columns:
+            low = cn.lower()
+            if low.endswith("_file") or low.endswith("_path") or cn in ("abundance_file", "sample", "geo_accession", "title"):
+                continue
+            try:
+                uniq = len(pd.unique(sample_df[cn]))
+            except Exception:
+                continue
+            if 2 <= uniq <= min(6, len(sample_df) - 1):
+                group_col = cn
+                break
+    if not group_col:
+        group_col = "Group"
+
+    # Write patched RNAseq.R
+    patched = _patch_rnaseq_template(group_col=group_col, use_contrasts=use_contrasts)
+    if patched is not None:
+        zf.writestr(f"{zip_root}/RNAseq.R", patched)
+
+
 def create_dataset_download_package(
     ri: 'ResultsIntegrator',
     results_dir: str,
@@ -251,8 +527,13 @@ def create_dataset_download_package(
             'metadata': True,
             'abundance': True,
             'qc_plots': True,
-            'deg_analysis': True
+            'deg_analysis': True,
+            'r_script': False,
         }
+    # If R script requested, always include metadata + abundance
+    if components.get('r_script'):
+        components['metadata'] = True
+        components['abundance'] = True
     
     try:
         # Create in-memory ZIP file
@@ -267,10 +548,10 @@ def create_dataset_download_package(
                 metadata_dir = os.path.join(dataset_path, "metadata")
                 if os.path.exists(metadata_dir):
                     # Only include specific metadata files
-                    metadata_files = [
-                        f"{dataset_accession}_metadata.csv",
-                        "contrasts.csv"
-                    ]
+                    metadata_files = [f"{dataset_accession}_metadata.csv"]
+                    # Avoid duplicate contrasts if R script will add it
+                    if not components.get('r_script', False):
+                        metadata_files.append("contrasts.csv")
                     for filename in metadata_files:
                         file_path = os.path.join(metadata_dir, filename)
                         if os.path.exists(file_path):
@@ -278,7 +559,8 @@ def create_dataset_download_package(
                                 zf.writestr(f"{package_name}/metadata/{filename}", f.read())
             
             # 2. Add abundance directory (if selected and exists)
-            if components.get('abundance', True):
+            #    Skip here if R script is requested (it will add abundance to avoid duplicates)
+            if components.get('abundance', True) and not components.get('r_script', False):
                 abundance_dir = os.path.join(dataset_path, "abundance")
                 if os.path.exists(abundance_dir):
                     add_directory_to_zip(zf, abundance_dir, f"{package_name}/abundance")
@@ -299,6 +581,20 @@ def create_dataset_download_package(
                     cpm_csv = cpm_df.to_csv(index=False)
                     zf.writestr(f"{package_name}/DEG_analysis/CPM_data.csv", cpm_csv)
             
+            # 5. Add R script bundle (if selected): also ensures edger_analysis_samples.csv and abundance are in place
+            if components.get('r_script', False):
+                try:
+                    add_rscript_bundle_to_zip(
+                        zf=zf,
+                        ri=ri,
+                        results_dir=results_dir,
+                        dataset_id=dataset_id,
+                        dataset_accession=dataset_accession,
+                        zip_root=package_name,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to add R script bundle: {e}")
+
             # 6. Create and add README (always include, but customize content)
             readme_content = _generate_dataset_readme(ri, dataset_id, dataset_accession, components)
             zf.writestr(f"{package_name}/README.txt", readme_content)
@@ -434,7 +730,7 @@ def _generate_dataset_readme(
 ) -> str:
     """Generate README content for the dataset package."""
     if components is None:
-        components = {'metadata': True, 'abundance': True, 'qc_plots': True, 'deg_analysis': True}
+        components = {'metadata': True, 'abundance': True, 'qc_plots': True, 'deg_analysis': True, 'r_script': False}
     
     readme_lines = [
         f"UORCA Analysis Package for {dataset_accession}",
@@ -449,6 +745,17 @@ def _generate_dataset_readme(
     
     section_num = 1
     
+    # Optionally describe the R script
+    if components.get('r_script', False):
+        readme_lines.extend([
+            f"{section_num}. RNAseq.R",
+            "   - Single self-contained R script that reproduces the analysis",
+            "   - Run inside the package directory with: Rscript RNAseq.R",
+            "   - Note: metadata and abundance files are included to ensure reproducibility",
+            ""
+        ])
+        section_num += 1
+
     # Add sections based on what was included
     if components.get('metadata', False):
         readme_lines.extend([
