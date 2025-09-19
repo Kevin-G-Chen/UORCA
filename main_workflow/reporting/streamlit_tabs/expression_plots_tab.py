@@ -28,6 +28,13 @@ from .helpers import (
     generate_plot_filename
 )
 from ResultsIntegration import ResultsIntegrator
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ortholog_mapper import (
+    expand_genes_all_vs_all,
+    get_ortholog_summary,
+    get_taxid_from_organism
+)
 
 # Set up fragment decorator
 setup_fragment_decorator()
@@ -332,6 +339,14 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
             key="expression_combined_genes"
         )
 
+        # Ortholog expansion option
+        check_orthologs = st.checkbox(
+            "Check for orthologues",
+            value=False,
+            help="Expand the input gene list to include orthologues in other species present in the selected datasets. This may take around a minute.",
+            key="expression_check_orthologs"
+        )
+
         # Submit button
         submitted = st.form_submit_button("Generate Expression Plots", type="primary")
 
@@ -361,6 +376,43 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
             if not selected_genes:
                 st.error("Please enter at least one gene")
                 return None
+
+            # Handle ortholog expansion if enabled
+            original_genes = selected_genes.copy()
+            ortholog_mapping = None
+            if check_orthologs and selected_genes:
+                # Get unique organisms from selected datasets
+                target_organisms = set()
+                for dataset_id in selected_datasets:
+                    if dataset_id in ri.analysis_info:
+                        organism = ri.analysis_info[dataset_id].get('organism', 'Unknown')
+                        if organism != 'Unknown':
+                            target_organisms.add(organism)
+
+                # If multiple organisms, try to expand genes
+                if len(target_organisms) > 1:
+                    with st.spinner('Searching for orthologues across species... This may take around a minute.'):
+                        # Use all-vs-all approach
+                        expanded_genes, ortholog_mapping = expand_genes_all_vs_all(
+                            selected_genes,
+                            list(target_organisms),
+                            return_mapping=True
+                        )
+
+                        if len(expanded_genes) > len(selected_genes):
+                            st.success(f"✓ Expanded {len(selected_genes)} genes to {len(expanded_genes)} genes (+{len(expanded_genes) - len(selected_genes)} orthologues)")
+                            selected_genes = expanded_genes
+
+                            # Show summary in an expander
+                            with st.expander("View ortholog mapping details", expanded=False):
+                                if ortholog_mapping:
+                                    summary = get_ortholog_summary(ortholog_mapping)
+                                    st.text(summary)
+                        else:
+                            st.info("No additional orthologues found for the input genes")
+                else:
+                    if check_orthologs:
+                        st.info("Ortholog expansion requires multiple species in selected datasets")
 
             # Show gene validation with detailed checking
             with st.expander("Gene Validation", expanded=False):
@@ -395,7 +447,9 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
 
             return {
                 'groups': selected_groups,
-                'genes': selected_genes
+                'genes': selected_genes,
+                'original_genes': original_genes if check_orthologs else None,
+                'ortholog_mapping': ortholog_mapping if check_orthologs else None
             }
 
     return None

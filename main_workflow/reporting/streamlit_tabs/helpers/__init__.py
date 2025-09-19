@@ -1308,6 +1308,64 @@ def get_organism_display_name(organism: str) -> str:
         return organism
 
 
+@log_streamlit_function
+def expand_genes_with_orthologs_helper(
+    genes: List[str],
+    ri: ResultsIntegrator,
+    selected_datasets: List[str],
+    check_orthologs: bool = False
+) -> Tuple[List[str], Optional[Dict]]:
+    """
+    Helper function to expand genes with orthologs if requested.
+
+    Args:
+        genes: Input gene list
+        ri: ResultsIntegrator instance
+        selected_datasets: List of selected dataset IDs
+        check_orthologs: Whether to check for orthologs
+
+    Returns:
+        Tuple of (expanded_genes, ortholog_mapping)
+    """
+    if not check_orthologs or not genes:
+        return genes, None
+
+    # Import here to avoid circular dependencies
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    from ortholog_mapper import expand_genes_with_orthologs
+
+    # Get unique organisms from selected datasets
+    target_organisms = set()
+    for dataset_id in selected_datasets:
+        if dataset_id in ri.analysis_info:
+            organism = ri.analysis_info[dataset_id].get('organism', 'Unknown')
+            if organism != 'Unknown':
+                target_organisms.add(organism)
+
+    # If multiple organisms, expand genes
+    if len(target_organisms) > 1:
+        # Infer input organism
+        input_organism = None
+        if 'Homo sapiens' in target_organisms or 'human' in target_organisms:
+            input_organism = 'Homo sapiens'
+        elif 'Mus musculus' in target_organisms or 'mouse' in target_organisms:
+            input_organism = 'Mus musculus'
+        else:
+            input_organism = list(target_organisms)[0]
+
+        expanded_genes, ortholog_mapping = expand_genes_with_orthologs(
+            genes,
+            input_organism,
+            list(target_organisms),
+            return_mapping=True
+        )
+        return expanded_genes, ortholog_mapping
+
+    return genes, None
+
+
 def is_analysis_successful(ri, analysis_id: str) -> bool:
     """
     Check if an analysis was successful by checking analysis_info.json.
@@ -1445,6 +1503,7 @@ __all__ = [
     'filter_genes_by_organism',
     'filter_genes_by_organism_datasets',
     'get_organism_display_name',
+    'expand_genes_with_orthologs_helper',
     
     # PDF export helpers
     'plotly_fig_to_pdf_bytes',

@@ -34,6 +34,14 @@ import zipfile
 import json
 from datetime import datetime
 import textwrap
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ortholog_mapper import (
+    expand_genes_all_vs_all,
+    get_ortholog_summary,
+    get_taxid_from_organism
+)
 
 # Set up fragment decorator
 setup_fragment_decorator()
@@ -420,6 +428,17 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
                 key="heatmap_keep_gene_order_custom"
             )
 
+        # Ortholog expansion option (only for Custom genes)
+        if gene_selection_method == "Custom":
+            check_orthologs = st.checkbox(
+                "Check for orthologues",
+                value=False,
+                help="Expand the input gene list to include orthologues in other species present in the selected datasets. This may take around a minute.",
+                key="heatmap_check_orthologs"
+            )
+        else:
+            check_orthologs = False
+
         # Significance Thresholds
         st.markdown("**Significance Thresholds**")
         col1, col2 = st.columns(2)
@@ -468,6 +487,45 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
             if gene_selection_method == "Custom" and not custom_genes_list:
                 st.error("Please enter at least one gene for custom selection")
                 validation_error = True
+
+            # Handle ortholog expansion if enabled
+            original_genes = custom_genes_list.copy() if custom_genes_list else []
+            ortholog_mapping = None
+            if gene_selection_method == "Custom" and check_orthologs and custom_genes_list and not validation_error:
+                # Get unique organisms from selected contrasts
+                target_organisms = set()
+                for accession, contrast_id in st.session_state.get('selected_contrasts_heatmap', set()):
+                    for aid in ri.analysis_info:
+                        if ri.analysis_info[aid].get('accession') == accession:
+                            organism = ri.analysis_info[aid].get('organism', 'Unknown')
+                            if organism != 'Unknown':
+                                target_organisms.add(organism)
+                            break
+
+                # If multiple organisms, try to expand genes
+                if len(target_organisms) > 1:
+                    with st.spinner('Searching for orthologues across species... This may take around a minute.'):
+                        # Use all-vs-all approach
+                        expanded_genes, ortholog_mapping = expand_genes_all_vs_all(
+                            custom_genes_list,
+                            list(target_organisms),
+                            return_mapping=True
+                        )
+
+                        if len(expanded_genes) > len(custom_genes_list):
+                            st.success(f"✓ Expanded {len(custom_genes_list)} genes to {len(expanded_genes)} genes (+{len(expanded_genes) - len(custom_genes_list)} orthologues)")
+                            custom_genes_list = expanded_genes
+
+                            # Show summary in an expander
+                            with st.expander("View ortholog mapping details", expanded=False):
+                                if ortholog_mapping:
+                                    summary = get_ortholog_summary(ortholog_mapping)
+                                    st.text(summary)
+                        else:
+                            st.info("No additional orthologues found for the input genes")
+                else:
+                    if check_orthologs:
+                        st.info("Ortholog expansion requires multiple species in selected datasets")
 
             # Read selected contrasts from session state
             selected_contrasts = list(st.session_state.get('selected_contrasts_heatmap', set()))
@@ -575,6 +633,8 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
                         'gene_count': gene_count,
                         'gene_selection_method': gene_selection_method,
                         'custom_genes': custom_genes_list,
+                        'original_genes': original_genes if check_orthologs else None,
+                        'ortholog_mapping': ortholog_mapping if check_orthologs else None,
                         'cluster_genes': False if (gene_selection_method == "Custom" and st.session_state.get("heatmap_keep_gene_order_custom", False)) else True
                     }
                 }
