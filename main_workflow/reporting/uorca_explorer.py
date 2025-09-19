@@ -45,7 +45,8 @@ from streamlit_tabs.expression_plots_tab import render_expression_plots_tab
 from streamlit_tabs.analysis_plots_tab import render_analysis_plots_tab
 from streamlit_tabs.datasets_info_tab import render_datasets_info_tab
 from streamlit_tabs.contrasts_info_tab import render_contrasts_info_tab
-from streamlit_tabs.ai_assistant_tab import render_ai_assistant_tab
+# from streamlit_tabs.ai_assistant_tab import render_ai_assistant_tab  # Hidden for now
+from streamlit_tabs.uorca_summary_tab import render_uorca_summary_tab
 
 # Import the main integrator
 from ResultsIntegration import ResultsIntegrator
@@ -173,9 +174,9 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
 def render_main_interface(ri: ResultsIntegrator, results_dir: str, selected_datasets: List[str]):
     """Render the main tabbed interface."""
 
-    # Create main tabs
-    tab_ai, tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "AI Assistant",
+    # Create main tabs (AI Assistant hidden; UORCA Summary shown first)
+    tab_summary, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "UORCA Summary",
         "Explore DEG Heatmap",
         "Plot Gene Expression",
         "View Dataset Analyses",
@@ -185,13 +186,9 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, selected_data
 
     log_streamlit_event(f"Rendering interface with {len(selected_datasets)} selected datasets")
 
-    # Tab 1: AI Assistant
-    with tab_ai:
-        render_ai_assistant_tab(
-            ri=ri,
-            results_dir=results_dir,
-            selected_datasets=selected_datasets
-        )
+    # Tab 1: UORCA Summary (first page)
+    with tab_summary:
+        render_uorca_summary_tab(ri=ri, results_dir=results_dir)
 
     # Tab 2: Heatmap (now handles its own contrast and gene selection)
     with tab1:
@@ -317,7 +314,7 @@ def render_help_info():
             - **Heatmap:** Contrast selection + gene selection (frequent DEGs or custom)
             - **Expression Plots:** Sample group selection + custom gene list only
             - **Analysis Plots:** Individual dataset QC and DE plots
-            - **AI Assistant:** Intelligent analysis with automated contrast selection
+            
             """
         )
 

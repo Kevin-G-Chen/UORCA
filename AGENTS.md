@@ -271,3 +271,11 @@ uorca explore ../UORCA_results --port 8501
 - For **AI assistance or dataset identification**, use the CLI or the integrated AI analysis features in the UORCA Explorer.
 
 - All components support the `uv` package manager workflow and can be run via `uv run` commands or direct CLI execution after installation.
+
+---
+
+Note for maintainers
+
+- The UORCA Explorer summary tab displays a hardcoded application version (currently `1.0`).
+  If you change the app versioning, update the display in:
+  `main_workflow/reporting/streamlit_tabs/uorca_summary_tab.py` (search for "UORCA version").
