@@ -26,6 +26,7 @@ from .helpers import (
     generate_plot_filename
 )
 from ResultsIntegration import ResultsIntegrator
+from .helpers.r_repro_bundle import create_r_reproduction_bundle
 
 # Import single analysis plotting functions
 try:
@@ -246,6 +247,43 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
                         # Clear the package data to allow reconfiguration
                         del st.session_state[f"package_ready_{selected_dataset}"]
                         st.rerun()
+
+            # R Reproduction Bundle (auto-resolving, minimal)
+            st.markdown("---")
+            st.markdown("**R Reproduction Bundle**")
+            st.caption("Create a bundle containing a single self-contained RNAseq.R, sample metadata, abundance files, and t2g.txt when available. Run with: Rscript RNAseq.R")
+
+            r_key = f"r_bundle_ready_{selected_dataset}"
+            if r_key not in st.session_state:
+                if st.button("Prepare R Reproduction Bundle", key=f"prepare_r_bundle_{selected_dataset}"):
+                    with st.spinner("Preparing R reproduction bundle..."):
+                        r_bytes = create_r_reproduction_bundle(
+                            ri=ri,
+                            results_dir=results_dir,
+                            dataset_id=selected_dataset,
+                            dataset_accession=dataset_accession
+                        )
+                    if r_bytes:
+                        st.session_state[r_key] = {
+                            'bytes': r_bytes,
+                            'filename': f"{dataset_accession}_R_repro_bundle.zip"
+                        }
+                        st.rerun()
+                    else:
+                        st.warning("Could not create R reproduction bundle. Ensure metadata or abundance paths are available.")
+            else:
+                r_data = st.session_state[r_key]
+                st.success("R reproduction bundle is ready.")
+                st.download_button(
+                    label="Download R Bundle",
+                    data=r_data['bytes'],
+                    file_name=r_data['filename'],
+                    mime='application/zip',
+                    key=f"download_r_bundle_{selected_dataset}"
+                )
+                if st.button("Prepare Again", key=f"reset_r_bundle_{selected_dataset}"):
+                    del st.session_state[r_key]
+                    st.rerun()
     
     st.markdown("---")  # Add separator after download section
 
