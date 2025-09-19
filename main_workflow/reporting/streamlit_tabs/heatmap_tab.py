@@ -40,7 +40,9 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ortholog_mapper import (
     expand_genes_all_vs_all,
     get_ortholog_summary,
-    get_taxid_from_organism
+    get_taxid_from_organism,
+    create_ortholog_mapping_table,
+    create_hierarchical_gene_list
 )
 
 # Set up fragment decorator
@@ -514,13 +516,29 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
 
                         if len(expanded_genes) > len(custom_genes_list):
                             st.success(f"✓ Expanded {len(custom_genes_list)} genes to {len(expanded_genes)} genes (+{len(expanded_genes) - len(custom_genes_list)} orthologues)")
-                            custom_genes_list = expanded_genes
 
-                            # Show summary in an expander
-                            with st.expander("View ortholog mapping details", expanded=False):
+                            # Show ortholog mapping table
+                            with st.expander("Ortholog mapping table", expanded=False):
                                 if ortholog_mapping:
-                                    summary = get_ortholog_summary(ortholog_mapping)
-                                    st.text(summary)
+                                    # Create the mapping table
+                                    mapping_df = create_ortholog_mapping_table(
+                                        original_genes,
+                                        ortholog_mapping,
+                                        list(target_organisms)
+                                    )
+                                    st.dataframe(mapping_df, use_container_width=True)
+
+                            # Show copyable gene list
+                            with st.expander("Copy full gene list", expanded=False):
+                                if ortholog_mapping:
+                                    hierarchical_list = create_hierarchical_gene_list(
+                                        original_genes,
+                                        ortholog_mapping,
+                                        expanded_genes
+                                    )
+                                    st.code(hierarchical_list, language=None)
+
+                            custom_genes_list = expanded_genes
                         else:
                             st.info("No additional orthologues found for the input genes")
                 else:
