@@ -45,7 +45,7 @@ from streamlit_tabs.expression_plots_tab import render_expression_plots_tab
 from streamlit_tabs.analysis_plots_tab import render_analysis_plots_tab
 from streamlit_tabs.datasets_info_tab import render_datasets_info_tab
 from streamlit_tabs.contrasts_info_tab import render_contrasts_info_tab
-# from streamlit_tabs.ai_assistant_tab import render_ai_assistant_tab  # Hidden for now
+from streamlit_tabs.ai_assistant_tab import render_ai_assistant_tab
 from streamlit_tabs.uorca_summary_tab import render_uorca_summary_tab
 
 # Import the main integrator
@@ -174,9 +174,10 @@ def load_and_validate_data(initial_results_dir: str) -> Tuple[ResultsIntegrator,
 def render_main_interface(ri: ResultsIntegrator, results_dir: str, selected_datasets: List[str]):
     """Render the main tabbed interface."""
 
-    # Create main tabs (AI Assistant hidden; UORCA Summary shown first)
-    tab_summary, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    # Create main tabs (AI Assistant as second tab)
+    tab_summary, tab_ai, tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "UORCA Summary",
+        "AI Assistant",
         "Explore DEG Heatmap",
         "Plot Gene Expression",
         "View Dataset Analyses",
@@ -190,32 +191,36 @@ def render_main_interface(ri: ResultsIntegrator, results_dir: str, selected_data
     with tab_summary:
         render_uorca_summary_tab(ri=ri, results_dir=results_dir)
 
-    # Tab 2: Heatmap (now handles its own contrast and gene selection)
+    # Tab 2: AI Assistant
+    with tab_ai:
+        render_ai_assistant_tab(ri=ri, results_dir=results_dir, selected_datasets=selected_datasets)
+
+    # Tab 3: Heatmap (now handles its own contrast and gene selection)
     with tab1:
         render_heatmap_tab(
             ri=ri,
             selected_datasets=selected_datasets
         )
 
-    # Tab 3: Expression Plots (now handles its own group and gene selection)
+    # Tab 4: Expression Plots (now handles its own group and gene selection)
     with tab2:
         render_expression_plots_tab(
             ri=ri,
             selected_datasets=selected_datasets
         )
 
-    # Tab 4: Analysis Plots
+    # Tab 5: Analysis Plots
     with tab3:
         render_analysis_plots_tab(
             ri=ri,
             results_dir=results_dir
         )
 
-    # Tab 5: Dataset Info
+    # Tab 6: Dataset Info
     with tab4:
         render_datasets_info_tab(ri=ri)
 
-    # Tab 6: Contrast Info (uses default thresholds since these are now tab-specific)
+    # Tab 7: Contrast Info (uses default thresholds since these are now tab-specific)
     with tab5:
         render_contrasts_info_tab(
             ri=ri,
