@@ -345,7 +345,7 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
         check_orthologs = st.checkbox(
             "Check for orthologues",
             value=False,
-            help="Expand the input gene list to include orthologues in other species present in the selected datasets.",
+            help="Expand the input gene list to include orthologues in other species present in the selected datasets. Ortholog identification uses GeneOrthology.",
             key="expression_check_orthologs"
         )
 
