@@ -1,306 +1,227 @@
 """
-Enhanced Ortholog Mapper Module for UORCA Explorer using Ensembl Compara.
+Ortholog Mapper Module for UORCA Explorer using a local CSV.
 
-This module provides functionality to map genes between species using a combination
-of MyGene API for symbol resolution and Ensembl Compara REST API for accurate
-ortholog detection. It provides orthology types, confidence scores, and percent identity.
+This module maps genes between species using a precomputed mammalian
+orthologues CSV located at main_workflow/reporting/mammalian_orthologues.csv.
+It replaces network-based lookups with fast, cached local lookups.
 """
 
 import logging
+from typing import List, Dict, Tuple, Optional, Any
+
+import os
 import pandas as pd
-import mygene
-import requests
-import time
-from typing import List, Dict, Set, Tuple, Optional, Any
-from functools import lru_cache
 import streamlit as st
 
 logger = logging.getLogger(__name__)
 
-# Initialize MyGene client
-MG = mygene.MyGeneInfo()
+# Path to the orthologues CSV (relative to this file location)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+ORTHOLOG_CSV_PATH = os.path.join(_HERE, "mammalian_orthologues.csv")
 
-# Ensembl REST API base URL
-ENSEMBL_REST = "https://rest.ensembl.org"
-
-# Species mappings for taxonomy IDs and Ensembl names
-SPECIES_MAP = {
-    'Homo sapiens': {'taxid': 9606, 'ensembl': 'homo_sapiens'},
-    'human': {'taxid': 9606, 'ensembl': 'homo_sapiens'},
-    'Mus musculus': {'taxid': 10090, 'ensembl': 'mus_musculus'},
-    'mouse': {'taxid': 10090, 'ensembl': 'mus_musculus'},
-    'Rattus norvegicus': {'taxid': 10116, 'ensembl': 'rattus_norvegicus'},
-    'rat': {'taxid': 10116, 'ensembl': 'rattus_norvegicus'},
-    'Danio rerio': {'taxid': 7955, 'ensembl': 'danio_rerio'},
-    'zebrafish': {'taxid': 7955, 'ensembl': 'danio_rerio'},
-    'Drosophila melanogaster': {'taxid': 7227, 'ensembl': 'drosophila_melanogaster'},
-    'fruit fly': {'taxid': 7227, 'ensembl': 'drosophila_melanogaster'},
-    'Caenorhabditis elegans': {'taxid': 6239, 'ensembl': 'caenorhabditis_elegans'},
-    'worm': {'taxid': 6239, 'ensembl': 'caenorhabditis_elegans'},
+# Map scientific/common names (as found in analysis_info.json) to CSV species base names
+# CSV species base names correspond to the prefixes before "_Symbol" in the CSV header
+SCIENTIFIC_TO_CSV_SPECIES = {
+    # Core species
+    "Homo sapiens": "Human",
+    "Mus musculus": "Mouse",
+    "Rattus norvegicus": "Rat",
+    "Danio rerio": "zebrafish",
+    # Common name variants that might appear
+    "human": "Human",
+    "mouse": "Mouse",
+    "rat": "Rat",
+    "zebrafish": "zebrafish",
+    # Additional mammals present in the CSV
+    "Felis catus": "Cat",
+    "Canis lupus familiaris": "dog",
+    "Sus scrofa": "Pig",
+    "Oryctolagus cuniculus": "Rabbit",
+    "Pan troglodytes": "Chimpanzee",
+    "Gorilla gorilla": "Gorilla",
+    "Macaca mulatta": "Macaque.rhesus",
+    "Macaca nemestrina": "Macaque.pig.tailed",
+    "Callithrix jacchus": "Marmoset",
+    "Saimiri sciureus": "Squirrel.monkey",
+    "Aotus nancymaae": "Owl.monkey",
+    "Chlorocebus sabaeus": "African.green.monkey",
+    "Aotus trivirgatus": "Owl.monkey",
+    "Microcebus murinus": "Mouse.lemur",
+    "Heterocephalus glaber": "Naked.mole.rat",
+    "Dasypus novemcinctus": "Armadillo.Nine.banded",
+    "Tupaia belangeri": "Chinese.Treeshrew",
+    "Phocoena sinus": "Vaquita",
+    "Mustela putorius furo": "Ferret",
+    # Fallback mapping for display names that might already match CSV
+    "Cat": "Cat",
+    "dog": "dog",
+    "Pig": "Pig",
+    "Rabbit": "Rabbit",
+    "Chimpanzee": "Chimpanzee",
+    "Gorilla": "Gorilla",
+    "Marmoset": "Marmoset",
+    "Opossum": "Opossum",
+    "Ferret": "Ferret",
+    "Galago": "Galago",
+    "Vaquita": "Vaquita",
 }
 
 
-def get_species_info(organism: str) -> Dict[str, Any]:
-    """
-    Get taxonomy ID and Ensembl name for an organism.
+def _csv_symbol_columns(df: pd.DataFrame) -> Dict[str, str]:
+    """Return mapping from CSV species base name -> symbol column name."""
+    symbol_cols = [c for c in df.columns if c.endswith("_Symbol")]
+    return {c.replace("_Symbol", ""): c for c in symbol_cols}
 
-    Args:
-        organism: Organism name (case-insensitive)
 
-    Returns:
-        Dict with 'taxid' and 'ensembl' keys, or None if not found
-    """
-    organism_lower = organism.lower()
+@st.cache_data(show_spinner=False, ttl=3600)
+def _load_ortholog_df() -> Tuple[pd.DataFrame, Dict[str, str]]:
+    """Load the orthologue CSV and return DataFrame and species->symbol column map."""
+    try:
+        df = pd.read_csv(ORTHOLOG_CSV_PATH)
+    except Exception as e:
+        logger.error(f"Failed to load orthologue CSV at {ORTHOLOG_CSV_PATH}: {e}")
+        return pd.DataFrame(), {}
+    species_to_symbol = _csv_symbol_columns(df)
+    return df, species_to_symbol
 
-    # Try exact match first
-    for key, info in SPECIES_MAP.items():
-        if key.lower() == organism_lower:
-            return info
 
-    # Try partial match
-    for key, info in SPECIES_MAP.items():
-        if key.lower() in organism_lower or organism_lower in key.lower():
-            return info
-
-    logger.warning(f"No species info found for organism: {organism}")
+def _organism_to_csv_species(organism: str) -> Optional[str]:
+    """Map scientific/common organism name to CSV species base name."""
+    if not organism:
+        return None
+    # Exact match first
+    if organism in SCIENTIFIC_TO_CSV_SPECIES:
+        return SCIENTIFIC_TO_CSV_SPECIES[organism]
+    # Case-insensitive fallback
+    key_lower = organism.lower()
+    for k, v in SCIENTIFIC_TO_CSV_SPECIES.items():
+        if k.lower() == key_lower:
+            return v
     return None
 
 
+def get_species_info(organism: str) -> Dict[str, Any]:
+    """Return info containing the CSV species base and symbol column for an organism."""
+    df, species_to_symbol = _load_ortholog_df()
+    csv_species = _organism_to_csv_species(organism)
+    if not csv_species:
+        logger.warning(f"No CSV species mapping found for organism: {organism}")
+        return None
+    symbol_col = species_to_symbol.get(csv_species)
+    if not symbol_col:
+        logger.warning(f"No symbol column found in CSV for species: {csv_species}")
+        return None
+    return {"csv_species": csv_species, "symbol_col": symbol_col}
+
+
 def get_taxid_from_organism(organism: str) -> Optional[int]:
-    """Legacy function for backward compatibility."""
-    info = get_species_info(organism)
-    return info['taxid'] if info else None
+    """Kept for compatibility; not used by CSV-based logic. Returns common taxids when known."""
+    TAXIDS = {
+        "Homo sapiens": 9606,
+        "Mus musculus": 10090,
+        "Rattus norvegicus": 10116,
+        "Danio rerio": 7955,
+    }
+    return TAXIDS.get(organism)
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def get_orthologs_by_symbol(
-    symbols: Tuple[str, ...],
-    source_species: str,
-    target_species: str,
-    sleep_between: float = 0.08
-) -> pd.DataFrame:
-    """
-    Get orthologs for gene symbols using Ensembl REST API.
-
-    Args:
-        symbols: Tuple of gene symbols
-        source_species: Source species in Ensembl format (e.g., 'mus_musculus')
-        target_species: Target species in Ensembl format (e.g., 'homo_sapiens')
-        sleep_between: Sleep time between requests for rate limiting
-
-    Returns:
-        DataFrame with ortholog relationships
-    """
-    rows = []
-
-    for symbol in symbols:
-        # Use the documented endpoint format
-        url = f"{ENSEMBL_REST}/homology/symbol/{source_species}/{symbol}"
-        params = {
-            "type": "orthologues",
-            "target_species": target_species,
-            "format": "condensed",
-            "content-type": "application/json"
-        }
-
-        try:
-            r = requests.get(
-                url,
-                headers={"Content-Type": "application/json"},
-                params=params,
-                timeout=20
-            )
-
-            if r.status_code == 429:  # Too many requests
-                time.sleep(1.0)
-                r = requests.get(
-                    url,
-                    headers={"Content-Type": "application/json"},
-                    params=params,
-                    timeout=20
-                )
-
-            if r.status_code == 200:
-                data = r.json().get("data", [])
-
-                for entry in data:
-                    src_id = entry.get("id")
-                    for h in entry.get("homologies", []):
-                        if h.get("species") == target_species:
-                            rows.append({
-                                "source_symbol": symbol,
-                                "source_ensembl": src_id,
-                                "target_ensembl": h.get("id"),
-                                "target_symbol": h.get("display_name"),  # May be available
-                                "orthology_type": h.get("type"),
-                                "perc_id": h.get("perc_id"),
-                                "confidence": h.get("confidence", 0)
-                            })
-
-            time.sleep(sleep_between)  # Rate limiting
-
-        except Exception as e:
-            logger.warning(f"Error getting orthologs for {symbol}: {e}")
-            continue
-
-    return pd.DataFrame(rows)
+def _find_row_indices_for_gene(df: pd.DataFrame, symbol_cols: List[str], gene: str) -> pd.Series:
+    """Return boolean Series of rows where any selected symbol column matches gene (case-insensitive)."""
+    gene_upper = str(gene).upper()
+    # Build a boolean mask across provided columns
+    masks = []
+    for col in symbol_cols:
+        # Ensure string comparison and handle NaN
+        masks.append(df[col].astype(str).str.upper() == gene_upper)
+    if not masks:
+        return pd.Series([False] * len(df), index=df.index)
+    mask = masks[0]
+    for m in masks[1:]:
+        mask = mask | m
+    return mask
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def ensembl_to_symbols(
-    ensembl_ids: Tuple[str, ...],
-    species_taxid: int
-) -> pd.DataFrame:
-    """
-    Map Ensembl Gene IDs back to gene symbols using MyGene.
-
-    Args:
-        ensembl_ids: Tuple of Ensembl Gene IDs
-        species_taxid: NCBI taxonomy ID
-
-    Returns:
-        DataFrame with symbol mapping
-    """
-    if not ensembl_ids:
-        return pd.DataFrame()
-
-    try:
-        res = MG.querymany(
-            list(ensembl_ids),
-            scopes="ensembl.gene",
-            species=species_taxid,
-            fields="symbol,entrezgene,name,type_of_gene",
-            as_dataframe=True
-        )
-
-        if res.empty:
-            return pd.DataFrame()
-
-        res = res.reset_index().rename(columns={"query": "ensembl_gene_id"})
-
-        # Filter for protein-coding genes
-        res = res[res["type_of_gene"] == "protein-coding"].copy()
-
-        return res[["ensembl_gene_id", "symbol", "entrezgene", "name"]]
-
-    except Exception as e:
-        logger.error(f"Error mapping Ensembl IDs to symbols: {e}")
-        return pd.DataFrame()
+def _collect_symbols_from_rows(df: pd.DataFrame, rows_mask: pd.Series, target_cols: List[str]) -> List[str]:
+    """Collect unique non-null symbols from target columns for rows where rows_mask is True."""
+    if rows_mask.sum() == 0 or not target_cols:
+        return []
+    subset = df.loc[rows_mask, target_cols]
+    # Flatten and drop NA
+    syms = pd.unique(subset.values.ravel("K"))
+    return [s for s in syms if isinstance(s, str) and s.strip()]
 
 
-def expand_genes_with_orthologs_ensembl(
+def expand_genes_with_orthologs(
     input_genes: List[str],
-    source_organism: str,
-    target_organism: str,
-    orthology_filter: str = "all"
-) -> Tuple[List[str], pd.DataFrame]:
+    input_organism: str,
+    target_organisms: List[str],
+    return_mapping: bool = False
+) -> Tuple[List[str], Optional[Dict[str, Dict[str, List[str]]]]]:
     """
-    Expand gene list with orthologs using Ensembl Compara.
+    Expand gene list with orthologues using the local CSV.
 
     Args:
-        input_genes: List of input gene symbols
-        source_organism: Source organism name
-        target_organism: Target organism name
-        orthology_filter: Filter for orthology type ('all', 'one2one', 'one2many', 'many2many')
+        input_genes: Input gene symbols (strings)
+        input_organism: Scientific/common name of the source organism (from analysis_info.json)
+        target_organisms: List of organism names present in selected datasets
+        return_mapping: If True, return mapping dict {query_gene: {organism: [symbols]}}
 
     Returns:
-        Tuple of (expanded_genes_list, detailed_mapping_dataframe)
+        Tuple of (expanded_genes, mapping or None)
     """
-    # Get species information
-    source_info = get_species_info(source_organism)
-    target_info = get_species_info(target_organism)
+    if not input_genes or not target_organisms:
+        return input_genes, {} if return_mapping else None
 
-    if not source_info or not target_info:
-        logger.error(f"Species not supported: {source_organism} or {target_organism}")
-        return input_genes, pd.DataFrame()
+    df, species_to_symbol = _load_ortholog_df()
+    if df.empty:
+        logger.warning("Orthologue CSV is empty or failed to load.")
+        return input_genes, {} if return_mapping else None
 
-    # Get orthologs directly by symbol
-    orthologs = get_orthologs_by_symbol(
-        tuple(input_genes),
-        source_info['ensembl'],
-        target_info['ensembl']
-    )
+    # Map organisms to CSV species base names and symbol columns
+    csv_targets = []
+    target_symbol_cols = []
+    for org in target_organisms:
+        info = get_species_info(org)
+        if info:
+            csv_targets.append(org)
+            target_symbol_cols.append(info["symbol_col"])
 
-    if orthologs.empty:
-        logger.info("No orthologs found")
-        # Create empty result with input genes
-        result_df = pd.DataFrame({
-            "query_symbol": input_genes,
-            "source_symbol": input_genes,
-            "target_symbol": pd.NA,
-            "orthology_type": pd.NA,
-            "perc_id": pd.NA,
-            "confidence": pd.NA
-        })
-        return input_genes, result_df
+    if not target_symbol_cols:
+        return input_genes, {} if return_mapping else None
 
-    # Apply orthology type filter if specified
-    if orthology_filter != "all":
-        if orthology_filter == "one2one":
-            orthologs = orthologs[orthologs["orthology_type"] == "ortholog_one2one"]
-        elif orthology_filter == "one2many":
-            orthologs = orthologs[orthologs["orthology_type"] == "ortholog_one2many"]
-        elif orthology_filter == "many2many":
-            orthologs = orthologs[orthologs["orthology_type"] == "ortholog_many2many"]
+    # Also include input organism column for matching if present
+    input_info = get_species_info(input_organism)
+    match_symbol_cols = list(target_symbol_cols)
+    if input_info and input_info["symbol_col"] not in match_symbol_cols:
+        match_symbol_cols.append(input_info["symbol_col"])
 
-    # If target_symbol is not available, resolve via MyGene
-    if "target_symbol" not in orthologs.columns or orthologs["target_symbol"].isna().all():
-        target_ensembl_ids = orthologs["target_ensembl"].dropna().unique().tolist()
-        if target_ensembl_ids:
-            target_symbols = ensembl_to_symbols(tuple(target_ensembl_ids), target_info['taxid'])
-            if not target_symbols.empty:
-                orthologs = orthologs.merge(
-                    target_symbols[["ensembl_gene_id", "symbol"]],
-                    left_on="target_ensembl",
-                    right_on="ensembl_gene_id",
-                    how="left"
-                )
-                orthologs["target_symbol"] = orthologs["symbol"]
-                orthologs = orthologs.drop(columns=["symbol", "ensembl_gene_id"])
+    expanded_set = set(input_genes)
+    mapping: Dict[str, Dict[str, List[str]]] = {} if return_mapping else None
 
-    # Create expanded gene list
-    expanded_genes = set(input_genes)
+    for gene in input_genes:
+        rows_mask = _find_row_indices_for_gene(df, match_symbol_cols, gene)
+        if rows_mask.any():
+            # For each target organism, collect symbols
+            if return_mapping and gene not in mapping:
+                mapping[gene] = {}
+            for org in csv_targets:
+                org_info = get_species_info(org)
+                if not org_info:
+                    continue
+                col = org_info["symbol_col"]
+                symbols = _collect_symbols_from_rows(df, rows_mask, [col])
+                # Exclude exact self-match (case-sensitive) but keep case-different
+                symbols = [s for s in symbols if s != gene]
+                if symbols:
+                    expanded_set.update(symbols)
+                    if return_mapping:
+                        mapping[gene].setdefault(org, [])
+                        # Deduplicate while preserving order
+                        for s in symbols:
+                            if s not in mapping[gene][org]:
+                                mapping[gene][org].append(s)
 
-    if "target_symbol" in orthologs.columns:
-        target_syms = orthologs["target_symbol"].dropna().unique().tolist()
-        expanded_genes.update(target_syms)
-
-    # Clean up the output dataframe
-    orthologs["query_symbol"] = orthologs["source_symbol"]
-
-    output_cols = [
-        "query_symbol", "source_symbol", "source_ensembl",
-        "target_symbol", "target_ensembl",
-        "orthology_type", "perc_id", "confidence"
-    ]
-
-    for col in output_cols:
-        if col not in orthologs.columns:
-            orthologs[col] = pd.NA
-
-    final_df = orthologs[output_cols].sort_values(
-        ["query_symbol", "target_symbol"],
-        na_position="last"
-    ).reset_index(drop=True)
-
-    # Add missing input genes to the result
-    found_genes = set(final_df["query_symbol"].dropna().unique())
-    missing_genes = set(input_genes) - found_genes
-
-    if missing_genes:
-        missing_df = pd.DataFrame({
-            "query_symbol": list(missing_genes),
-            "source_symbol": list(missing_genes),
-            "source_ensembl": pd.NA,
-            "target_symbol": pd.NA,
-            "target_ensembl": pd.NA,
-            "orthology_type": pd.NA,
-            "perc_id": pd.NA,
-            "confidence": pd.NA
-        })
-        final_df = pd.concat([final_df, missing_df], ignore_index=True)
-
-    return list(expanded_genes), final_df
+    return list(expanded_set), mapping
 
 
 def expand_genes_all_vs_all(
@@ -309,59 +230,55 @@ def expand_genes_all_vs_all(
     return_mapping: bool = False
 ) -> Tuple[List[str], Optional[Dict[str, Dict[str, List[str]]]]]:
     """
-    Expand genes using all-vs-all approach with Ensembl Compara.
+    Expand genes using all-vs-all approach based on the local CSV.
 
-    Args:
-        input_genes: List of input gene symbols
-        organisms: List of all organism names
-        return_mapping: If True, return detailed mapping
-
-    Returns:
-        Tuple of (expanded_gene_list, mapping_dict)
+    For each input gene, find any orthologue row where the gene appears in any
+    of the selected organisms' symbol columns, then collect symbols from all
+    selected organisms and merge into a combined set and optional mapping.
     """
     if not input_genes or len(organisms) < 2:
         return input_genes, None
 
-    expanded_genes = set(input_genes)
-    combined_mapping = {} if return_mapping else None
+    df, species_to_symbol = _load_ortholog_df()
+    if df.empty:
+        logger.warning("Orthologue CSV is empty or failed to load.")
+        return input_genes, None
 
-    # Try each pair of organisms
-    for source_org in organisms:
-        for target_org in organisms:
-            if source_org == target_org:
-                continue
+    # Determine which symbol columns correspond to selected organisms
+    org_infos = []
+    for org in organisms:
+        info = get_species_info(org)
+        if info:
+            org_infos.append((org, info["symbol_col"]))
 
-            # Get orthologs for this pair
-            expanded, df = expand_genes_with_orthologs_ensembl(
-                input_genes,
-                source_org,
-                target_org,
-                orthology_filter="all"
-            )
+    symbol_cols = [c for _, c in org_infos]
+    if not symbol_cols:
+        return input_genes, None
 
-            # Add new genes to the set
-            expanded_genes.update(expanded)
+    expanded_set = set(input_genes)
+    combined_mapping: Optional[Dict[str, Dict[str, List[str]]]] = {} if return_mapping else None
 
-            # Build mapping if requested
-            if return_mapping and not df.empty:
-                for _, row in df.iterrows():
-                    query = row["query_symbol"]
-                    target_sym = row["target_symbol"]
+    for gene in input_genes:
+        rows_mask = _find_row_indices_for_gene(df, symbol_cols, gene)
+        if not rows_mask.any():
+            continue
 
-                    if pd.notna(query) and pd.notna(target_sym):
-                        # Don't include exact self-matches (same case and name)
-                        # But DO include case-different orthologs like Cd74 -> CD74
-                        if query != target_sym:
-                            if query not in combined_mapping:
-                                combined_mapping[query] = {}
-                            if target_org not in combined_mapping[query]:
-                                combined_mapping[query][target_org] = []
-                            if target_sym not in combined_mapping[query][target_org]:
-                                combined_mapping[query][target_org].append(target_sym)
+        # For each organism, collect its symbols and update mapping
+        for org, col in org_infos:
+            symbols = _collect_symbols_from_rows(df, rows_mask, [col])
+            # Exclude exact self-matches (but allow case-different)
+            symbols = [s for s in symbols if s != gene]
+            if symbols:
+                expanded_set.update(symbols)
+                if return_mapping:
+                    combined_mapping.setdefault(gene, {}).setdefault(org, [])
+                    for s in symbols:
+                        if s not in combined_mapping[gene][org]:
+                            combined_mapping[gene][org].append(s)
 
-    logger.info(f"All-vs-all expansion: {len(input_genes)} -> {len(expanded_genes)} genes")
+    logger.info(f"All-vs-all expansion (CSV): {len(input_genes)} -> {len(expanded_set)} genes")
 
-    return list(expanded_genes), combined_mapping
+    return list(expanded_set), combined_mapping
 
 
 def create_ortholog_mapping_table(

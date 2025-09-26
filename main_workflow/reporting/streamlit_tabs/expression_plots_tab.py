@@ -345,7 +345,7 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
         check_orthologs = st.checkbox(
             "Check for orthologues",
             value=False,
-            help="Expand the input gene list to include orthologues in other species present in the selected datasets. This may take around a minute.",
+            help="Expand the input gene list to include orthologues in other species present in the selected datasets.",
             key="expression_check_orthologs"
         )
 
@@ -393,7 +393,7 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
 
                 # If multiple organisms, try to expand genes
                 if len(target_organisms) > 1:
-                    with st.spinner('Searching for orthologues across species... This may take around a minute.'):
+                    with st.spinner('Searching for orthologues across species (local CSV)...'):
                         # Use all-vs-all approach
                         expanded_genes, ortholog_mapping = expand_genes_all_vs_all(
                             selected_genes,

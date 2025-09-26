@@ -156,6 +156,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                 organism_genes = filter_genes_by_organism(ri, gene_sel, organism, organism_contrasts)
 
                 # Frequent DEG helper: species-specific copy dropdown
+                species_genes_for_cache = []
                 if gene_params.get('gene_selection_method') == 'Frequent DEGs':
                     try:
                         species_genes = cached_identify_important_genes(
@@ -165,6 +166,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                             p_value_threshold=gene_params.get('pvalue_thresh', 0.05),
                             lfc_threshold=gene_params.get('lfc_thresh', 1.0)
                         ) or []
+                        species_genes_for_cache = species_genes
                         with st.expander(f"Copy Frequent DEGs for {get_organism_display_name(organism)} ({len(species_genes)})", expanded=False):
                             st.code("\n".join(species_genes) if species_genes else "", language=None)
                     except Exception:
@@ -193,6 +195,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                             'organism_display': get_organism_display_name(organism),
                             'genes': organism_genes,
                             'contrasts': organism_contrasts,
+                            'frequent_genes': species_genes_for_cache,
                         }
                     ],
                     'params': {
@@ -212,6 +215,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                 tab_names = [get_organism_display_name(org) for org in organism_names]
                 tabs = st.tabs(tab_names)
 
+                frequent_by_org: Dict[str, List[str]] = {}
                 for i, organism in enumerate(organism_names):
                     with tabs[i]:
                         organism_contrasts = organism_groups[organism]
@@ -227,6 +231,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                                     p_value_threshold=gene_params.get('pvalue_thresh', 0.05),
                                     lfc_threshold=gene_params.get('lfc_thresh', 1.0)
                                 ) or []
+                                frequent_by_org[organism] = species_genes
                                 with st.expander(f"Copy Frequent DEGs for {get_organism_display_name(organism)} ({len(species_genes)})", expanded=False):
                                     st.code("\n".join(species_genes) if species_genes else "", language=None)
                             except Exception:
@@ -263,6 +268,7 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                                 'organism_display': get_organism_display_name(organism),
                                 'genes': organism_genes,
                                 'contrasts': organism_contrasts,
+                                'frequent_genes': frequent_by_org.get(organism, []),
                             })
                     st.session_state['heatmap_last_spec'] = {
                         'tabs': True,
@@ -295,6 +301,12 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                 tabs = st.tabs(tab_names)
                 for i, section in enumerate(last_spec.get('sections', [])):
                     with tabs[i]:
+                        # If frequent genes were cached for this section, show the copy expander
+                        freq = section.get('frequent_genes') or []
+                        if freq:
+                            org_disp = section.get('organism_display') or 'Species'
+                            with st.expander(f"Copy Frequent DEGs for {org_disp} ({len(freq)})", expanded=False):
+                                st.code("\n".join(freq), language=None)
                         _draw_heatmap(
                             ri,
                             section.get('genes', []),
@@ -311,6 +323,12 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
             else:
                 # Single organism re-render
                 section = (last_spec.get('sections') or [{}])[0]
+                # If frequent genes were cached, show the copy expander
+                freq = section.get('frequent_genes') or []
+                if freq:
+                    org_disp = section.get('organism_display') or 'Species'
+                    with st.expander(f"Copy Frequent DEGs for {org_disp} ({len(freq)})", expanded=False):
+                        st.code("\n".join(freq), language=None)
                 _draw_heatmap(
                     ri,
                     section.get('genes', []),
@@ -435,7 +453,7 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
             check_orthologs = st.checkbox(
                 "Check for orthologues",
                 value=False,
-                help="Expand the input gene list to include orthologues in other species present in the selected datasets. This may take around a minute.",
+                help="Expand the input gene list to include orthologues in other species present in the selected datasets.",
                 key="heatmap_check_orthologs"
             )
         else:
@@ -506,7 +524,7 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
 
                 # If multiple organisms, try to expand genes
                 if len(target_organisms) > 1:
-                    with st.spinner('Searching for orthologues across species... This may take around a minute.'):
+                    with st.spinner('Searching for orthologues across species (local CSV)...'):
                         # Use all-vs-all approach
                         expanded_genes, ortholog_mapping = expand_genes_all_vs_all(
                             custom_genes_list,
