@@ -393,7 +393,7 @@ def _render_combined_form(ri: ResultsIntegrator, selected_datasets: List[str]) -
 
                 # If multiple organisms, try to expand genes
                 if len(target_organisms) > 1:
-                    with st.spinner('Searching for orthologues across species (local CSV)...'):
+                    with st.spinner('Searching for orthologues across species...'):
                         # Use all-vs-all approach
                         expanded_genes, ortholog_mapping = expand_genes_all_vs_all(
                             selected_genes,
@@ -538,6 +538,13 @@ def _draw_expression_plots(
 
             if fig2:
                 log_streamlit_event("Expression plots generated successfully")
+
+                # Info panel: appears once plots are generated (placed above plots)
+                with st.expander("What do these plots mean?", expanded=False):
+                    st.markdown(
+                        "- Expression values are computed from normalized counts per million (CPM) within each dataset — not across datasets.\n"
+                        "- The y-axis shows log2(CPM) for each sample."
+                    )
 
                 # Add shared y-axis title and formatting
                 fig2.update_layout(

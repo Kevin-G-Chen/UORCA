@@ -172,6 +172,14 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                     except Exception:
                         pass
 
+                # Info panel: appears once plots are generated (placed above heatmap)
+                with st.expander("What this heatmap shows", expanded=False):
+                    st.markdown(
+                        f"- Values are log2 fold change (log2FC) computed within each dataset's contrast.\n"
+                        f"- Only significant values are shown: adj.P.Val < {gene_params.get('pvalue_thresh', 0.05)} and |logFC| > {gene_params.get('lfc_thresh', 1.0)}.\n"
+                        f"  Non-significant entries are set to 0 and hidden by filtering."
+                    )
+
                 _draw_heatmap(
                     ri,
                     organism_genes,
@@ -238,6 +246,13 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                                 pass
 
                         if organism_genes:
+                            # Info panel within each organism tab
+                            with st.expander("What this heatmap shows", expanded=False):
+                                st.markdown(
+                                    f"- Values are log2 fold change (log2FC) computed within each dataset's contrast.\n"
+                                    f"- Only significant values are shown: adj.P.Val < {gene_params.get('pvalue_thresh', 0.05)} and |logFC| > {gene_params.get('lfc_thresh', 1.0)}.\n"
+                                    f"  Non-significant entries are set to 0 and hidden by filtering."
+                                )
                             _draw_heatmap(
                                 ri,
                                 organism_genes,
@@ -307,6 +322,13 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                             org_disp = section.get('organism_display') or 'Species'
                             with st.expander(f"Copy Frequent DEGs for {org_disp} ({len(freq)})", expanded=False):
                                 st.code("\n".join(freq), language=None)
+                        # Info panel on cached re-render
+                        with st.expander("What does this plot mean?", expanded=False):
+                            st.markdown(
+                                f"- Values are log2 fold change (log2FC) computed within each dataset's contrast.\n"
+                                f"- Only significant values are shown: adj.P.Val < {params.get('pvalue_thresh', 0.05)} and |logFC| > {params.get('lfc_thresh', 1.0)}.\n"
+                                f"  Non-significant entries are set to 0 and hidden by filtering."
+                            )
                         _draw_heatmap(
                             ri,
                             section.get('genes', []),
@@ -329,6 +351,13 @@ def render_heatmap_tab(ri: ResultsIntegrator, selected_datasets: List[str], **kw
                     org_disp = section.get('organism_display') or 'Species'
                     with st.expander(f"Copy Frequent DEGs for {org_disp} ({len(freq)})", expanded=False):
                         st.code("\n".join(freq), language=None)
+                # Info panel on cached re-render (single organism)
+                with st.expander("What does this plot mean?", expanded=False):
+                    st.markdown(
+                        f"- Values are log2 fold change (log2FC) computed within each dataset's contrast.\n"
+                        f"- Only significant values are shown: adj.P.Val < {params.get('pvalue_thresh', 0.05)} and |logFC| > {params.get('lfc_thresh', 1.0)}.\n"
+                        f"  Non-significant entries are set to 0 and hidden by filtering."
+                    )
                 _draw_heatmap(
                     ri,
                     section.get('genes', []),
@@ -524,7 +553,7 @@ def _render_combined_heatmap_form(ri: ResultsIntegrator, selected_datasets: List
 
                 # If multiple organisms, try to expand genes
                 if len(target_organisms) > 1:
-                    with st.spinner('Searching for orthologues across species (local CSV)...'):
+                    with st.spinner('Searching for orthologues across species...'):
                         # Use all-vs-all approach
                         expanded_genes, ortholog_mapping = expand_genes_all_vs_all(
                             custom_genes_list,
