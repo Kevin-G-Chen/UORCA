@@ -137,8 +137,9 @@ def test_create_dataset_info_table_with_metadata(sample_analysis_info, sample_de
     )
 
     # Should strip "Title:" and "Summary:" prefixes
-    assert result[result['Accession'] == 'GSE123456']['Title'].values[0] == 'Test Dataset'
-    assert result[result['Accession'] == 'GSE123456']['Description'].values[0] == 'Test description'
+    gse_row = result[result['Accession'] == 'GSE123456']
+    assert gse_row['Title'].tolist()[0] == 'Test Dataset'
+    assert gse_row['Description'].tolist()[0] == 'Test description'
 
 
 def test_create_dataset_info_table_empty():
