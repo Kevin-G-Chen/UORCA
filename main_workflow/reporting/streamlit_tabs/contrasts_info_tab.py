@@ -80,7 +80,6 @@ def _render_contrasts_interface(ri: ResultsIntegrator, pvalue_thresh: float, lfc
 
         log_streamlit_event(f"Displaying {len(df_sorted)} contrasts")
         _render_contrast_table(df_sorted, pvalue_thresh, lfc_thresh)
-        _render_selection_controls(filtered_df)
     else:
         log_streamlit_event("No contrasts match current filters")
         st.info("No contrasts match the current filters.")
@@ -210,7 +209,3 @@ def _render_contrast_table(filtered_df: pd.DataFrame, pvalue_thresh: float, lfc_
     st.caption(f"DEG counts calculated using: {deg_help_text}")
 
 
-@log_streamlit_function
-def _render_selection_controls(filtered_df: pd.DataFrame):
-    """Render information about contrast selection."""
-    pass  # Removed info message about sidebar selection

@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, Set, List
 from datetime import datetime
 import zipfile
-import shutil
 import io
 import pandas as pd
-from pathlib import Path
 
 # Import the main integrator
 from ResultsIntegration import ResultsIntegrator
+
+# Import core logic modules
+from core import organism_utils, data_formatters, gene_selection
 
 # Import streamlit logging utilities
 from .streamlit_logging import (
@@ -905,58 +906,19 @@ def cached_identify_important_genes(
         # Sort contrasts to ensure deterministic caching regardless of order
         sorted_contrasts = sorted(selected_contrasts)
 
-        # Count gene occurrences across selected contrasts only
-        gene_counts = {}
-        contrasts_processed = 0
-        total_significant_genes = 0
-
         logger.info(f"Processing {len(sorted_contrasts)} selected contrasts for gene identification")
         logger.info(f"Using thresholds: P-value < {p_value_threshold}, |logFC| > {lfc_threshold}")
 
-        for analysis_id, contrast_id in sorted_contrasts:
-            if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
-                deg_df = ri.deg_data[analysis_id][contrast_id]
+        # Use business logic module
+        top_genes = gene_selection.identify_frequent_degs(
+            deg_data=ri.deg_data,
+            contrasts=sorted_contrasts,
+            top_n=top_frequent,
+            p_thresh=p_value_threshold,
+            lfc_thresh=lfc_threshold
+        )
 
-                # Filter for significant genes
-                if 'adj.P.Val' in deg_df.columns and 'logFC' in deg_df.columns and 'Gene' in deg_df.columns:
-                    significant_genes = deg_df[
-                        (deg_df['adj.P.Val'] < p_value_threshold) &
-                        (abs(deg_df['logFC']) > lfc_threshold)
-                    ]['Gene'].tolist()
-
-                    contrasts_processed += 1
-                    total_significant_genes += len(significant_genes)
-                    logger.info(f"Contrast {analysis_id}:{contrast_id} - found {len(significant_genes)} significant genes")
-
-                    # Count occurrences
-                    for gene in significant_genes:
-                        gene_counts[gene] = gene_counts.get(gene, 0) + 1
-                else:
-                    logger.warning(f"Missing required columns in {analysis_id}:{contrast_id}")
-            else:
-                logger.warning(f"Contrast {analysis_id}:{contrast_id} not found in DEG data")
-
-        # Sort by frequency (descending) then by gene name (ascending)
-        sorted_genes = sorted(gene_counts.items(), key=lambda x: (-x[1], x[0]))
-
-        # Log summary statistics
-        unique_genes_found = len(gene_counts)
-        logger.info(f"Gene identification summary:")
-        logger.info(f"  - Contrasts processed: {contrasts_processed}/{len(sorted_contrasts)}")
-        logger.info(f"  - Total significant gene occurrences: {total_significant_genes}")
-        logger.info(f"  - Unique genes found: {unique_genes_found}")
-        logger.info(f"  - Requested top genes: {top_frequent}")
-
-        # Return top N most frequent genes
-        top_genes = [gene for gene, count in sorted_genes[:top_frequent]]
-        actual_returned = len(top_genes)
-
-        logger.info(f"  - Genes returned: {actual_returned}")
-        if actual_returned > 0:
-            # Show frequency distribution of top genes
-            top_5_genes = sorted_genes[:min(5, len(sorted_genes))]
-            logger.info(f"  - Top gene frequencies: {[(gene, count) for gene, count in top_5_genes]}")
-
+        logger.info(f"  - Genes returned: {len(top_genes)}")
         return top_genes
 
     except Exception as e:
@@ -1099,11 +1061,6 @@ def calculate_pagination_info(gene_sel: List[str], genes_per_page: int = 30) -> 
     return total_pages, current_page, genes_per_page, current_genes
 
 
-def safe_rerun():
-    """Call streamlit rerun."""
-    st.rerun()
-
-
 def check_ai_generating():
     """Check if AI is currently generating to skip expensive operations."""
     return st.session_state.get('ai_generating', False)
@@ -1158,154 +1115,42 @@ def load_environment():
 
 @log_streamlit_function
 def get_organisms_from_datasets(ri: ResultsIntegrator, selected_datasets: List[str]) -> List[str]:
-    """
-    Get unique organisms from selected datasets.
-
-    Args:
-        ri: ResultsIntegrator instance
-        selected_datasets: List of dataset IDs
-
-    Returns:
-        Sorted list of unique organism names
-    """
-    organisms = set()
-    for dataset_id in selected_datasets:
-        if dataset_id in ri.analysis_info:
-            organism = ri.analysis_info[dataset_id].get('organism', 'Unknown')
-            organisms.add(organism)
-    return sorted(list(organisms))
+    """Get unique organisms from selected datasets."""
+    return organism_utils.get_organisms_from_datasets(ri.analysis_info, selected_datasets)
 
 
 @log_streamlit_function
 def group_datasets_by_organism(ri: ResultsIntegrator, selected_datasets: List[str]) -> Dict[str, List[str]]:
-    """
-    Group datasets by their organism.
-
-    Args:
-        ri: ResultsIntegrator instance
-        selected_datasets: List of dataset IDs
-
-    Returns:
-        Dictionary mapping organism names to lists of dataset IDs
-    """
-    organism_groups = {}
-    for dataset_id in selected_datasets:
-        if dataset_id in ri.analysis_info:
-            organism = ri.analysis_info[dataset_id].get('organism', 'Unknown')
-            if organism not in organism_groups:
-                organism_groups[organism] = []
-            organism_groups[organism].append(dataset_id)
-    return organism_groups
+    """Group datasets by their organism."""
+    return organism_utils.group_datasets_by_organism(ri.analysis_info, selected_datasets)
 
 
 @log_streamlit_function
 def group_contrasts_by_organism(ri: ResultsIntegrator, selected_contrasts: List[Tuple[str, str]]) -> Dict[str, List[Tuple[str, str]]]:
-    """
-    Group contrasts by their dataset's organism.
-
-    Args:
-        ri: ResultsIntegrator instance
-        selected_contrasts: List of (analysis_id, contrast_id) tuples
-
-    Returns:
-        Dictionary mapping organism names to lists of contrast tuples
-    """
-    organism_groups = {}
-    for analysis_id, contrast_id in selected_contrasts:
-        if analysis_id in ri.analysis_info:
-            organism = ri.analysis_info[analysis_id].get('organism', 'Unknown')
-            if organism not in organism_groups:
-                organism_groups[organism] = []
-            organism_groups[organism].append((analysis_id, contrast_id))
-    return organism_groups
+    """Group contrasts by their dataset's organism."""
+    return organism_utils.group_contrasts_by_organism(ri.analysis_info, selected_contrasts)
 
 
 @log_streamlit_function
 def filter_genes_by_organism(ri: ResultsIntegrator, genes: List[str], organism: str, selected_contrasts: List[Tuple[str, str]]) -> List[str]:
-    """
-    Filter genes to only include those found in datasets of a specific organism (for contrasts).
-
-    Args:
-        ri: ResultsIntegrator instance
-        genes: List of gene names to filter
-        organism: Target organism name
-        selected_contrasts: List of (analysis_id, contrast_id) tuples for this organism
-
-    Returns:
-        List of genes that are present in the organism's datasets
-    """
-    organism_genes = set()
-
-    # Collect all genes from datasets of this organism
-    for analysis_id, contrast_id in selected_contrasts:
-        if analysis_id in ri.analysis_info and ri.analysis_info[analysis_id].get('organism') == organism:
-            # Check DEG data
-            if analysis_id in ri.deg_data and contrast_id in ri.deg_data[analysis_id]:
-                deg_df = ri.deg_data[analysis_id][contrast_id]
-                if 'Gene' in deg_df.columns:
-                    organism_genes.update(deg_df['Gene'].tolist())
-
-            # Check CPM data
-            if analysis_id in ri.cpm_data:
-                cpm_df = ri.cpm_data[analysis_id]
-                if 'Gene' in cpm_df.columns:
-                    organism_genes.update(cpm_df['Gene'].tolist())
-
-    # Return only genes that are in the input list AND found in this organism's data
-    return [gene for gene in genes if gene in organism_genes]
+    """Filter genes to only include those found in datasets of a specific organism."""
+    return organism_utils.filter_genes_by_organism(
+        ri.deg_data, ri.cpm_data, ri.analysis_info, genes, organism, selected_contrasts
+    )
 
 
 @log_streamlit_function
 def filter_genes_by_organism_datasets(ri: ResultsIntegrator, genes: List[str], organism: str, selected_datasets: List[str]) -> List[str]:
-    """
-    Filter genes to only include those found in datasets of a specific organism (for datasets).
-
-    Args:
-        ri: ResultsIntegrator instance
-        genes: List of gene names to filter
-        organism: Target organism name
-        selected_datasets: List of dataset IDs for this organism
-
-    Returns:
-        List of genes that are present in the organism's datasets
-    """
-    organism_genes = set()
-
-    # Collect all genes from datasets of this organism
-    for analysis_id in selected_datasets:
-        if analysis_id in ri.analysis_info and ri.analysis_info[analysis_id].get('organism') == organism:
-            # Check CPM data (primary source for expression plots)
-            if analysis_id in ri.cpm_data:
-                cpm_df = ri.cpm_data[analysis_id]
-                if 'Gene' in cpm_df.columns:
-                    organism_genes.update(cpm_df['Gene'].tolist())
-
-    # Return only genes that are in the input list AND found in this organism's data
-    return [gene for gene in genes if gene in organism_genes]
+    """Filter genes to only include those found in datasets of a specific organism (for datasets)."""
+    return organism_utils.filter_genes_by_organism_datasets(
+        ri.cpm_data, ri.analysis_info, genes, organism, selected_datasets
+    )
 
 
 @log_streamlit_function
 def get_organism_display_name(organism: str) -> str:
-    """
-    Get a user-friendly display name for an organism.
-
-    Args:
-        organism: Scientific or common name of organism
-
-    Returns:
-        Cleaned display name for UI
-    """
-    if not organism or organism == 'Unknown':
-        return 'Unknown Species'
-
-    # Handle common organism name patterns
-    organism = organism.strip()
-
-    # Capitalize first letter of each word for better display
-    if len(organism.split()) <= 2:  # Scientific names typically have 1-2 words
-        return organism.title()
-    else:
-        return organism
+    """Get a user-friendly display name for an organism."""
+    return organism_utils.get_organism_display_name(organism)
 
 
 @log_streamlit_function
@@ -1485,7 +1330,6 @@ __all__ = [
     'get_all_genes_from_integrator',
     'cached_get_all_genes_from_integrator',
     'calculate_pagination_info',
-    'safe_rerun',
     'check_ai_generating',
     'cached_figure_creation',
     'load_environment',

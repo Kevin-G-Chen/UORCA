@@ -983,12 +983,6 @@ def _draw_heatmap(
 
 
 @log_streamlit_function
-def _display_comprehensive_filtering_info(ri: ResultsIntegrator, requested_genes: List[str], selected_contrasts: List[Tuple[str, str]]):
-    """Display comprehensive information about genes and contrasts removed from the heatmap."""
-    # This function is now integrated into the form validation and no longer displays separately
-    pass
-
-@log_streamlit_function
 def _display_filtered_elements_info(ri: ResultsIntegrator):
     """Display information about filtered genes and contrasts."""
     try:
@@ -1019,12 +1013,6 @@ def _display_heatmap_error_details(error: Exception):
     """Display detailed error information in an expandable section."""
     with st.expander("Heatmap Error Details", expanded=False):
         st.code(traceback.format_exc())
-
-
-def _build_repro_script() -> str:
-    """Return contents of a standalone script that reproduces the heatmap from CSV."""
-    # kept for backward compatibility but not used
-    return _build_repro_script_static()
 
 
 def _build_repro_script_static() -> str:
