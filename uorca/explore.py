@@ -296,7 +296,7 @@ def main(results_dir=None, port=8501, host="127.0.0.1", headless=False):
     # Get path to uorca_explorer.py
     current_dir = Path(__file__).parent
     project_root = current_dir.parent
-    explorer_script = project_root / "main_workflow" / "reporting" / "uorca_explorer.py"
+    explorer_script = current_dir / "gui" / "uorca_explorer.py"
 
     if not explorer_script.exists():
         print(f"Error: Could not find uorca_explorer.py at {explorer_script}")

@@ -1,7 +1,7 @@
 """Tests for gene_selection module."""
 import pytest
 import pandas as pd
-from core.gene_selection import (
+from main_workflow.reporting.core.gene_selection import (
     identify_frequent_degs,
     get_all_genes_from_cpm,
     get_available_genes_for_contrasts,

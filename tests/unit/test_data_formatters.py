@@ -1,7 +1,7 @@
 """Tests for data_formatters module."""
 import pytest
 import pandas as pd
-from core.data_formatters import (
+from main_workflow.reporting.core.data_formatters import (
     sort_by_geo_accession,
     create_contrast_table_data,
     create_dataset_info_table,

@@ -1,6 +1,6 @@
 """Tests for validation module."""
 import pytest
-from core.validation import (
+from main_workflow.reporting.core.validation import (
     validate_threshold_values,
     validate_gene_count,
     validate_custom_gene_list,

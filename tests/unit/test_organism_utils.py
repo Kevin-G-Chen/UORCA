@@ -1,6 +1,6 @@
 """Tests for organism_utils module."""
 import pytest
-from core.organism_utils import (
+from main_workflow.reporting.core.organism_utils import (
     group_datasets_by_organism,
     group_contrasts_by_organism,
     filter_genes_by_organism,

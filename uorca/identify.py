@@ -93,30 +93,19 @@ def main():
     else:
         print("⚡ ENTREZ_API_KEY detected - using faster rate limits")
     print("")
-    main_workflow_dir = project_root / "main_workflow"
-    dataset_id_script = main_workflow_dir / "dataset_identification" / "DatasetIdentification.py"
-
-    if not dataset_id_script.exists():
-        print(f"Error: Could not find DatasetIdentification.py at {dataset_id_script}")
-        sys.exit(1)
-
-    # Add main_workflow to path for imports
-    sys.path.insert(0, str(main_workflow_dir))
 
     # Change to project root for proper execution context
     original_cwd = os.getcwd()
     os.chdir(project_root)
 
     try:
-        # Import and run the main function from DatasetIdentification
-        from dataset_identification.DatasetIdentification import main as identify_main
+        # Import and run the main function from identification module
+        from uorca.identification.dataset_identification import main as identify_main
         identify_main()
 
     finally:
-        # Restore original directory and clean up path
+        # Restore original directory
         os.chdir(original_cwd)
-        if str(main_workflow_dir) in sys.path:
-            sys.path.remove(str(main_workflow_dir))
 
 # Re-export the main function
 __all__ = ["main"]
