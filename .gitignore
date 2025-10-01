@@ -74,6 +74,11 @@ docker-compose*.yml
 *.swp
 *.swo
 
+# Testing and coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
 # Jupyter
 .ipynb_checkpoints
 */.ipynb_checkpoints/*
@@ -101,3 +106,6 @@ notebooks/2_extract_data/GSE*_FASTQs/
 
 # Streamlit config
 main_workflow/reporting/.config/dataset_query.json
+
+# Test pages (development only, not for production)
+main_workflow/reporting/pages/
