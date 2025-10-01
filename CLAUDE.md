@@ -5,69 +5,63 @@
 
 ## Project Overview
 
-UORCA is a fully containerized, AI-powered workflow for automated RNA-seq analysis of public datasets from the Gene Expression Omnibus (GEO). It combines dataset discovery, batch processing, differential expression analysis, and interactive visualization with AI-powered interpretation.
+UORCA is a fully containerized, AI-powered workflow for automated RNA-seq analysis of public datasets from the Gene Expression Omnibus (GEO). It combines bioinformatics analysis with AI-driven dataset identification and interpretation.
 
-**Type**: Python CLI tool for bioinformatics/RNA-seq analysis
+**Type**: Bioinformatics CLI Tool + Streamlit Web Application
 **Primary Language**: Python 3.13+
 **Package Manager**: uv
+**Container Runtime**: Docker (local) / Singularity/Apptainer (HPC)
 
 ## Quick Start Commands
 
 ### Setup
 ```bash
-# Install dependencies
+# Clone and install
+git clone https://github.com/Kevin-G-Chen/UORCA.git
+cd UORCA
 uv sync
 
-# Install in development mode
-uv pip install -e .
+# Download Kallisto indices (required for RNA-seq)
+./download_kallisto_indices.sh human  # Or: human, mouse, dog, monkey, zebrafish
 
-# Configure environment variables (required)
+# Setup environment variables
 cp .env.example .env
-# Edit .env with your ENTREZ_EMAIL, OPENAI_API_KEY, and optionally ENTREZ_API_KEY
+# Edit .env with your API keys (ENTREZ_EMAIL, OPENAI_API_KEY, ENTREZ_API_KEY)
 ```
 
 ### Development
 ```bash
-# The main CLI provides three subcommands:
+# Start UORCA Explorer (Streamlit web UI)
+uv run uorca explore  # Runs on port 8501
 
-# 1. Identify relevant datasets
-uv run uorca identify -q "cancer stem cell differentiation" -o identification_results
+# For development with auto-reload in background:
+# Use Ctrl+b in Claude Code to run in background
+uv run streamlit run main_workflow/reporting/uorca_explorer.py --server.runOnSave true
 
-# 2. Run RNA-seq analysis pipeline
-uv run uorca run local --input identification_results/ --output_dir ../UORCA_results --max_workers 4
-# OR for HPC clusters:
-uv run uorca run slurm --input identification_results/ --output_dir ../UORCA_results
-
-# 3. Explore results interactively
-uv run uorca explore ../UORCA_results --port 8501
-# Opens web browser automatically. For remote access via SSH:
-# On HPC: uv run uorca explore ../UORCA_results --port 8501
-# On laptop: ssh -L 8000:127.0.0.1:8501 username@hpc_server
-# Browser: http://127.0.0.1:8000
+# Run specific workflow steps
+uv run uorca identify -q "your research question"
+uv run uorca run local --input datasets.csv --output results/
 ```
 
 ### Testing
 ```bash
-# Run all tests with coverage
+# Run all tests
 uv run pytest
 
 # Run specific test file
-uv run pytest main_workflow/reporting/tests/unit/test_gene_selection.py
+uv run pytest main_workflow/reporting/tests/test_task_manager.py
 
-# Run specific test markers
-uv run pytest -m unit        # Unit tests only
-uv run pytest -m integration # Integration tests only
-uv run pytest -m "not slow"  # Exclude slow tests
-
-# Run with verbose output
-uv run pytest -v
-
-# Run with coverage report
+# Run with coverage
 uv run pytest --cov=main_workflow/reporting/core --cov-report=html
-# View coverage: open htmlcov/index.html
+
+# Run only unit tests
+uv run pytest -m unit
+
+# Run only integration tests
+uv run pytest -m integration
 
 # Watch mode (requires pytest-watch)
-uv run pytest --watch
+uv run ptw
 ```
 
 ### Type Checking
@@ -75,327 +69,373 @@ uv run pytest --watch
 # Full type check
 uv run pyright
 
-# Check specific files/directories
-uv run pyright uorca/
-uv run pyright main_workflow/agents/
+# Check specific module
+uv run pyright main_workflow/reporting/core/
 
-# Verbose output for debugging
-uv run pyright --verbose
-
-# Watch mode
+# Watch mode (if available)
 uv run pyright --watch
 ```
 
 ### Code Quality
 ```bash
-# Run full quality check (recommended before committing)
-uv run pytest && uv run pyright
+# Linting (if ruff/black configured)
+# Currently: Manual code review recommended
 
-# Note: No linting/formatting tools currently configured
-# Consider adding ruff or black for future code formatting
+# Format check
+# Currently: Follow PEP 8 conventions
+
+# Full quality check before commit
+uv run pytest && uv run pyright
 ```
 
 ### Build
 ```bash
-# Install package locally
-uv pip install -e .
+# No build step required for Python package
+# For container:
+docker pull kevingchen/uorca:0.1.0
 
-# Build Docker container
-docker build -t uorca:latest .
-
-# Pull Singularity/Apptainer container (for HPC)
+# For Singularity/Apptainer (HPC):
 singularity pull uorca_0.1.0.sif docker://kevingchen/uorca:0.1.0
-# OR
-apptainer pull uorca_0.1.0.sif docker://kevingchen/uorca:0.1.0
 ```
 
 ## Code Conventions
 
 ### File Organization
-- Main package code: `uorca/` (CLI interface, batch processing)
-- Core workflow: `main_workflow/` (agents, dataset identification, reporting)
-- Tests: `main_workflow/reporting/tests/` organized into `unit/` and `integration/`
-- Prompts: `main_workflow/prompts/` (AI agent system prompts)
-- Configuration: `pyproject.toml`, `pytest.ini`, `.env`
-- Sample data: `sample_inputs/` (example datasets for testing)
+- **Main modules**: `uorca/` - CLI commands (identify, run, explore)
+- **Batch processing**: `uorca/batch/` - SLURM and local execution
+- **Web interface**: `main_workflow/reporting/` - Streamlit application
+- **Streamlit tabs**: `main_workflow/reporting/streamlit_tabs/` - UI components
+- **Core utilities**: `main_workflow/reporting/core/` - Shared utilities (TaskManager, validators, formatters)
+- **Tests**: `main_workflow/reporting/tests/` - Unit and integration tests
+- **Dataset identification**: `main_workflow/dataset_identification/` - GEO search and AI ranking
 
 ### Naming Conventions
-- Files and modules: `snake_case` (e.g., `gene_selection.py`, `ai_agent_factory.py`)
-- Functions and methods: `snake_case` (e.g., `identify_frequent_degs()`, `fetch_geo_metadata()`)
-- Classes: `PascalCase` (e.g., `ExtractionContext`, `DatasetIdentification`)
-- Constants: `UPPER_SNAKE_CASE` (e.g., `ENTREZ_EMAIL`, `DEFAULT_THRESHOLD`)
-- Test files: `test_*.py` (e.g., `test_gene_selection.py`)
-- Test functions: `test_*` (e.g., `test_identify_frequent_degs()`)
+- **Files**: snake_case.py (e.g., `task_manager.py`, `ai_assistant_tab.py`)
+- **Functions**: snake_case (e.g., `submit_task`, `get_task_status`)
+- **Classes**: PascalCase (e.g., `TaskManager`, `BatchProcessor`)
+- **Constants**: UPPER_SNAKE_CASE (e.g., `ENTREZ_EMAIL`, `MAX_WORKERS`)
+- **Enums**: PascalCase with UPPER values (e.g., `TaskStatus.PENDING`)
 
 ### Import Patterns
 ```python
-# Standard library imports first
-import asyncio
-import logging
+# Standard library first
+import os
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional, Dict, Any
 
-# Third-party imports second
+# Third-party packages
+import streamlit as st
 import pandas as pd
-import pytest
-from pydantic_ai import Agent, RunContext
+from dotenv import load_dotenv
 
-# Local imports last (relative or absolute)
-from shared import ExtractionContext, RNAseqCoreContext
-from core.gene_selection import identify_frequent_degs
+# Local imports
+from uorca.batch.local import LocalBatchProcessor
+from main_workflow.reporting.core import TaskManager, TaskStatus
 ```
 
 ### Error Handling
 ```python
-# Use logging extensively
-logger = logging.getLogger(__name__)
-
+# Use specific exceptions with clear messages
 try:
-    result = risky_operation()
-    logger.info("Operation successful")
-except SpecificError as e:
-    logger.error(f"Operation failed: {e}")
-    raise
+    result = process_dataset(geo_id)
+except FileNotFoundError as e:
+    st.error(f"Dataset files not found: {e}")
+    return None
+except ValueError as e:
+    st.error(f"Invalid dataset format: {e}")
+    return None
 
-# For AI agents, return structured error messages
-return f"Error: {error_message}. Please check the logs."
+# For background tasks, capture full traceback
+except Exception as e:
+    error_msg = f"{type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+    task_manager.update_status(task_id, TaskStatus.FAILED, error=error_msg)
 ```
 
 ### Testing Patterns
-- Test file naming: `test_<module_name>.py`
-- Test organization: Group related tests in test classes or use descriptive function names
-- Fixtures: Define in `conftest.py` for shared test data
-- Assertion style: Use pytest's native assertions (`assert x == y`)
-- Markers: Use `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.slow`
-- Coverage target: `main_workflow/reporting/core` directory
-
-```python
-# Example test structure
-def test_function_name_describes_behavior(sample_fixture):
-    """Test description explaining what is being tested."""
-    result = function_under_test(sample_fixture)
-
-    assert result == expected_value
-    assert isinstance(result, ExpectedType)
-```
+- **Test file naming**: `test_*.py` (e.g., `test_task_manager.py`)
+- **Test organization**: pytest functions with descriptive names
+- **Fixtures**: Use pytest fixtures for setup/teardown (e.g., `temp_db`, `mock_api`)
+- **Mocking**: Use `pytest-mock` or `unittest.mock` for API calls
+- **Markers**: `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.slow`
+- **Coverage target**: >90% for core modules, >80% overall
 
 ## Development Workflow
 
-### Recommended Development Flow
-1. **Understand the task**: Read relevant code and documentation
-2. **Plan the implementation**: Break down into smaller steps
-3. **Write tests first** (TDD recommended for core functionality)
-4. **Implement the feature**: Follow existing code patterns
-5. **Run tests frequently**: `uv run pytest` during development
-6. **Type check**: `uv run pyright` to catch type errors early
-7. **Test manually** if applicable (e.g., CLI commands, web interface)
+### Current Focus: No-CLI UORCA Implementation
+The project is currently implementing a GUI-first experience to eliminate command-line requirements. See `docs/plans/no_cli_uorca_implementation.md` and `todos/no-cli-uorca-implementation-todos.md`.
+
+**Implementation Phases**:
+1. **Phase 1A**: Background Task System (TaskManager with SQLite) - IN PROGRESS
+2. **Phase 1B**: Dataset Identification Tab
+3. **Phase 1C**: Pipeline Execution Tab
+4. **Phase 2A**: Batch Launcher Scripts (Windows/macOS/Linux)
+5. **Phase 2B**: Native Desktop App (Optional)
+6. **Phase 3**: Polish & Testing
+
+### Recommended Claude Code Commands
+1. **Research**: Use `/research_codebase` to understand existing patterns
+2. **Planning**: Use `/create_plan` for complex features
+3. **Implementation**: Use `/implement_plan` to execute approved plans
+4. **Quick checks**: Use `/check` during development
+5. **Validation**: Use `/validate_plan` for comprehensive verification
 
 ### Git Workflow
-- Main branch: `master`
-- Feature branches: Use descriptive names (e.g., `ease-of-use`, `add-feature-x`)
-- Commit messages: Clear, concise descriptions of changes
-- Before committing: Run tests and type checking
+- **Branch naming**: `feature/task-description` or `fix/issue-description`
+- **Commit messages**: Descriptive, imperative mood (e.g., "Add TaskManager with SQLite persistence")
+- **PR requirements**: All tests pass, type checking clean, manual testing completed
 
 ### Before Committing
 ```bash
-# Always run these before committing:
-uv run pytest              # Ensure all tests pass
-uv run pyright             # Ensure no type errors
+# Always run before committing:
+uv run pytest                    # All tests must pass
+uv run pyright                   # No type errors
+# Manual testing for GUI changes
 ```
 
 ## Checkpoint Strategy
 
-UORCA uses a checkpoint system to track workflow progress:
-- Checkpoints defined in `shared/__init__.py`
-- Each major step (extraction, metadata, analysis) has a checkpoint
-- Status values: `NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, `FAILED`
-- Checkpoints enable resume/recovery from failures
+When implementing complex changes (especially during `/implement_plan`):
+1. **Before each phase**: Create checkpoint with descriptive name (e.g., "Completed Phase 1A - TaskManager")
+2. **Test incrementally**: Verify each component works before moving to next
+3. **Commit working states**: Create atomic commits for each completed task
+4. **Use /rewind if needed**: Rollback to last known good state
 
-When implementing changes:
-1. Understand which checkpoints are affected
-2. Update checkpoint status appropriately
-3. Test checkpoint progression with sample datasets
+Example checkpoint workflow for Phase 1A:
+```bash
+# After completing TaskManager core
+git add main_workflow/reporting/core/task_manager.py
+git commit -m "feat: implement TaskManager core class with SQLite persistence"
+
+# After tests pass
+git add main_workflow/reporting/tests/test_task_manager.py
+git commit -m "test: add unit tests for TaskManager"
+```
 
 ## Common Tasks
 
-### Adding a New CLI Command
-1. Define command parser in `uorca/cli.py`
-2. Create command handler function (e.g., in `uorca/<command>.py`)
-3. Add command logic using existing patterns
-4. Test with `uv run uorca <command> --help`
-5. Add tests for the command logic
-
-### Adding a New Agent Tool
-1. Define tool function with `@agent.tool` decorator
-2. Use `@log_tool` for automatic logging
-3. Update context with results using `ctx.deps`
-4. Return clear success/error messages
-5. Test tool independently if possible
-
 ### Adding a New Streamlit Tab
-1. Create new file in `main_workflow/reporting/streamlit_tabs/`
-2. Define tab rendering function
-3. Use fragment isolation (`@st.fragment`) for performance
-4. Import and integrate in `uorca_explorer.py`
-5. Test with `uv run uorca explore <results_dir>`
+1. Create tab file: `main_workflow/reporting/streamlit_tabs/your_tab.py`
+2. Implement `show_your_tab()` function
+3. Import in `streamlit_tabs/__init__.py`
+4. Add to tab list in `main_workflow/reporting/uorca_explorer.py`
+5. Test manually: `uv run uorca explore`
 
-### Running Tests for Specific Functionality
-```bash
-# Test gene selection module
-uv run pytest main_workflow/reporting/tests/unit/test_gene_selection.py
+### Testing Background Tasks (TaskManager)
+```python
+# Use temporary database for testing
+import tempfile
+from main_workflow.reporting.core import TaskManager
 
-# Test with coverage for specific module
-uv run pytest main_workflow/reporting/tests/unit/test_gene_selection.py --cov=core.gene_selection
+with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as f:
+    db_path = f.name
 
-# Integration tests only
-uv run pytest -m integration
+manager = TaskManager(db_path=db_path)
+task_id = manager.submit_task("test_1", "test", my_function, {"param": "value"})
+
+# Wait and verify
+import time
+time.sleep(0.5)
+status = manager.get_task_status(task_id)
+assert status["status"] == TaskStatus.COMPLETED
 ```
 
-### Debugging
-- Log files: `logs/` directory (AI tool calls, dataset identification, etc.)
-- Streamlit logs: Check terminal output when running `uv run uorca explore`
-- Analysis logs: In output directory under `<GSE_ID>/logs/`
-- Python debugger: Use `breakpoint()` for interactive debugging
-- Verbose mode: Use `-v` flag for identify command
+### Running Pipeline Locally
+```bash
+# Small test run (2-3 datasets)
+uv run uorca run local \
+  --input sample_inputs/ \
+  --output_dir test_results/ \
+  --max_workers 2 \
+  --max_storage_gb 50
+
+# Monitor progress
+uv run uorca explore test_results/
+```
+
+### Debugging Streamlit Issues
+```bash
+# Run with debug logging
+uv run streamlit run main_workflow/reporting/uorca_explorer.py --logger.level=debug
+
+# Clear cache
+rm -rf ~/.streamlit/cache
+
+# Check port conflicts
+lsof -i :8501
+```
 
 ## Gotchas & Known Issues
 
-### Environment Variables Required
-**Problem**: UORCA requires `ENTREZ_EMAIL` and `OPENAI_API_KEY` to function.
-**Solution**: Copy `.env.example` to `.env` and fill in your credentials. Without these, dataset identification and analysis will fail.
+### Issue 1: SQLite Thread Safety
+**Problem**: SQLite connections created in one thread cannot be used in another
+**Solution**: Always use `check_same_thread=False` in sqlite3.connect() calls
+```python
+conn = sqlite3.connect(self.db_path, check_same_thread=False)
+```
 
-### NCBI Rate Limiting
-**Problem**: NCBI API has rate limits (3 requests/second without API key).
-**Solution**: Get a free NCBI API key from https://www.ncbi.nlm.nih.gov/account/settings/ and add as `ENTREZ_API_KEY` in `.env`. This increases the limit to 10 requests/second.
+### Issue 2: Streamlit Session State Persistence
+**Problem**: Session state is lost on page rerun
+**Solution**: Use TaskManager SQLite persistence for long-running tasks, not session_state
+```python
+# DON'T: Store task status only in session_state
+st.session_state.task_status = status
 
-### Container vs Local Execution
-**Problem**: Docker requires root privileges on HPC clusters, causing security issues.
-**Solution**: Use Singularity/Apptainer instead (`singularity pull` or `apptainer pull`). These run without root and integrate with SLURM.
+# DO: Store in TaskManager, retrieve on rerun
+task_manager = TaskManager()
+status = task_manager.get_task_status(task_id)
+```
 
-### Test Coverage Target
-**Problem**: Coverage is only tracked for `main_workflow/reporting/core`.
-**Solution**: This is intentional to focus on core business logic. Expand coverage configuration in `pytest.ini` if needed.
+### Issue 3: Environment Variables in Docker
+**Problem**: .env file not accessible inside Docker containers
+**Solution**: Pass environment variables explicitly:
+```bash
+docker run -e ENTREZ_EMAIL=$ENTREZ_EMAIL -e OPENAI_API_KEY=$OPENAI_API_KEY ...
+```
 
-### Hardcoded Version Display
-**Problem**: The UORCA Explorer summary tab displays version `1.0` (hardcoded).
-**Solution**: Update version in `main_workflow/reporting/streamlit_tabs/uorca_summary_tab.py` if the app version changes.
+### Issue 4: Python Threading Limitations
+**Problem**: Cannot force-kill Python threads
+**Solution**: Use cooperative cancellation with progress_callback checks
+```python
+def task_func(progress_callback=None):
+    for i in range(100):
+        if progress_callback:
+            cancelled = progress_callback(i/100, f"Step {i}")
+            if cancelled:  # Check cancellation signal
+                return None
+```
+
+### Issue 5: Large File Handling in Streamlit
+**Problem**: Uploading large CSV files can timeout
+**Solution**: Stream processing or save to temp directory:
+```python
+temp_dir = Path.home() / ".uorca" / "temp"
+temp_dir.mkdir(parents=True, exist_ok=True)
+temp_csv = temp_dir / f"upload_{timestamp}.csv"
+temp_csv.write_bytes(uploaded_file.read())
+```
 
 ## Performance Considerations
 
-- **Caching**: Streamlit app uses extensive caching for expensive operations (gene selection, clustering)
-- **Fragment isolation**: Use `@st.fragment` to update only parts of the Streamlit UI
-- **Batch processing**: Use appropriate `--max_workers` for local execution based on CPU cores
-- **SLURM resource management**: Configure in `slurm_config.yaml` for optimal HPC utilization
-- **Dataset size**: Large datasets (>100 samples) may require more memory for analysis
+- **Database queries**: Keep SQLite queries <50ms by using indexes
+- **Streamlit reruns**: Minimize with `@st.cache_data` and `@st.cache_resource`
+- **Progress updates**: Limit to 1 update per second to avoid UI lag
+- **Memory usage**: Monitor with `psutil` during long pipeline runs
+- **Docker storage**: Set `container_tmpfs_gb` appropriately for dataset size
 
 ## Security Notes
 
-- **Never commit `.env` file**: Contains API keys and credentials
-- **API key protection**: Keys should never appear in logs or error messages
-- **Container security**: Singularity/Apptainer preferred over Docker for HPC (no root required)
-- **Data privacy**: GEO data is public, but be mindful of institutional data policies
+- **API Keys**: Never commit .env file, always use .env.example template
+- **Credentials**: Store in environment variables, not hardcoded
+- **Docker**: Use read-only mounts where possible
+- **Singularity/Apptainer**: Preferred for HPC (no root privileges required)
+- **Input validation**: Always validate user-provided paths and parameters
 
 ## External Dependencies
 
 ### Required Services
-- **NCBI Entrez API**: For GEO/SRA metadata retrieval (requires `ENTREZ_EMAIL`)
-- **OpenAI API**: For AI-powered dataset identification and analysis (requires `OPENAI_API_KEY`)
-
-### Required Tools (for full pipeline)
-- **Kallisto**: RNA-seq quantification (download indices with `./download_kallisto_indices.sh`)
-- **R**: Differential expression analysis (with edgeR, limma, BiocManager)
-- **SRA Toolkit**: FASTQ download (`prefetch`, `fasterq-dump`)
+- **NCBI Entrez**: Public biological database API (requires email, API key optional)
+- **OpenAI API**: AI-powered dataset analysis (requires API key)
+- **Docker/Singularity**: Container runtime for bioinformatics tools
+- **GEO/SRA**: Source databases for RNA-seq data (public, no auth needed)
 
 ### Environment Variables
 ```bash
 # Required
-ENTREZ_EMAIL=your.email@institution.edu           # Your email (NCBI requirement)
-OPENAI_API_KEY=sk-proj-your-key-here              # OpenAI API key
+ENTREZ_EMAIL=          # Your email for NCBI API (required by NCBI guidelines)
+OPENAI_API_KEY=        # OpenAI API key for AI features (required)
 
-# Optional but recommended
-ENTREZ_API_KEY=your-ncbi-api-key                  # NCBI API key (10x faster queries)
+# Optional
+ENTREZ_API_KEY=        # NCBI API key for 10x faster queries (free, highly recommended)
 ```
 
 ## Escalation Rules
 
 When to stop and ask for help:
-- [ ] Changes to AI agent system prompts (in `main_workflow/prompts/`)
-- [ ] Modifications to checkpoint system or workflow orchestration
-- [ ] Changes to R analysis scripts (`additional_scripts/RNAseq.R`)
-- [ ] SLURM configuration or resource allocation changes
-- [ ] Database schema or metadata format changes
-- [ ] Container configuration changes affecting production deployments
-- [ ] Breaking changes to CLI interface or API contracts
-- [ ] Security-sensitive code (API key handling, authentication)
+- [ ] Changes to bioinformatics algorithms (R scripts, Kallisto parameters)
+- [ ] Database schema changes (TaskManager SQLite schema)
+- [ ] Docker container modifications (kevingchen/uorca:0.1.0)
+- [ ] SLURM job submission templates
+- [ ] Changes affecting CLI backwards compatibility
+- [ ] Security-sensitive code (API key handling, container security)
 
 ## Project-Specific AI Instructions
 
 ### Autonomous Operation
-Safe to run without approval:
-- Running tests (`uv run pytest`)
-- Type checking (`uv run pyright`)
-- Reading code files
-- Searching codebase
-- Running CLI commands with test data from `sample_inputs/`
+**Safe to run**:
+- Unit tests: `uv run pytest -m unit`
+- Type checking: `uv run pyright`
+- Streamlit dev server: `uv run uorca explore` (in background with Ctrl+b)
+- Small test pipelines: `uv run uorca run local` with 1-2 datasets
 
-Requires user approval:
-- Creating or modifying `.env` file
-- Running analysis on real GEO datasets (may incur API costs)
-- Modifying system prompts for AI agents
-- Making changes to SLURM configuration
-- Deploying containers
+**Requires approval**:
+- Large pipeline runs (>5 datasets)
+- Docker container builds
+- SLURM job submissions
+- Changes to production data directories
+- Git force pushes
 
-### Code Analysis Tips
-- Start with `AGENTS.md` for navigation guidance
-- Core business logic is in `main_workflow/reporting/core/`
-- AI agent definitions are in `main_workflow/agents/`
-- Streamlit UI code is modular in `streamlit_tabs/`
-- Use grep/search for specific functionality (codebase is well-organized)
+**Background tasks during development**:
+- Streamlit server: `uv run uorca explore` (Ctrl+b)
+- Test watcher: `uv run ptw` (if installed)
+- Type checker watch: `uv run pyright --watch` (if available)
 
-### Testing Strategy
-- Focus tests on `main_workflow/reporting/core/` modules
-- Use fixtures in `conftest.py` for common test data
-- Integration tests may be slow (use `-m "not slow"` to skip)
-- Coverage reports help identify untested code paths
+### Extended Thinking
+Use **extended thinking** for:
+- Complex bioinformatics algorithm debugging
+- Multi-phase implementation planning (e.g., GUI integration)
+- Performance optimization decisions
+- Architectural design choices
+- Integration between CLI, GUI, and batch systems
+
+Use **regular thinking** for:
+- Straightforward bug fixes
+- Adding new test cases
+- Documentation updates
+- Simple UI tweaks
+
+### Memory Tool Usage
+Cache research findings in:
+- `memory/uorca/research/` - Deep dives into modules and patterns
+- `memory/uorca/plans/` - Implementation plans and strategies
+- `memory/uorca/architecture/` - System design decisions
+- `memory/uorca/debugging/` - Common issues and solutions
 
 ## Resources
 
-- **GitHub Repository**: https://github.com/Kevin-G-Chen/UORCA
-- **GEO Database**: https://www.ncbi.nlm.nih.gov/geo/
-- **Kallisto Documentation**: https://pachterlab.github.io/kallisto/
-- **pydantic-ai Documentation**: https://ai.pydantic.dev/
-- **Streamlit Documentation**: https://docs.streamlit.io/
+- **Main Repository**: https://github.com/Kevin-G-Chen/UORCA
+- **Implementation Plan**: `docs/plans/no_cli_uorca_implementation.md`
+- **TODO List**: `todos/no-cli-uorca-implementation-todos.md`
+- **Streamlit Docs**: https://docs.streamlit.io
+- **OpenAI API**: https://platform.openai.com/docs
+- **NCBI Entrez**: https://www.ncbi.nlm.nih.gov/books/NBK25501/
 
-## Key Architecture Decisions
+## Testing Strategy
 
-### Why pydantic-ai for agents?
-- Type-safe AI interactions with structured outputs
-- Built-in support for tools and context passing
-- Excellent logging and debugging capabilities
-- MCP server integration for advanced tool usage
+### Unit Tests
+- **Location**: `main_workflow/reporting/tests/unit/`
+- **Pattern**: Test individual functions and classes in isolation
+- **Mocking**: Mock external APIs, file I/O, database operations
+- **Speed**: <5 seconds total runtime
+- **Coverage**: >90% for core modules
 
-### Why Streamlit for UI?
-- Rapid prototyping of interactive interfaces
-- Built-in caching and state management
-- Easy deployment (single Python file)
-- Great for scientific/data visualization apps
+### Integration Tests
+- **Location**: `main_workflow/reporting/tests/integration/`
+- **Pattern**: Test complete workflows with mocked external services
+- **Examples**: Full dataset identification, pipeline execution with test data
+- **Speed**: <30 seconds total runtime
+- **Coverage**: All critical user paths
 
-### Why uv for package management?
-- Fast, reliable dependency resolution
-- Modern Python tooling with great developer experience
-- Virtual environment management built-in
-- Compatible with standard Python packaging
-
-### Why Singularity/Apptainer for HPC?
-- Rootless container execution (security requirement for HPC)
-- Native SLURM integration
-- Better performance on HPC storage systems
-- Converts Docker images seamlessly
+### Manual Testing
+- **GUI changes**: Always test in browser before committing
+- **Background tasks**: Verify progress updates and cancellation
+- **Cross-platform**: Test launchers on Windows/macOS/Linux when applicable
+- **Long-running**: Validate multi-hour pipeline runs don't crash
 
 ## Updates
 
 - 2025-10-01: Initial CLAUDE.md generated by Claude Code
-- Track major changes here as the project evolves
+- 2025-10-01: Added no-CLI implementation context and TaskManager patterns
 
 ---
 
