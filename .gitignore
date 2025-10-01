@@ -109,3 +109,5 @@ main_workflow/reporting/.config/dataset_query.json
 
 # Test pages (development only, not for production)
 main_workflow/reporting/pages/
+# Documentation (implementation plans, research notes)
+docs/
