@@ -282,7 +282,6 @@ def run_identification(
 
     try:
         from uorca.identify import main as identify_main
-        import sys
 
         if progress_callback:
             progress_callback(0.1, "Starting dataset identification...")
