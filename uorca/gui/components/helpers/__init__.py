@@ -226,14 +226,12 @@ def add_directory_to_zip(zip_file: zipfile.ZipFile, source_dir: str, archive_dir
 
 def _repo_paths_for_r() -> Dict[str, Path]:
     here = Path(__file__).resolve()
-    reporting_dir = here.parents[2]
-    main_workflow_dir = reporting_dir.parent
-    addl_scripts = main_workflow_dir / "additional_scripts"
-    repo_root = main_workflow_dir.parent
+    # Navigate to project root: uorca/gui/components/helpers -> uorca/gui -> uorca -> root
+    repo_root = here.parents[3]
+    gui_dir = here.parents[2]  # uorca/gui
     return {
-        "reporting_dir": reporting_dir,
-        "main_workflow_dir": main_workflow_dir,
-        "rnaseq_r": addl_scripts / "RNAseq.R",
+        "gui_dir": gui_dir,
+        "rnaseq_r": repo_root / "scripts" / "RNAseq.R",
         "repo_root": repo_root,
     }
 

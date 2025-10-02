@@ -299,10 +299,9 @@ class SlurmBatchProcessor(BatchProcessor):
         Returns:
             Generated script content
         """
-        # Find template directory
+        # Find template directory (now in uorca/batch/templates/)
         current_dir = Path(__file__).parent
-        project_root = current_dir.parent.parent
-        template_dir = project_root / "main_workflow" / "run_helpers"
+        template_dir = current_dir / "templates"
 
         if not template_dir.exists():
             raise FileNotFoundError(f"Template directory not found: {template_dir}")

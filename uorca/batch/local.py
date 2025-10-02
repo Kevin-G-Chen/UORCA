@@ -131,7 +131,7 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         # Use the specified Docker image and run command
         cmd += [
             docker_image,
-            'python', 'main_workflow/master.py',
+            'uv', 'run', 'python', 'uorca/analysis/master.py',
             '--accession', accession,
             '--output_dir', docker_output_dir,
             '--resource_dir', docker_resource_dir

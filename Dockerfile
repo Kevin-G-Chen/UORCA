@@ -77,9 +77,8 @@ ENV PATH="/workspace/.venv/bin:${PATH}"
 ENV VIRTUAL_ENV="/workspace/.venv"
 ENV UV_NO_SYNC=1
 
-# Copy project code
+# Copy project code (all migrated into uorca/)
 COPY uorca/ ./uorca/
-COPY main_workflow/ ./main_workflow/
 
 # Install the UORCA package in development mode so entry points are available
 RUN uv pip install -e .

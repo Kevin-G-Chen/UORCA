@@ -2,7 +2,7 @@
 Ortholog Mapper Module for UORCA Explorer using a local CSV.
 
 This module maps genes between species using a precomputed mammalian
-orthologues CSV located at main_workflow/reporting/mammalian_orthologues.csv.
+orthologues CSV located at data/mammalian_orthologues.csv.
 It replaces network-based lookups with fast, cached local lookups.
 """
 
@@ -12,12 +12,13 @@ from typing import List, Dict, Tuple, Optional, Any
 import os
 import pandas as pd
 import streamlit as st
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Path to the orthologues CSV (relative to this file location)
-_HERE = os.path.dirname(os.path.abspath(__file__))
-ORTHOLOG_CSV_PATH = os.path.join(_HERE, "mammalian_orthologues.csv")
+# Path to the orthologues CSV (in project data directory)
+_PROJECT_ROOT = Path(__file__).parent.parent.parent
+ORTHOLOG_CSV_PATH = str(_PROJECT_ROOT / "data" / "mammalian_orthologues.csv")
 
 # Map scientific/common names (as found in analysis_info.json) to CSV species base names
 # CSV species base names correspond to the prefixes before "_Symbol" in the CSV header

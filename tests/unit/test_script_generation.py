@@ -1,6 +1,6 @@
 """Tests for script_generation module."""
 import pytest
-from main_workflow.reporting.core.script_generation import build_repro_script, build_readme_text
+from uorca.core.script_generation import build_repro_script, build_readme_text
 
 
 def test_build_repro_script_returns_string():

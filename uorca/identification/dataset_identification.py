@@ -207,13 +207,22 @@ for name in ("openai", "openai._base_client", "httpx"):
     logging.getLogger(name).setLevel(logging.WARNING)
 
 def load_prompt(file_path: str) -> str:
-    """Load prompt from file."""
-    return Path(file_path).read_text().strip()
+    """Load prompt from file. Supports both relative paths from module and absolute paths."""
+    prompt_path = Path(file_path)
+    # If it's a relative path starting with 'prompts/', resolve relative to this module
+    if not prompt_path.is_absolute() and str(prompt_path).startswith('prompts/'):
+        # Extract just the filename from prompts/dataset_identification/file.txt -> file.txt
+        filename = prompt_path.name
+        # Prompts are now in uorca/identification/prompts/
+        module_dir = Path(__file__).parent
+        prompt_path = module_dir / "prompts" / filename
+    return prompt_path.read_text().strip()
 
 # Query config management for Streamlit integration
 def save_query_config(query: str) -> None:
     """Save the dataset identification query to a config file for Streamlit app."""
-    config_dir = Path("main_workflow/reporting/.config")
+    # Config is now in uorca/config/
+    config_dir = Path(__file__).parent.parent / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
 
     config_file = config_dir / "dataset_query.json"
@@ -227,7 +236,8 @@ def save_query_config(query: str) -> None:
 
 def load_query_config() -> Optional[str]:
     """Load the dataset identification query from config file."""
-    config_file = Path("main_workflow/reporting/.config/dataset_query.json")
+    # Config is now in uorca/config/
+    config_file = Path(__file__).parent.parent / "config" / "dataset_query.json"
 
     if config_file.exists():
         try:
@@ -265,7 +275,7 @@ def call_openai_json(prompt: str, user_input: str, response_format: BaseModel, m
 
 def extract_terms(research_query: str, model: str = "gpt-5-mini") -> ExtractedTerms:
     """Extract search terms from research query."""
-    prompt = load_prompt("./main_workflow/prompts/dataset_identification/extract_terms.txt")
+    prompt = load_prompt("prompts/dataset_identification/extract_terms.txt")
     return call_openai_json(prompt, research_query, ExtractedTerms, model)
 
 def perform_search(term: str, max_results: int = 2000) -> List[str]:
@@ -539,7 +549,7 @@ async def assess_subbatch(df: pd.DataFrame, query: str, schema, key: str, rep: i
                     "Summary": row.get('Summary', '')
                 })
 
-            prompt = load_prompt("./main_workflow/prompts/dataset_identification/assess_relevance.txt")
+            prompt = load_prompt("prompts/dataset_identification/assess_relevance.txt")
             user_input = f"Research Query: {query}\n\nDatasets:\n{json.dumps(assessment_data, indent=2)}"
 
             assessments = call_openai_json(prompt, user_input, Assessments, model)

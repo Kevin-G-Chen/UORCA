@@ -1,0 +1,24 @@
+{
+  "ai_agent": {
+    "model": "gpt-5-mini",
+    "temperature": 1,
+    "request_limit": 150,
+    "analysis_timeout": 1200
+  },
+  "contrast_relevance_with_selection": {
+    "model": "gpt-5-mini",
+    "temperature": 1,
+    "repeats": 3,
+    "batch_size": 100,
+    "parallel_jobs": 4
+  },
+  "ui_settings": {
+    "default_lfc_threshold": 1.0,
+    "default_p_threshold": 0.05,
+    "max_genes_display": 50
+  },
+  "mcp_server": {
+    "startup_timeout": 180,
+    "max_retries": 3
+  }
+}

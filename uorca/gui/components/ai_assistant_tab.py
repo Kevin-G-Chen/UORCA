@@ -147,7 +147,9 @@ def load_query_config(results_dir: Optional[str] = None) -> Optional[str]:
                 pass
 
     # Fallback to original config file approach
-    config_file_path = "config/dataset_query.json"
+    # Config is now in uorca/config/
+    from pathlib import Path
+    config_file_path = Path(__file__).parent.parent.parent / "config" / "dataset_query.json"
 
     try:
         if os.path.exists(config_file_path):

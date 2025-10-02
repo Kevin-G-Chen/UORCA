@@ -27,7 +27,7 @@ def _load_research_query(results_dir: Optional[str]) -> Optional[str]:
 
     Priority:
       1) <results_dir>/research_question.json (key: "research_question")
-      2) main_workflow/reporting/.config/dataset_query.json (key: "query")
+      2) uorca/config/dataset_query.json (key: "query")
     """
     # 1) results_dir/research_question.json
     if results_dir:
@@ -41,8 +41,8 @@ def _load_research_query(results_dir: Optional[str]) -> Optional[str]:
             except Exception:
                 pass
 
-    # 2) repository config fallback
-    p2 = Path("main_workflow/reporting/.config/dataset_query.json")
+    # 2) repository config fallback (now in uorca/config/)
+    p2 = Path(__file__).parent.parent.parent / "config" / "dataset_query.json"
     if p2.exists():
         try:
             data = json.loads(p2.read_text())

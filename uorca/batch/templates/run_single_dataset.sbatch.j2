@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task={{ cpus_per_task }}
+#SBATCH --mem={{ memory }}
+#SBATCH --partition={{ partition }}
+#SBATCH --constraint="{{ constraint }}"
+#SBATCH -t {{ time_limit }}
+#SBATCH -o {{ logs_dir }}/run_{{ accession }}.out
+#SBATCH -e {{ logs_dir }}/run_{{ accession }}.err
+
+{% if container_engine == "apptainer" %}
+module load apptainer
+
+TEMP_DIR=$(pwd)/tmp_apptainer_{{ accession }}
+mkdir -p ${TEMP_DIR}
+
+# Path to container image
+CONTAINER_IMAGE={{ container_image }}
+{% else %}
+# Docker setup
+TEMP_DIR=$(pwd)/tmp_docker_{{ accession }}
+mkdir -p ${TEMP_DIR}
+
+# Docker image
+DOCKER_IMAGE={{ container_image }}
+{% endif %}
+
+echo "Current time: $(date)"
+echo "Running with parallelized Kallisto quantification"
+echo "CPUs available: $SLURM_CPUS_PER_TASK"
+echo "Container engine: {{ container_engine }}"
+echo "Using temporary directory: ${TEMP_DIR}"
+
+{% if container_engine == "apptainer" %}
+# Bind-mounts for Apptainer:
+#  - your repo → /workspace
+#  - the host's output directory → /UORCA_results in the container
+BIND="-B {{ project_root }}:/workspace \
+      -B {{ output_dir }}:/UORCA_results \
+      -B ${TEMP_DIR}:/tmp"
+
+echo "[$(date)] Starting agentic workflow via Apptainer for {{ accession }}"
+
+# Run the container with additional options for temporary directories
+apptainer exec \
+  $BIND \
+  --tmpdir=${TEMP_DIR} \
+  --cleanenv \
+  $CONTAINER_IMAGE \
+  bash -lc "\
+    cd /workspace && \
+    uv run python uorca/analysis/master.py \
+      --accession {{ accession }} \
+      --output_dir /UORCA_results \
+      --resource_dir {{ resource_dir }} \
+      {% if cleanup %}--cleanup{% endif %}
+  "
+{% else %}
+echo "[$(date)] Starting agentic workflow via Docker for {{ accession }}"
+
+# Run Docker container with temp filesystem and proper mounts
+docker run --rm \
+  --tmpfs /tmp:rw,size=20g \
+  --shm-size=4g \
+  -v "{{ output_dir }}":/workspace/output \
+  -v "{{ resource_dir }}":/workspace/resources \
+  -v "{{ project_root }}":/workspace/src \
+  --workdir /workspace/src \
+  -e UV_NO_SYNC=1 \
+  -e PATH=/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  -e VIRTUAL_ENV=/workspace/.venv \
+  -e ENTREZ_EMAIL="${ENTREZ_EMAIL}" \
+  -e OPENAI_API_KEY="${OPENAI_API_KEY}" \
+  -e ENTREZ_API_KEY="${ENTREZ_API_KEY}" \
+  $DOCKER_IMAGE \
+  uv run python uorca/analysis/master.py \
+    --accession {{ accession }} \
+    --output_dir /workspace/output \
+    --resource_dir /workspace/resources \
+    {% if cleanup %}--cleanup{% endif %}
+{% endif %}
+
+echo "[$(date)] Workflow complete for {{ accession }}."
+
+# Clean up temporary directory
+rm -rf ${TEMP_DIR}
+
+# Update job status to completed
+# Note: Script files are cleaned up immediately after job submission
+STATUS_DIR="{{ output_dir }}/job_status"
+STATUS_FILE="$STATUS_DIR/{{ accession }}_status.json"
+if [ -f "$STATUS_FILE" ]; then
+    python3 -c "
+import json
+import os
+from datetime import datetime
+
+status_file = '$STATUS_FILE'
+if os.path.exists(status_file):
+    with open(status_file, 'r') as f:
+        status = json.load(f)
+    status['state'] = 'completed'
+    status['completed_time'] = datetime.now().isoformat()
+    with open(status_file, 'w') as f:
+        json.dump(status, f, indent=2)
+"
+fi
