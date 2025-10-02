@@ -78,6 +78,10 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         output_path.mkdir(parents=True, exist_ok=True)
         resource_path.mkdir(parents=True, exist_ok=True)
 
+        # Create temp directory for large intermediate files (bind-mounted to bypass Docker disk limits)
+        temp_dir = output_path / accession / "tmp"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
         # Docker paths (inside container)
         docker_output_dir = "/workspace/output"
         docker_resource_dir = "/workspace/resources"
@@ -97,6 +101,7 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             '-v', f'{output_path}:{docker_output_dir}',
             '-v', f'{resource_path}:{docker_resource_dir}',
             '-v', f'{project_root}:/workspace/src',
+            '-v', f'{temp_dir}:/workspace/temp',  # Bind-mount temp directory
             '--workdir', '/workspace/src',  # Mount source code so we use local changes
         ]
 
@@ -105,6 +110,9 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             '-e', 'UV_NO_SYNC=1',
             '-e', 'PATH=/workspace/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
             '-e', 'VIRTUAL_ENV=/workspace/.venv',
+            '-e', 'TMPDIR=/workspace/temp',    # Standard Unix temp dir
+            '-e', 'TEMP=/workspace/temp',      # Alternative name
+            '-e', 'TMP=/workspace/temp',       # Windows compatibility
             '-e', f'ENTREZ_EMAIL={os.getenv("ENTREZ_EMAIL", "")}',
             '-e', f'OPENAI_API_KEY={os.getenv("OPENAI_API_KEY", "")}',
             '-e', f'ENTREZ_API_KEY={os.getenv("ENTREZ_API_KEY", "")}',
