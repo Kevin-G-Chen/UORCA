@@ -30,27 +30,53 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
     """
     Run a single dataset analysis locally using Docker.
 
-    This function is designed to be run in a separate process.
+    This function is designed to be run in a separate process. It creates a temporary
+    directory on the host filesystem ({output_dir}/{accession}/tmp/) and bind-mounts it
+    to the container to bypass Docker's virtual disk limits. This allows processing of
+    large datasets regardless of Docker Desktop's disk allocation.
 
     Args:
         accession: Dataset accession ID
         output_dir: Output directory on host
         resource_dir: Resource directory for Kallisto indices on host
-        cleanup: Whether to cleanup intermediate files
+        cleanup: Whether to cleanup intermediate files (FASTQ/SRA after analysis)
         status_dir: Directory for status tracking on host
         docker_image: Docker image to use
+        container_tmpfs_gb: Size in GB for in-memory tmpfs (for small temp files)
 
     Returns:
         Dictionary with job results including container_id
+
+    Note:
+        The temp directory ({output_dir}/{accession}/tmp/) is automatically created
+        and cleaned up (even on failure). Temporary files from fasterq-dump, pigz, etc.
+        write to this bind-mounted directory on the host, not to Docker's virtual disk.
     """
     import subprocess
     import json
+    import shutil
     from datetime import datetime
     from pathlib import Path
     import re
 
     process_id = os.getpid()
     start_time = datetime.now()
+
+    # Setup paths (before try block so temp_dir is available in finally)
+    output_path = Path(output_dir).absolute()
+    resource_path = Path(resource_dir).absolute()
+
+    # Find project root (where this batch processor is located)
+    current_file = Path(__file__).absolute()
+    project_root = current_file.parent.parent.parent  # Go up from uorca/batch/local.py to project root
+
+    # Create directories if they don't exist
+    output_path.mkdir(parents=True, exist_ok=True)
+    resource_path.mkdir(parents=True, exist_ok=True)
+
+    # Create temp directory for large intermediate files (bind-mounted to bypass Docker disk limits)
+    temp_dir = output_path / accession / "tmp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
     # Update status to running
     status_file = Path(status_dir) / f"{accession}_status.json"
@@ -66,22 +92,6 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             json.dump(status, f, indent=2)
 
     try:
-        # Setup paths
-        output_path = Path(output_dir).absolute()
-        resource_path = Path(resource_dir).absolute()
-
-        # Find project root (where this batch processor is located)
-        current_file = Path(__file__).absolute()
-        project_root = current_file.parent.parent.parent  # Go up from uorca/batch/local.py to project root
-
-        # Create directories if they don't exist
-        output_path.mkdir(parents=True, exist_ok=True)
-        resource_path.mkdir(parents=True, exist_ok=True)
-
-        # Create temp directory for large intermediate files (bind-mounted to bypass Docker disk limits)
-        temp_dir = output_path / accession / "tmp"
-        temp_dir.mkdir(parents=True, exist_ok=True)
-
         # Docker paths (inside container)
         docker_output_dir = "/workspace/output"
         docker_resource_dir = "/workspace/resources"
@@ -224,6 +234,16 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             'error': str(e),
             'runtime': 0
         }
+
+    finally:
+        # Clean up temp directory regardless of success/failure
+        if temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir)
+                # Note: Logger not available in this process, so no logging here
+            except Exception as cleanup_error:
+                # Cleanup failure is non-critical, just skip
+                pass
 
 
 class LocalBatchProcessor(BatchProcessor):
