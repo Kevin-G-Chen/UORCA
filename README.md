@@ -144,6 +144,21 @@ UORCA automates the entire RNA-seq analysis workflow:
 
 The command `singularity pull` automatically converts Docker images to Singularity's SIF format, allowing you to use Docker Hub images while maintaining HPC security requirements.
 
+## Disk Space Requirements
+
+UORCA automatically handles temporary files by writing them directly to your system's disk (not Docker's virtual disk). This means:
+
+- **Local execution**: Requires free disk space on your machine (not Docker's allocation)
+- **Storage calculation**: Based on your actual available disk space
+- **No Docker configuration needed**: Default Docker Desktop settings (50GB) work fine
+
+For large datasets, ensure you have adequate free space on your system:
+- Small datasets (< 10 samples): ~50GB free space
+- Medium datasets (10-50 samples): ~200GB free space
+- Large datasets (> 50 samples): ~500GB+ free space
+
+**Note**: Temporary files are automatically cleaned up after processing.
+
 ## Output Structure
 
 UORCA generates organized results for each dataset:

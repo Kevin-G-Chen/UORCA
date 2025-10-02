@@ -348,7 +348,22 @@ def task_func(progress_callback=None):
                 return None
 ```
 
-### Issue 5: Large File Handling in Streamlit
+### ~~Issue 5: Docker Desktop Disk Limits~~ ✅ RESOLVED
+
+**Status**: Fixed as of 2025-10-02
+
+**Previous Problem**: Docker Desktop's virtual disk allocation caused "disk-limit exceeded" errors when processing large RNA-seq datasets locally. fasterq-dump wrote temp files to Docker's virtual disk (50GB limit) rather than the host filesystem.
+
+**Solution**: Temporary files now write to host filesystem via bind-mounted directories (`{output_dir}/{accession}/tmp/`), bypassing Docker's virtual disk entirely. No Docker configuration required. Temp directories are automatically created and cleaned up.
+
+**Impact**:
+- ✅ Works with default Docker Desktop settings (50GB)
+- ✅ Can process datasets of any size (limited by host disk only)
+- ✅ Matches SLURM behavior (both use bind-mounted temps)
+
+**Implementation**: `uorca/batch/local.py:68-70, 104, 113-115, 229-237`
+
+### Issue 6: Large File Handling in Streamlit
 **Problem**: Uploading large CSV files can timeout
 **Solution**: Stream processing or save to temp directory:
 ```python
