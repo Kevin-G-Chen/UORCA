@@ -27,7 +27,7 @@ from .helpers import (
     generate_plot_filename
 )
 from uorca.gui.results_integration import ResultsIntegrator
-from ortholog_mapper import (
+from uorca.gui.ortholog_mapper import (
     expand_genes_all_vs_all,
     get_ortholog_summary,
     get_taxid_from_organism,

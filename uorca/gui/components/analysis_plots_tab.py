@@ -29,7 +29,7 @@ from uorca.gui.results_integration import ResultsIntegrator
 
 # Import single analysis plotting functions
 try:
-    from single_analysis_plots import (
+    from uorca.gui.single_analysis_plots import (
         create_pca_plot,
         create_volcano_plot,
         create_ma_plot,

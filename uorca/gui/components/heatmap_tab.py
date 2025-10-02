@@ -38,7 +38,7 @@ from uorca.gui.results_integration import ResultsIntegrator
 # Import core modules
 from uorca.core import validation, script_generation
 from uorca.core.gene_selection import get_available_genes_for_contrasts
-from ortholog_mapper import (
+from uorca.gui.ortholog_mapper import (
     expand_genes_all_vs_all,
     get_ortholog_summary,
     get_taxid_from_organism,

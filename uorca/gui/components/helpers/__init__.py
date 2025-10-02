@@ -639,8 +639,8 @@ def _add_qc_plots_to_zip(
     if include_pdfs and dataset_id in ri.cpm_data:
         try:
             # Import only if needed
-            from single_analysis_plots import create_pca_plot, load_sample_groups
-            
+            from uorca.gui.single_analysis_plots import create_pca_plot, load_sample_groups
+
             cpm_df = ri.cpm_data[dataset_id]
             analysis_info = ri.analysis_info.get(dataset_id)
             groups = load_sample_groups(ri.results_dir, dataset_id, cpm_df, analysis_info)
@@ -691,8 +691,8 @@ def _add_deg_analysis_to_zip(
             # Only generate interactive plot PDFs if requested
             if include_pdfs:
                 try:
-                    from single_analysis_plots import create_volcano_plot, create_ma_plot, create_deg_heatmap, load_sample_groups
-                    
+                    from uorca.gui.single_analysis_plots import create_volcano_plot, create_ma_plot, create_deg_heatmap, load_sample_groups
+
                     # Volcano plot PDF
                     volcano_fig = create_volcano_plot(deg_df)
                     if volcano_fig:
@@ -1177,9 +1177,7 @@ def expand_genes_with_orthologs_helper(
 
     # Import here to avoid circular dependencies
     import sys
-    import os
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-    from ortholog_mapper import expand_genes_with_orthologs
+    from uorca.gui.ortholog_mapper import expand_genes_with_orthologs
 
     # Get unique organisms from selected datasets
     target_organisms = set()
