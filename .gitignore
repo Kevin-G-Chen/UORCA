@@ -104,8 +104,12 @@ notebooks/.Trash-*/
 notebooks/2_extract_data/GSE*_data/
 notebooks/2_extract_data/GSE*_FASTQs/
 
-# Streamlit config
-main_workflow/reporting/.config/dataset_query.json
+# User-specific config files
+uorca/config/dataset_query.json
 
 # Documentation (implementation plans, research notes)
 docs/
+
+# Temporary reports and validation files
+MIGRATION_VALIDATION_REPORT.md
+*_VALIDATION_REPORT.md

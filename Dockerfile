@@ -64,24 +64,21 @@ RUN set -eux; \
 WORKDIR /workspace
 
 # Copy dependency files first for better caching
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock README.md ./
+
+# Copy project code (needed for uv sync to build the package)
+COPY uorca/ ./uorca/
 
 # Create venv with correct Python interpreter that will be available at runtime
 RUN uv venv .venv --python=/usr/bin/python3.13
 
-# Install dependencies into the venv
+# Install dependencies and the package into the venv
 RUN uv sync --no-cache
 
 # Set up environment to use the venv
 ENV PATH="/workspace/.venv/bin:${PATH}"
 ENV VIRTUAL_ENV="/workspace/.venv"
 ENV UV_NO_SYNC=1
-
-# Copy project code (all migrated into uorca/)
-COPY uorca/ ./uorca/
-
-# Install the UORCA package in development mode so entry points are available
-RUN uv pip install -e .
 
 # Verify installation
 RUN which uorca && uorca --help
