@@ -5,6 +5,7 @@ This tab provides AI-powered analysis and exploration capabilities.
 """
 from __future__ import annotations
 
+import os
 import json
 import asyncio
 import logging
@@ -29,7 +30,7 @@ from uorca.gui.ai import (
     run_contrast_relevance_with_selection,
     SelectedContrast
 )
-from uorca.gui.mcp import get_filtered_dataframe
+from uorca.gui.mcp_server import get_filtered_dataframe
 
 from .helpers import (
     check_ai_generating,
@@ -146,7 +147,7 @@ def load_query_config(results_dir: Optional[str] = None) -> Optional[str]:
                 pass
 
     # Fallback to original config file approach
-    config_file_path = "main_workflow/reporting/.config/dataset_query.json"
+    config_file_path = "config/dataset_query.json"
 
     try:
         if os.path.exists(config_file_path):

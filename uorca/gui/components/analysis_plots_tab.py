@@ -4,6 +4,7 @@ Analysis Plots Tab for UORCA Explorer.
 This tab displays quality control and differential expression plots from individual datasets.
 """
 
+import os
 import logging
 import pandas as pd
 import streamlit as st
@@ -272,7 +273,7 @@ def _render_analysis_plots_interface(ri: ResultsIntegrator, results_dir: str):
     groups = _load_sample_groups(ri, selected_dataset)
 
     # Handle the plot display for the selected dataset
-    base_path = os.path.join(results_dir, selected_dataset, "RNAseqAnalysis")
+    base_path = os.path.join(ri.results_dir, selected_dataset, "RNAseqAnalysis")
 
     # Check if the path exists
     if not os.path.exists(base_path):
