@@ -16,10 +16,20 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai.exceptions import UsageLimitExceeded
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-from config_loader import get_contrast_relevance_with_selection_config, get_ai_agent_config
 
-
-
+from uorca.gui.ai import (
+    get_contrast_relevance_with_selection_config,
+    get_ai_agent_config,
+    GeneAnalysisOutput,
+    run_tool_relevance_analysis_sync,
+    get_relevant_tool_calls,
+    clear_relevant_tool_log,
+    create_uorca_agent,
+    run_contrast_relevance,
+    run_contrast_relevance_with_selection,
+    SelectedContrast
+)
+from uorca.gui.mcp import get_filtered_dataframe
 
 from .helpers import (
     check_ai_generating,
@@ -40,12 +50,6 @@ from .helpers.ai_agent_tool_logger import (
     read_log_file_contents
 )
 from uorca.gui.results_integration import ResultsIntegrator
-from ai_gene_schema import GeneAnalysisOutput
-from tool_relevance_analyzer import (
-    run_tool_relevance_analysis_sync,
-    get_relevant_tool_calls,
-    clear_relevant_tool_log
-)
 
 # Set up fragment decorator
 setup_fragment_decorator()
@@ -92,7 +96,6 @@ def _run_filtered_contrast_relevance_with_selection(ri, filtered_contrast_data, 
                           if info.get('accession', aid) in filtered_analysis_ids}
 
         try:
-            from contrast_relevance import run_contrast_relevance_with_selection
             results_df, selected_contrasts = run_contrast_relevance_with_selection(
                 ri, query, repeats, batch_size, parallel_jobs
             )
@@ -115,7 +118,6 @@ def _run_filtered_contrast_relevance(ri, filtered_contrast_data, query: str, rep
                           if info.get('accession', aid) in filtered_analysis_ids}
 
         try:
-            from contrast_relevance import run_contrast_relevance
             results_df = run_contrast_relevance(
                 ri, query, repeats, batch_size, parallel_jobs
             )
@@ -158,21 +160,10 @@ def load_query_config(results_dir: Optional[str] = None) -> Optional[str]:
 
 # Check for AI functionality availability
 
-try:
-    from ai_agent_factory import create_uorca_agent
-    UORCA_AGENT_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"UORCA agent not available: {e}")
-    UORCA_AGENT_AVAILABLE = False
-
-try:
-    from contrast_relevance import run_contrast_relevance, run_contrast_relevance_with_selection, SelectedContrast
-    CONTRAST_RELEVANCE_AVAILABLE = True
-    CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE = True
-except ImportError as e:
-    logger.warning(f"Contrast relevance not available: {e}")
-    CONTRAST_RELEVANCE_AVAILABLE = False
-    CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE = False
+# AI components are now always available since they're imported at the top
+UORCA_AGENT_AVAILABLE = True
+CONTRAST_RELEVANCE_AVAILABLE = True
+CONTRAST_RELEVANCE_WITH_SELECTION_AVAILABLE = True
 
 
 @log_streamlit_tab("AI Assistant")
@@ -1294,7 +1285,6 @@ def _display_unified_ai_results(
 
             # AI agent's working dataset
             try:
-                from mcp_server_core import get_filtered_dataframe
                 filtered_df = get_filtered_dataframe()
 
                 if not filtered_df.empty:

@@ -7,13 +7,14 @@ and development workflow.
 """
 
 # Import main render functions from each tab module
+# Note: ai_assistant_tab is imported directly by uorca_explorer.py to avoid circular imports
+# with uorca.gui.ai modules
 
 from .heatmap_tab import render_heatmap_tab
 from .expression_plots_tab import render_expression_plots_tab
 from .analysis_plots_tab import render_analysis_plots_tab
 from .datasets_info_tab import render_datasets_info_tab
 from .contrasts_info_tab import render_contrasts_info_tab
-from .ai_assistant_tab import render_ai_assistant_tab
 from .sidebar_controls import render_sidebar_controls
 
 # Import helper functions that might be useful externally
@@ -31,7 +32,6 @@ __all__ = [
     'render_analysis_plots_tab',
     'render_datasets_info_tab',
     'render_contrasts_info_tab',
-    'render_ai_assistant_tab',
     'render_sidebar_controls',
 
     # Helper functions
