@@ -5,22 +5,17 @@ This tab displays interactive heatmaps showing log2 fold changes for selected ge
 Features combined form for contrast and gene selection with proper select/clear all functionality.
 """
 
-import sys
-import os
-from pathlib import Path
-
-# Add main_workflow/reporting to sys.path for ResultsIntegration and core imports
-_current_file = Path(__file__).resolve()
-_reporting_dir = _current_file.parents[3] / "main_workflow" / "reporting"
-if str(_reporting_dir) not in sys.path:
-    sys.path.insert(0, str(_reporting_dir))
-
 import logging
 import re
 import streamlit as st
 import pandas as pd
 import traceback
 from typing import List, Tuple, Optional, Dict, Any
+import io
+import zipfile
+import json
+from datetime import datetime
+import textwrap
 
 from .helpers import (
     check_ai_generating,
@@ -38,16 +33,11 @@ from .helpers import (
     plotly_fig_to_pdf_bytes,
     generate_plot_filename
 )
-from ResultsIntegration import ResultsIntegrator
-import io
-import zipfile
-import json
-from datetime import datetime
-import textwrap
+from uorca.gui.results_integration import ResultsIntegrator
 
 # Import core modules
-from core import validation, script_generation
-from core.gene_selection import get_available_genes_for_contrasts
+from uorca.core import validation, script_generation
+from uorca.core.gene_selection import get_available_genes_for_contrasts
 from ortholog_mapper import (
     expand_genes_all_vs_all,
     get_ortholog_summary,

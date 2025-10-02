@@ -5,16 +5,6 @@ This module handles dataset selection in the sidebar. Contrast and gene selectio
 have been moved to their respective tabs.
 """
 
-import sys
-import os
-from pathlib import Path
-
-# Add main_workflow/reporting to sys.path for ResultsIntegration imports
-_current_file = Path(__file__).resolve()
-_reporting_dir = _current_file.parents[3] / "main_workflow" / "reporting"
-if str(_reporting_dir) not in sys.path:
-    sys.path.insert(0, str(_reporting_dir))
-
 import logging
 import streamlit as st
 import pandas as pd
@@ -27,7 +17,7 @@ from .helpers import (
     log_streamlit_user_action,
     is_analysis_successful
 )
-from ResultsIntegration import ResultsIntegrator
+from uorca.gui.results_integration import ResultsIntegrator
 
 logger = logging.getLogger(__name__)
 

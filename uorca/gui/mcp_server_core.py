@@ -7,8 +7,8 @@ import logging
 from datetime import datetime
 from functools import wraps
 from mcp.server.fastmcp import FastMCP
-from ResultsIntegration import ResultsIntegrator
-from streamlit_tabs.helpers.ai_agent_tool_logger import log_ai_agent_tool
+from uorca.gui.results_integration import ResultsIntegrator
+from uorca.gui.components.helpers.ai_agent_tool_logger import log_ai_agent_tool
 
 # Setup logging for MCP server
 logging.basicConfig(level=logging.INFO)

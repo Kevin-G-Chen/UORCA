@@ -18,10 +18,10 @@ import io
 import pandas as pd
 
 # Import the main integrator
-from ResultsIntegration import ResultsIntegrator
+from uorca.gui.results_integration import ResultsIntegrator
 
 # Import core logic modules
-from core import organism_utils, data_formatters, gene_selection
+from uorca.core import organism_utils, data_formatters, gene_selection
 
 # Import streamlit logging utilities
 from .streamlit_logging import (

@@ -4,16 +4,6 @@ Analysis Plots Tab for UORCA Explorer.
 This tab displays quality control and differential expression plots from individual datasets.
 """
 
-import sys
-import os
-from pathlib import Path
-
-# Add main_workflow/reporting to sys.path for ResultsIntegration imports
-_current_file = Path(__file__).resolve()
-_reporting_dir = _current_file.parents[3] / "main_workflow" / "reporting"
-if str(_reporting_dir) not in sys.path:
-    sys.path.insert(0, str(_reporting_dir))
-
 import logging
 import pandas as pd
 import streamlit as st
@@ -34,7 +24,7 @@ from .helpers import (
     create_dataset_download_package,
     generate_plot_filename
 )
-from ResultsIntegration import ResultsIntegrator
+from uorca.gui.results_integration import ResultsIntegrator
 # R script bundling is now integrated into create_dataset_download_package via components['r_script']
 
 # Import single analysis plotting functions

@@ -5,16 +5,6 @@ This tab provides AI-powered analysis and exploration capabilities.
 """
 from __future__ import annotations
 
-import sys
-import os
-from pathlib import Path
-
-# Add main_workflow/reporting to sys.path for ResultsIntegration and other imports
-_current_file = Path(__file__).resolve()
-_reporting_dir = _current_file.parents[3] / "main_workflow" / "reporting"
-if str(_reporting_dir) not in sys.path:
-    sys.path.insert(0, str(_reporting_dir))
-
 import json
 import asyncio
 import logging
@@ -49,7 +39,7 @@ from .helpers.ai_agent_tool_logger import (
     get_current_log_file,
     read_log_file_contents
 )
-from ResultsIntegration import ResultsIntegrator
+from uorca.gui.results_integration import ResultsIntegrator
 from ai_gene_schema import GeneAnalysisOutput
 from tool_relevance_analyzer import (
     run_tool_relevance_analysis_sync,

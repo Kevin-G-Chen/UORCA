@@ -10,23 +10,15 @@ Displays:
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
-# Add main_workflow/reporting to sys.path for ResultsIntegration imports
-_current_file = Path(__file__).resolve()
-_reporting_dir = _current_file.parents[3] / "main_workflow" / "reporting"
-if str(_reporting_dir) not in sys.path:
-    sys.path.insert(0, str(_reporting_dir))
-
 import json
+from pathlib import Path
 from collections import Counter
 from typing import Optional, Dict, Any
 from datetime import datetime
 
 import streamlit as st
 
-from ResultsIntegration import ResultsIntegrator
+from uorca.gui.results_integration import ResultsIntegrator
 from .helpers import log_streamlit_function, get_valid_contrasts_with_data
 
 
