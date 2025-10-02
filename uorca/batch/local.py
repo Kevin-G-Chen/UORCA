@@ -112,6 +112,7 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
             '-v', f'{resource_path}:{docker_resource_dir}',
             '-v', f'{project_root}:/workspace/src',
             '-v', f'{temp_dir}:/workspace/temp',  # Bind-mount temp directory
+            '-v', '/workspace/src/.venv',  # Anonymous volume to hide host .venv
             '--workdir', '/workspace/src',  # Mount source code so we use local changes
         ]
 
@@ -129,9 +130,10 @@ def run_single_dataset_local(accession: str, output_dir: str, resource_dir: str,
         ]
 
         # Use the specified Docker image and run command
+        # Don't use 'uv run' - the container's venv is already in PATH via env vars
         cmd += [
             docker_image,
-            'uv', 'run', 'python', 'uorca/analysis/master.py',
+            'python', 'uorca/analysis/master.py',
             '--accession', accession,
             '--output_dir', docker_output_dir,
             '--resource_dir', docker_resource_dir
