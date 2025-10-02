@@ -22,6 +22,11 @@ from typing import Dict, Any, List, Tuple
 # Add the current directory to the path for imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
+# Import the main integrator - TODO: move to uorca.gui
+# IMPORTANT: This must come BEFORE importing helpers, which depend on ResultsIntegration and core modules
+sys.path.insert(0, str(Path(script_dir).parent.parent / "main_workflow" / "reporting"))
+from ResultsIntegration import ResultsIntegrator
+
 # Import helper functions and setup
 from uorca.gui.components.helpers import (
     _validate_results_dir,
@@ -46,10 +51,6 @@ from uorca.gui.components.datasets_info_tab import render_datasets_info_tab
 from uorca.gui.components.contrasts_info_tab import render_contrasts_info_tab
 from uorca.gui.components.ai_assistant_tab import render_ai_assistant_tab
 from uorca.gui.components.uorca_summary_tab import render_uorca_summary_tab
-
-# Import the main integrator - TODO: move to uorca.gui
-sys.path.insert(0, str(Path(script_dir).parent.parent / "main_workflow" / "reporting"))
-from ResultsIntegration import ResultsIntegrator
 
 # Set up logging
 logger = logging.getLogger(__name__)

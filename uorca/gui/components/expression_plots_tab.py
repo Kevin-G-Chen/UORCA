@@ -5,7 +5,16 @@ This tab displays violin plots showing gene expression distributions across samp
 Simplified interface with combined form for group and gene selection.
 """
 
+import sys
 import os
+from pathlib import Path
+
+# Add main_workflow/reporting to sys.path for ResultsIntegration and ortholog_mapper imports
+_current_file = Path(__file__).resolve()
+_reporting_dir = _current_file.parents[3] / "main_workflow" / "reporting"
+if str(_reporting_dir) not in sys.path:
+    sys.path.insert(0, str(_reporting_dir))
+
 import re
 import logging
 import streamlit as st
@@ -28,8 +37,6 @@ from .helpers import (
     generate_plot_filename
 )
 from ResultsIntegration import ResultsIntegrator
-import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ortholog_mapper import (
     expand_genes_all_vs_all,
     get_ortholog_summary,

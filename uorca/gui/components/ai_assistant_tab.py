@@ -5,7 +5,16 @@ This tab provides AI-powered analysis and exploration capabilities.
 """
 from __future__ import annotations
 
+import sys
 import os
+from pathlib import Path
+
+# Add main_workflow/reporting to sys.path for ResultsIntegration and other imports
+_current_file = Path(__file__).resolve()
+_reporting_dir = _current_file.parents[3] / "main_workflow" / "reporting"
+if str(_reporting_dir) not in sys.path:
+    sys.path.insert(0, str(_reporting_dir))
+
 import json
 import asyncio
 import logging

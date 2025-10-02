@@ -5,6 +5,16 @@ This tab displays interactive heatmaps showing log2 fold changes for selected ge
 Features combined form for contrast and gene selection with proper select/clear all functionality.
 """
 
+import sys
+import os
+from pathlib import Path
+
+# Add main_workflow/reporting to sys.path for ResultsIntegration and core imports
+_current_file = Path(__file__).resolve()
+_reporting_dir = _current_file.parents[3] / "main_workflow" / "reporting"
+if str(_reporting_dir) not in sys.path:
+    sys.path.insert(0, str(_reporting_dir))
+
 import logging
 import re
 import streamlit as st
@@ -34,9 +44,6 @@ import zipfile
 import json
 from datetime import datetime
 import textwrap
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import core modules
 from core import validation, script_generation
