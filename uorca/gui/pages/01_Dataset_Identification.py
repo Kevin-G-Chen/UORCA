@@ -32,6 +32,47 @@ def main():
     UORCA will search, validate, cluster, and assess datasets using AI.
     """)
 
+    # API Key Status Section
+    with st.expander("🔑 API Configuration", expanded=False):
+        st.markdown("### Environment Variable Status")
+
+        # Check ENTREZ_EMAIL
+        entrez_email = os.getenv("ENTREZ_EMAIL")
+        if entrez_email:
+            st.success(f"✅ ENTREZ_EMAIL: `{entrez_email}`")
+        else:
+            st.error("❌ ENTREZ_EMAIL not set")
+
+        # Check ENTREZ_API_KEY
+        entrez_api_key = os.getenv("ENTREZ_API_KEY")
+        if entrez_api_key:
+            # Show first/last few characters for security
+            masked_key = f"{entrez_api_key[:8]}...{entrez_api_key[-4:]}" if len(entrez_api_key) > 12 else "***"
+            st.success(f"✅ ENTREZ_API_KEY: `{masked_key}` (10x faster rate limits)")
+
+            # Verify it's actually set in Bio.Entrez
+            try:
+                from Bio import Entrez
+                if hasattr(Entrez, 'api_key') and Entrez.api_key:
+                    st.info(f"✅ Bio.Entrez.api_key is configured: `{Entrez.api_key[:8]}...{Entrez.api_key[-4:]}`")
+                else:
+                    st.warning("⚠️ Bio.Entrez.api_key not set - API key may not be used by NCBI calls")
+            except Exception as e:
+                st.warning(f"Could not verify Bio.Entrez configuration: {e}")
+        else:
+            st.warning("⚠️ ENTREZ_API_KEY not set (slower rate limits: 3 req/s instead of 10 req/s)")
+
+        # Check OPENAI_API_KEY
+        openai_key = os.getenv("OPENAI_API_KEY")
+        if openai_key:
+            masked = f"{openai_key[:7]}...{openai_key[-4:]}" if len(openai_key) > 11 else "***"
+            st.success(f"✅ OPENAI_API_KEY: `{masked}`")
+        else:
+            st.error("❌ OPENAI_API_KEY not set (required)")
+
+        st.markdown("---")
+        st.caption("💡 Tip: Add these to your `.env` file in the project root. ENTREZ_API_KEY significantly speeds up dataset searches (free from NCBI).")
+
     # Initialize task manager
     task_manager = TaskManager()
 
@@ -275,12 +316,22 @@ def run_identification(
     Returns:
         Path to output directory
     """
+    import io
+
     project_root = Path(__file__).parent.parent.parent.parent
     sys.path.insert(0, str(project_root))
 
+    # Redirect stdout/stderr to prevent BrokenPipeError in background threads
+    # Save originals
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+
     try:
+        # Redirect to string buffers (will be logged instead)
+        sys.stdout = io.StringIO()
+        sys.stderr = io.StringIO()
+
         from uorca.identify import main as identify_main
-        import sys
 
         if progress_callback:
             progress_callback(0.1, "Starting dataset identification...")
@@ -311,6 +362,10 @@ def run_identification(
         return output_dir
 
     finally:
+        # Restore stdout/stderr
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+
         if str(project_root) in sys.path:
             sys.path.remove(str(project_root))
 

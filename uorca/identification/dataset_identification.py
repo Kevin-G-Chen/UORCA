@@ -63,11 +63,22 @@ from tqdm import tqdm
 # Load environment variables
 load_dotenv()
 
-# Configure Entrez
-if os.getenv("ENTREZ_EMAIL"):
-    Entrez.email = os.getenv("ENTREZ_EMAIL")
-if os.getenv("ENTREZ_API_KEY"):
-    Entrez.api_key = os.getenv("ENTREZ_API_KEY")
+# Configure Entrez with explicit key setting
+def _configure_entrez():
+    """Configure Entrez with current environment variables."""
+    if os.getenv("ENTREZ_EMAIL"):
+        Entrez.email = os.getenv("ENTREZ_EMAIL")
+    if os.getenv("ENTREZ_API_KEY"):
+        Entrez.api_key = os.getenv("ENTREZ_API_KEY")
+        # Verify it was set
+        if not hasattr(Entrez, 'api_key') or not Entrez.api_key:
+            logging.warning("Failed to set Entrez.api_key - NCBI rate limiting may not work as expected")
+    else:
+        # Explicitly set to None if not available
+        Entrez.api_key = None
+
+# Initial configuration at module load
+_configure_entrez()
 
 # OpenAI client initialization with validation
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -133,16 +144,20 @@ def setup_logging(verbose: bool = False, suppress_sra_warnings: bool = True) -> 
     format_str = "%(asctime)s - %(levelname)s - %(message)s"
 
     # Create logs directory if it doesn't exist
-    logs_dir = Path("logs")
-    logs_dir.mkdir(exist_ok=True)
+    logs_dir = Path("logs/identification_logs")
+    logs_dir.mkdir(parents=True, exist_ok=True)
 
     # Clear any existing handlers to avoid conflicts
     root_logger = logging.getLogger()
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
+    # Create timestamped log file
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_file = logs_dir / f"dataset_identification_{timestamp}.log"
+
     # Configure logging to both file and console with forced configuration
-    file_handler = logging.FileHandler(logs_dir / "dataset_identification.log")
+    file_handler = logging.FileHandler(log_file)
     console_handler = logging.StreamHandler(sys.stdout)
 
     logging.basicConfig(
@@ -151,6 +166,23 @@ def setup_logging(verbose: bool = False, suppress_sra_warnings: bool = True) -> 
         handlers=[file_handler, console_handler],
         force=True  # Force reconfiguration even if logging was already configured
     )
+
+    # Enforce retention: keep only the 5 most recent identification log files
+    try:
+        existing = sorted(
+            [p for p in logs_dir.glob("dataset_identification_*.log") if p.is_file()],
+            key=lambda p: p.stat().st_mtime,
+        )
+        # If more than 5, delete the oldest ones
+        if len(existing) > 5:
+            to_delete = existing[: len(existing) - 5]
+            for old in to_delete:
+                try:
+                    old.unlink()
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
     # Also configure warnings to use the same format
     logging.captureWarnings(True)
@@ -309,8 +341,9 @@ def get_basic_dataset_info(
             logging.warning(f"Error processing GEO ID {geo_id}: {e}")
             return None
 
+    is_main_thread = threading.current_thread() is threading.main_thread()
     with ThreadPoolExecutor(max_workers=workers) as executor, \
-         tqdm(total=len(unique_ids), desc="Fetching GEO summaries", unit="dataset") as pbar:
+         tqdm(total=len(unique_ids), desc="Fetching GEO summaries", unit="dataset", disable=not is_main_thread) as pbar:
 
         futures = {executor.submit(fetch_info, gid): gid for gid in unique_ids}
         for future in as_completed(futures):
@@ -323,7 +356,7 @@ def get_basic_dataset_info(
     if not df.empty:
         df = df.drop_duplicates(subset=["ID"]).reset_index(drop=True)
 
-    tqdm.write(f"Found {len(df)} unique GSE datasets with complete information")
+    logging.info(f"Found {len(df)} unique GSE datasets with complete information")
     return df
 
 # Streamlined SRA processing functions (old XML parsing functions removed)
@@ -419,8 +452,9 @@ def embed_datasets(datasets_df: pd.DataFrame) -> pd.DataFrame:
     """Generate embeddings for datasets."""
     embeddings = []
 
-    # Use progress bar for embedding generation
-    for _, row in tqdm(datasets_df.iterrows(), total=len(datasets_df), desc="Generating embeddings", unit="dataset"):
+    # Use progress bar for embedding generation (disable if not main thread)
+    is_main_thread = threading.current_thread() is threading.main_thread()
+    for _, row in tqdm(datasets_df.iterrows(), total=len(datasets_df), desc="Generating embeddings", unit="dataset", disable=not is_main_thread):
         # Combine title and summary for embedding
         text = f"{row.get('Title', '')} {row.get('Summary', '')}"
         embedding = get_embedding(text)
@@ -444,7 +478,7 @@ def cluster_datasets(datasets_df: pd.DataFrame, n_clusters: int = None, cluster_
     if n_clusters is None:
         n_clusters = max(1, len(datasets_df) // cluster_divisor)  # Simple: total/divisor
 
-    tqdm.write(f"Clustering {len(datasets_df)} datasets into {n_clusters} clusters...")
+    logging.info(f"Clustering {len(datasets_df)} datasets into {n_clusters} clusters...")
 
     # Prepare embeddings
     embeddings = np.array(datasets_df['embedding'].tolist())
@@ -468,13 +502,13 @@ def select_representative_datasets(datasets_df: pd.DataFrame, max_assess: int = 
     n_clusters = datasets_df['Cluster'].nunique()
 
     if len(datasets_df) <= max_assess:
-        tqdm.write(f"Assessing all {len(datasets_df)} datasets (within budget of {max_assess})")
+        logging.info(f"Assessing all {len(datasets_df)} datasets (within budget of {max_assess})")
         return datasets_df  # Assess all if within budget
 
     # Distribute assessment budget proportionally across clusters
     datasets_per_cluster = max(1, max_assess // n_clusters)
 
-    tqdm.write(f"Selecting up to {datasets_per_cluster} datasets from each of {n_clusters} clusters (budget: {max_assess})")
+    logging.info(f"Selecting up to {datasets_per_cluster} datasets from each of {n_clusters} clusters (budget: {max_assess})")
 
     representatives = []
     total_selected = 0
@@ -486,7 +520,7 @@ def select_representative_datasets(datasets_df: pd.DataFrame, max_assess: int = 
         representatives.extend(cluster_representatives.to_dict('records'))
         total_selected += n_to_take
 
-    tqdm.write(f"Selected {total_selected} total datasets for relevance assessment")
+    logging.info(f"Selected {total_selected} total datasets for relevance assessment")
     return pd.DataFrame(representatives).reset_index(drop=True)
 
 
@@ -535,7 +569,8 @@ async def repeated_relevance(df: pd.DataFrame, query: str, repeats: int = 3, bat
         pbar.set_postfix({"Rep": f"{rep+1}/{repeats}", "Batch": f"{(idx+1)+rep*total_batches}/{total_tasks}"})
         return result
 
-    with tqdm(total=total_tasks, desc="Assessing dataset relevance", unit="batch") as pbar:
+    is_main_thread = threading.current_thread() is threading.main_thread()
+    with tqdm(total=total_tasks, desc="Assessing dataset relevance", unit="batch", disable=not is_main_thread) as pbar:
         tasks = []
         for rep in range(repeats):
             for idx, sub in enumerate(batches):
@@ -629,6 +664,9 @@ def main():
     output_path.mkdir(parents=True, exist_ok=True)
     setup_logging(verbose=args.verbose, suppress_sra_warnings=not args.verbose)
 
+    # Reconfigure Entrez to ensure API key is set in this process/thread
+    _configure_entrez()
+
     # Log API key detection status and rate limiting configuration
     if os.getenv("ENTREZ_API_KEY"):
         logging.info("NCBI API key detected - using faster rate limits")
@@ -660,7 +698,11 @@ def main():
         logging.info(f"Searching GEO using {len(search_terms)} unique search terms: {', '.join(search_terms)}")
 
         geo_ids = []
-        for term in tqdm(search_terms, desc="Searching GEO database", unit="term"):
+        # Detect if running in a background thread (e.g., from GUI) - disable tqdm to avoid BrokenPipeError
+        is_main_thread = threading.current_thread() is threading.main_thread()
+        search_iterator = tqdm(search_terms, desc="Searching GEO database", unit="term", disable=not is_main_thread)
+
+        for term in search_iterator:
             term_ids = perform_search(term, args.max_per_term)
             geo_ids.extend(term_ids)
             # Apply rate limiting between searches to follow NCBI guidelines
@@ -711,7 +753,7 @@ def main():
                     return pd.DataFrame(), False
 
             except Exception as e:
-                tqdm.write(f'Warning: Error processing {acc}: {e}')
+                logging.warning(f'Error processing {acc}: {e}')
                 return pd.DataFrame(), False
 
         runs = []
@@ -732,8 +774,9 @@ def main():
             fetch_func = partial(fetch_sra_for_dataset, api_delay=api_delay)
             future_to_row = {executor.submit(fetch_func, row): row for _, row in to_fetch.iterrows()}
 
-            # Use tqdm progress bar for SRA fetching
-            with tqdm(total=len(future_to_row), desc="Fetching SRA data", unit="dataset") as pbar:
+            # Use tqdm progress bar for SRA fetching (disable if not main thread)
+            is_main_thread = threading.current_thread() is threading.main_thread()
+            with tqdm(total=len(future_to_row), desc="Fetching SRA data", unit="dataset", disable=not is_main_thread) as pbar:
                 for future in as_completed(future_to_row):
                     df_result, success = future.result()
                     pbar.update(1)
@@ -754,7 +797,7 @@ def main():
             sra_df = pd.concat(runs, ignore_index=True)
         else:
             sra_df = pd.DataFrame(columns=['GEO_Accession'])
-            tqdm.write("Warning: No SRA runs were successfully fetched")
+            logging.warning("No SRA runs were successfully fetched")
 
         # Calculate dataset sizes using runinfo data
         dataset_sizes = {}
@@ -786,7 +829,8 @@ def main():
 
         # Group by dataset (GSE ID) for proper dataset-level validation
         grouped_datasets = list(final_results.groupby('ID'))
-        for gse_id, group in tqdm(grouped_datasets, desc="Validating datasets", unit="dataset"):
+        is_main_thread = threading.current_thread() is threading.main_thread()
+        for gse_id, group in tqdm(grouped_datasets, desc="Validating datasets", unit="dataset", disable=not is_main_thread):
             # Count samples that meet RNA-seq criteria
             rnaseq_samples = 0
             total_samples = len(group)

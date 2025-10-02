@@ -252,11 +252,9 @@ class TaskManager:
             user_callback(progress, message)
 
     def get_task_status(self, task_id: str) -> Dict[str, Any]:
-        """Get current status of a task."""
-        if task_id in self.task_states:
-            return self.task_states[task_id].copy()
-
-        # Check database for historical tasks
+        """Get current status of a task (always fetches from database for freshness)."""
+        # Always check database first to avoid stale cache issues
+        # This is especially important in Streamlit where reruns can cause cache staleness
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
@@ -264,13 +262,21 @@ class TaskManager:
         conn.close()
 
         if row:
-            return {
+            status = {
                 "status": TaskStatus(row[2]),
                 "progress": row[6] or 0.0,
                 "progress_message": row[7] or "",
                 "result": row[8],
                 "error": row[9]
             }
+            # Update in-memory cache with fresh data
+            if task_id in self.task_states:
+                self.task_states[task_id].update(status)
+            return status
+
+        # Fallback to in-memory cache if not in database
+        if task_id in self.task_states:
+            return self.task_states[task_id].copy()
 
         return None
 

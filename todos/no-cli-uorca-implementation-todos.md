@@ -58,7 +58,96 @@ Make UORCA accessible to wet lab researchers by eliminating command-line require
 - [ ] Cross-platform support (Windows, macOS, Linux)
 - [ ] No crashes during multi-hour pipeline runs
 
-**Current Status (2025-10-01)**: Phase 1 complete! Dataset identification and pipeline execution pages working.
+**Current Status (2025-10-01)**: Phase 1B (Dataset Identification) complete with fixes! Critical lessons learned documented for Phase 1C.
+
+---
+
+## 📚 Lessons Learned from Phase 1B (Dataset Identification)
+
+**Date**: 2025-10-01
+**Status**: ✅ Completed with comprehensive fixes
+
+### Critical Issues Resolved
+
+1. **✅ BrokenPipeError from tqdm** - Fixed with thread detection and logging
+2. **✅ Streamlit caching staleness** - Database-first status queries
+3. **✅ NCBI API key configuration** - Explicit reconfiguration + UI verification
+4. **✅ Log rotation** - Timestamped files with automatic cleanup
+5. **✅ Duplicate imports** - Code cleanup
+
+**Full Details**: See `docs/lessons_learned/dataset_identification_gui_implementation.md`
+
+### Must-Apply Patterns for Phase 1C (Pipeline Execution)
+
+**⚠️ CRITICAL**: The following patterns MUST be implemented in pipeline tab to avoid the same issues:
+
+#### Pattern 1: Thread-Safe tqdm Handling
+```python
+# ALWAYS detect thread context and disable tqdm
+is_main_thread = threading.current_thread() is threading.main_thread()
+for item in tqdm(items, disable=not is_main_thread):
+    ...
+
+# REPLACE all tqdm.write() with logging
+logging.info("message")  # Not tqdm.write("message")
+```
+
+#### Pattern 2: Stdout/Stderr Redirection
+```python
+# In background task wrapper
+original_stdout, original_stderr = sys.stdout, sys.stderr
+sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+try:
+    pipeline_main()
+finally:
+    sys.stdout, sys.stderr = original_stdout, original_stderr
+```
+
+#### Pattern 3: Database-First Status Checks
+```python
+# TaskManager.get_task_status() already fixed to query DB first
+# Just use it - don't cache status in session_state
+status = task_manager.get_task_status(task_id)  # Fresh from DB
+```
+
+#### Pattern 4: API Key Pre-Flight Checks
+```python
+# Add to pipeline submission form
+errors = []
+if not os.getenv("ENTREZ_EMAIL"):
+    errors.append("ENTREZ_EMAIL not set")
+if not os.getenv("ENTREZ_API_KEY"):
+    st.warning("⚠️ ENTREZ_API_KEY not set - slower rate limits")
+# ... check Docker, Kallisto indices, etc.
+```
+
+#### Pattern 5: Organized Logging with Rotation
+```python
+# Create logs/pipeline_logs/ directory
+# Use pattern: pipeline_execution_{timestamp}.log
+# Keep only 5 most recent
+```
+
+### Testing Checklist for Phase 1C
+
+Before marking pipeline tab as complete:
+
+- [ ] Long-running test (3 datasets, 1-2 hours) - must complete successfully
+- [ ] Cancellation test - verify graceful Docker container cleanup
+- [ ] Restart test - app killed mid-pipeline, restart, task marked failed
+- [ ] Error handling - invalid CSV shows clear error
+- [ ] Progress accuracy - bar matches actual dataset completion
+- [ ] Log rotation - 6 pipelines run, only 5 logs remain
+- [ ] Cross-platform - launchers work on Windows/macOS/Linux
+- [ ] No orphaned Docker containers after any operation
+
+### Anticipated Challenges for Phase 1C
+
+1. **LocalBatchProcessor likely has tqdm** - will need same thread detection fixes
+2. **Docker containers need env vars** - must verify ENTREZ_* passed correctly
+3. **Longer execution times** - more opportunities for staleness bugs
+4. **Container cleanup** - cancellation must kill Docker containers
+5. **Per-dataset logs** - consider separate log files in addition to master log
 
 ---
 

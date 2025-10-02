@@ -166,12 +166,14 @@ except Exception as e:
 The project is currently implementing a GUI-first experience to eliminate command-line requirements. See `docs/plans/no_cli_uorca_implementation.md` and `todos/no-cli-uorca-implementation-todos.md`.
 
 **Implementation Phases**:
-1. **Phase 1A**: Background Task System (TaskManager with SQLite) - IN PROGRESS
-2. **Phase 1B**: Dataset Identification Tab
-3. **Phase 1C**: Pipeline Execution Tab
+1. **Phase 1A**: Background Task System (TaskManager with SQLite) - ✅ COMPLETE
+2. **Phase 1B**: Dataset Identification Tab - ✅ COMPLETE (with critical fixes)
+3. **Phase 1C**: Pipeline Execution Tab - 🚧 NEXT
 4. **Phase 2A**: Batch Launcher Scripts (Windows/macOS/Linux)
 5. **Phase 2B**: Native Desktop App (Optional)
 6. **Phase 3**: Polish & Testing
+
+**Lessons Learned from Phase 1B**: See `docs/lessons_learned/dataset_identification_gui_implementation.md` for critical patterns that MUST be applied to Phase 1C.
 
 ### Recommended Claude Code Commands
 1. **Research**: Use `/research_codebase` to understand existing patterns
@@ -285,6 +287,47 @@ st.session_state.task_status = status
 task_manager = TaskManager()
 status = task_manager.get_task_status(task_id)
 ```
+
+### Issue 3: BrokenPipeError from tqdm in Background Threads ⚠️ CRITICAL
+**Problem**: tqdm tries to write to stderr in background threads, causing BrokenPipeError
+**When**: Any CLI tool called from TaskManager that uses tqdm progress bars
+**Solution**: Multi-layer defense:
+```python
+# 1. Detect thread and disable tqdm
+is_main_thread = threading.current_thread() is threading.main_thread()
+for item in tqdm(items, desc="...", disable=not is_main_thread):
+    ...
+
+# 2. Replace tqdm.write() with logging
+logging.info("Progress message")  # Not tqdm.write()
+
+# 3. Redirect stdout/stderr in GUI wrapper
+original_stdout, original_stderr = sys.stdout, sys.stderr
+sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+try:
+    cli_main()
+finally:
+    sys.stdout, sys.stderr = original_stdout, original_stderr
+```
+**Applies to**: Dataset identification, pipeline execution, any background CLI calls
+**Reference**: `docs/lessons_learned/dataset_identification_gui_implementation.md`
+
+### Issue 4: Streamlit Caching Causes Stale Task Status
+**Problem**: TaskManager returned cached in-memory status instead of fresh database data
+**Symptoms**: GUI shows "running" even after task completed in database
+**Solution**: TaskManager now queries database first, not cache:
+```python
+# Fixed in uorca/core/task_manager.py:254
+def get_task_status(self, task_id: str):
+    # Always check database first for freshness
+    conn = sqlite3.connect(self.db_path, check_same_thread=False)
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM tasks WHERE task_id = ?", (task_id,))
+    row = cursor.fetchone()
+    # ... update cache with fresh data ...
+```
+**When**: Any Streamlit page rerun that checks task status
+**Reference**: Commit fcf1540
 
 ### Issue 3: Environment Variables in Docker
 **Problem**: .env file not accessible inside Docker containers
