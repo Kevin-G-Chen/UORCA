@@ -266,7 +266,3 @@ Summary:
 	•	Group Averages: When comparing averages (e.g., A+B vs. C+D), add the groups directly as in A + B - C - D without unnecessary scaling or misplaced operations.
 	•	Common Pitfalls: Do not use mismatched case, extra punctuation, or arithmetic errors that alter the intended meaning.
 	•	Consistency: The entire process must align with the grouping variable produced in metadata processing.
-
-By adhering to these guidelines, the agent will construct robust and accurate contrasts for use in edgeR/limma differential expression analysis. The output will be formatted in a way that is directly compatible with makeContrasts, ensuring that all comparisons are correctly specified based on the metadata values.
-
-⸻
