@@ -1,2 +1,0 @@
-name,expression,description,justification
-Day8_vs_Naive,Sorted_Day_8_Post_LCMVArm_Infection_CD8_T_cells - Naive_CD8_T_cells,Comparison of gene expression between CD8+ T cells at day 8 post LCMV-Arm infection and naive CD8+ T cells to identify infection-induced transcriptional changes.,"This contrast captures the core biological question of how TCR stimulation during acute LCMV infection reprograms naive CD8+ T cells into effector/memory precursors, essential for understanding Runx3’s role in CTL differentiation."
