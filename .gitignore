@@ -1,19 +1,53 @@
+# ==================================================
+# UORCA .gitignore
+# ==================================================
+
+# Environment and local config
+.env
+.env.*
+*scratch/*
+.aider*
+slurm_config.yaml
+uorca/config/dataset_query.json
+
+# Internal development (not for public)
+docs/plans/
+docs/lessons_learned/
+todos/
+scripts/
+CLAUDE.md
+AGENTS.md
+
+# Data and results
+data/*
+results.txt
+**/results/*.txt
+**/FASTQ*/
+**/GSE*/
+.Trash*/
+
 # SLURM
 *.out
 *.err
 
-# Misc files
-data/*
+# Logs and temporary files
+*.log
+temp_logs/*
+tmp_container_explorer/*
+ai_tool_calls_*json
+.tmp/
+.cache/
+*.tmp
+*~
+*.bak
+*.swp
+*.swo
 
-# Environment and local config
-.env
-*scratch/*
-.aider*
-slurm_config.yaml
-
-# Node.js
-node_modules/
-npm-debug.log
+# Archives
+*.tar
+*.gz
+*.zip
+*.tgz
 
 # Python
 __pycache__/
@@ -24,6 +58,14 @@ dist/
 build/
 .ropeproject
 
+# Testing and coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Poetry
+poetry.lock
+
 # R
 *.Rhistory
 *.RData
@@ -32,9 +74,20 @@ R_libs/*
 .Rproj.user/
 *-checkpoint.r
 
-# Java
-*.class
-*.jar
+# Jupyter
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+*.ipynb-meta
+*-checkpoint.ipynb
+
+# IDEs and editors
+.vscode/
+*.code-workspace
+.history/
+.idea/
+*.iml
+*.iws
+*.ipr
 
 # macOS
 .DS_Store
@@ -43,73 +96,10 @@ R_libs/*
 Icon
 ._*
 
-# Visual Studio Code
-.vscode/
-*.code-workspace
-.history/
+# Node.js
+node_modules/
+npm-debug.log
 
-# JetBrains IDEs
-.idea/
-*.iml
-*.iws
-*.ipr
-
-# Logs and results
-*.log
-results.txt
-**/results/*.txt
-temp_logs/*
-tmp_container_explorer/*
-ai_tool_calls_*json
-
-# Docker
-*.dockerignore
-Dockerfile.*
-docker-compose*.yml
-*.tar
-*.gz
-*.zip
-*.tgz
-*.bak
-*.swp
-*.swo
-
-# Testing and coverage
-.coverage
-htmlcov/
-.pytest_cache/
-
-# Jupyter
-.ipynb_checkpoints
-*/.ipynb_checkpoints/*
-*.ipynb-meta
-*-checkpoint.ipynb
-
-# Poetry
-poetry.lock
-
-# Temporary and cache files
-.tmp/
-.cache/
-*.tmp
-*~
-
-# Data directories and files
-**/FASTQ*/
-**/GSE*/
-.Trash*/
-
-# Project specific
-notebooks/.Trash-*/
-notebooks/2_extract_data/GSE*_data/
-notebooks/2_extract_data/GSE*_FASTQs/
-
-# User-specific config files
-uorca/config/dataset_query.json
-
-# Documentation (implementation plans, research notes)
-docs/
-
-# Temporary reports and validation files
-MIGRATION_VALIDATION_REPORT.md
-*_VALIDATION_REPORT.md
+# Java
+*.class
+*.jar
