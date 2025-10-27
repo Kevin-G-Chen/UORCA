@@ -192,4 +192,4 @@ If you use UORCA in your research, please cite our work (manuscript in preparati
 
 ## License
 
-This project is under development. License information will be added upon public release.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
