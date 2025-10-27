@@ -127,22 +127,12 @@ UORCA automates the entire RNA-seq analysis workflow:
 ## Prerequisites
 
 - **Python 3.10+** with `uv` package manager
-- **For HPC/SLURM**: 
+- **For HPC/SLURM**:
   - SLURM job scheduler
   - Apptainer or Singularity (preferred over Docker for security)
   - Note: Singularity/Apptainer runs containers without root privileges, making it ideal for multi-user HPC environments
 - **For local**: Sufficient storage and compute resources
 - **API Keys**: OpenAI and NCBI credentials (see Environment Setup)
-
-### Container Runtime Notes
-
-**Why Singularity/Apptainer for HPC?**
-- **Security**: Runs without root privileges (unlike Docker)
-- **SLURM Integration**: Native support via `--container` flag
-- **Performance**: Bare-metal performance with minimal overhead
-- **Portability**: SIF files are single files, easy to share across nodes
-
-The command `singularity pull` automatically converts Docker images to Singularity's SIF format, allowing you to use Docker Hub images while maintaining HPC security requirements.
 
 ## Disk Space Requirements
 
@@ -152,16 +142,13 @@ UORCA automatically handles temporary files by writing them directly to your sys
 - **Storage calculation**: Based on your actual available disk space
 - **No Docker configuration needed**: Default Docker Desktop settings (50GB) work fine
 
-For large datasets, ensure you have adequate free space on your system:
-- Small datasets (< 10 samples): ~50GB free space
-- Medium datasets (10-50 samples): ~200GB free space
-- Large datasets (> 50 samples): ~500GB+ free space
+For large datasets, ensure you have adequate free space on your system.
 
-**Note**: Temporary files are automatically cleaned up after processing.
+**Note**: Temporary files are automatically cleaned up after processing. By default, FASTQ and associated intermediate files are removed after processing, though you can set --no-cleanup to retain these files.
 
 ## Output Structure
 
-UORCA generates organized results for each dataset:
+UORCA generates organised results for each dataset:
 
 ```
 UORCA_results/
