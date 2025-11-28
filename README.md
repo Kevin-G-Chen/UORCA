@@ -97,7 +97,7 @@ uv run uorca run local --input identification_results/ --output_dir ../UORCA_res
 **Output**: Complete analysis results including differential expression and visualisations.
 
 ### Step 3: Explore - Interact with your results
-Launch the interactive web interface to explore and analyze results:
+Launch the interactive web interface to explore and analyse results:
 
 ```bash
 uv run uorca explore ../UORCA_results
@@ -112,6 +112,11 @@ uv run uorca explore ../UORCA_results
 # 3. Open browser: http://127.0.0.1:8000
 ```
 
+**Test Data**: To try the interactive functionality without running the full pipeline, download sample results from [Zenodo](https://zenodo.org/records/17403428). After unzipping, run:
+```bash
+uv run uorca explore path/to/unzipped_folder
+```
+
 **Features**: Interactive heatmaps, gene expression plots, and cross-dataset integration.
 
 ## What UORCA Does
@@ -121,7 +126,7 @@ UORCA automates the entire RNA-seq analysis workflow:
 1. **Dataset Discovery**: AI-powered identification of relevant GEO datasets based on your research question
 2. **Data Processing**: Automated download, quality control, and RNA-seq quantification using Kallisto
 3. **Statistical Analysis**: Differential expression analysis with automatic experimental design
-4. **Interactive Exploration**: Web-based interface for visualizing and analyzing results across multiple datasets
+4. **Interactive Exploration**: Web-based interface for visualising and analysing results across multiple datasets
 5. **AI-Powered Insights**: Intelligent analysis assistant for biological interpretation
 
 ## Prerequisites
@@ -142,7 +147,7 @@ UORCA automatically handles temporary files by writing them directly to your sys
 - **Storage calculation**: Based on your actual available disk space
 - **No Docker configuration needed**: Default Docker Desktop settings (50GB) work fine
 
-For large datasets, ensure you have adequate free space on your system.
+For large datasets, ensure you have adequate free space on your system.  UORCA will by default automatically determine how much space can be used - it's designed to be a conservative calculation, but do still exercise some level of caution.
 
 **Note**: Temporary files are automatically cleaned up after processing. By default, FASTQ and associated intermediate files are removed after processing, though you can set --no-cleanup to retain these files.
 
@@ -188,7 +193,11 @@ UORCA_results/
 
 ## Citation
 
-If you use UORCA in your research, please cite our work (manuscript in preparation).
+If you use UORCA in your research, please cite our preprint:
+
+> **UORCA: A Unified Omics Reference Corpus of Analyses**
+> Chen, K.G. *et al.* (2025)
+> bioRxiv: [10.1101/2025.11.04.686647](https://www.biorxiv.org/content/10.1101/2025.11.04.686647v1)
 
 ## License
 
