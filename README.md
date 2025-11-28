@@ -1,6 +1,6 @@
 # Unified -Omics Reference Corpus of Analyses (UORCA)
 
-A fully containerized, AI-powered workflow for automated RNA-seq analysis of public datasets from the Gene Expression Omnibus (GEO).
+A fully containerised, AI-powered workflow for automated RNA-seq analysis of public datasets from the Gene Expression Omnibus (GEO).
 
 ## Preparation
 
@@ -20,7 +20,7 @@ uv pip install -e .
 # OR download specific species:
 ./download_kallisto_indices.sh human  # Download only human index
 
-# 4. (Optional) Pull the container for containerized execution
+# 4. (Optional) Pull the container for containerised execution
 # For Singularity/Apptainer (recommended for HPC/SLURM):
 singularity pull uorca_0.1.0.sif docker://kevingchen/uorca:0.1.0
 # OR Apptainer (newer name, same command):
@@ -165,7 +165,7 @@ UORCA_results/
 │   │   └── edger_analysis_samples.csv  # Samples used in analysis
 │   ├── RNAseqAnalysis/                  # Differential expression results
 │   │   ├── CPM.csv                     # Counts per million
-│   │   ├── DGE_norm.RDS                # Normalized expression object
+│   │   ├── DGE_norm.RDS                # Normalised expression object
 │   │   ├── MDS.png                     # Multidimensional scaling plot
 │   │   ├── filtering_density.png       # Expression filtering diagnostics
 │   │   ├── normalization_boxplots.png  # Normalization quality control
@@ -195,7 +195,7 @@ UORCA_results/
 
 If you use UORCA in your research, please cite our preprint:
 
-> **UORCA: A Unified Omics Reference Corpus of Analyses**
+> **Uncovering biological patterns across studies through automated large-scale reanalyses of public transcriptomic data**
 > Chen, K.G. *et al.* (2025)
 > bioRxiv: [10.1101/2025.11.04.686647](https://www.biorxiv.org/content/10.1101/2025.11.04.686647v1)
 
