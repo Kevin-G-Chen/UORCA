@@ -11,8 +11,7 @@ slurm_config.yaml
 uorca/config/dataset_query.json
 
 # Internal development (not for public)
-docs/plans/
-docs/lessons_learned/
+docs/*
 todos/
 scripts/
 CLAUDE.md

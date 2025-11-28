@@ -67,7 +67,7 @@ uv run uorca identify -q "cancer stem cell differentiation" -o identification_re
 
 # Options:
 # -q: Your research question (required)
-# -o: Output directory name (default: adds timestamp)
+# -o: Output directory name
 # -m: Max results to fetch for each search term (default: 500)
 # -r: Number of ranking iterations (default: 3)
 # -t: Relevance threshold 1-10 (default: 7.0)
@@ -75,6 +75,8 @@ uv run uorca identify -q "cancer stem cell differentiation" -o identification_re
 ```
 
 **Output**: Directory containing `selected_datasets.csv` with relevant GEO accessions and metadata about your search.
+
+The query can be as detailed or broad as you like.
 
 ### Step 2: Run - Process datasets through the pipeline
 Execute the complete RNA-seq analysis pipeline on identified datasets:
@@ -147,7 +149,7 @@ UORCA automatically handles temporary files by writing them directly to your sys
 - **Storage calculation**: Based on your actual available disk space
 - **No Docker configuration needed**: Default Docker Desktop settings (50GB) work fine
 
-For large datasets, ensure you have adequate free space on your system.  UORCA will by default automatically determine how much space can be used - it's designed to be a conservative calculation, but do still exercise some level of caution.
+For large datasets, ensure you have adequate free space on your system.  UORCA will by default automatically determine how much space can be used - it's designed to be a conservative calculation (and will skip datasets that do not fit), but do still exercise some level of caution.
 
 **Note**: Temporary files are automatically cleaned up after processing. By default, FASTQ and associated intermediate files are removed after processing, though you can set --no-cleanup to retain these files.
 
